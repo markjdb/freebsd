@@ -213,8 +213,7 @@ vm_page_init_cache_zones(void *dummy __unused)
 			pgcache->zone = uma_zcache_create("vm pgcache",
 			    sizeof(struct vm_page), NULL, NULL, NULL, NULL,
 			    vm_page_zone_import, vm_page_zone_release, pgcache,
-			    UMA_ZONE_NOBUCKETCACHE | UMA_ZONE_MAXBUCKET |
-			    UMA_ZONE_VM);
+			    UMA_ZONE_MAXBUCKET | UMA_ZONE_VM);
 		}
 	}
 }
