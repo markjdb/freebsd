@@ -274,6 +274,7 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
 					 * NUMA aware Zone.  Implements a best
 					 * effort first-touch policy.
 					 */
+#define	UMA_ZONE_MINBUCKET	0x20000	/* Use smallest buckets. */
 
 #define	UMA_ZONE_NOKASAN	0x80000	/*
 					 * Disable KASAN verification.  This is
