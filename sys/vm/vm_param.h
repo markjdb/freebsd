@@ -123,6 +123,10 @@ struct xswdev {
 #endif	/* !SMP */
 #endif	/* !PA_LOCK_COUNT */
 
+#ifndef KSTACK_MAX_PAGES
+#define KSTACK_MAX_PAGES 32
+#endif
+
 #ifndef ASSEMBLER
 #ifdef _KERNEL
 #define num_pages(x) \
