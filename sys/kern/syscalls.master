@@ -1380,7 +1380,15 @@
 		    size_t newlen \
 		); \
 	}
-571	AUE_NULL	UNIMPL	shm_open2
+571	AUE_SHMOPEN	STD {
+		int shm_open2(
+		    _In_z_ const char *path,
+		    int flags,
+		    mode_t mode,
+		    int shmflags,
+		    _In_z_ const char *name
+		);
+	}
 572	AUE_NULL	UNIMPL	shm_rename
 573	AUE_NULL	UNIMPL	sigfastblock
 574	AUE_NULL	UNIMPL	__realpathat

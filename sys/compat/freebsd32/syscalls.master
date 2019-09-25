@@ -1132,7 +1132,9 @@
 570	AUE_SYSCTL	STD	{ int freebsd32___sysctlbyname(const char *name, \
 				    size_t namelen, void *old, uint32_t *oldlenp, \
 				    void *new, size_t newlen); }
-571	AUE_NULL	UNIMPL	shm_open2
+571	AUE_SHMOPEN	NOPROTO	{ int shm_open2( \
+				    const char *path, int flags, mode_t mode, \
+				    int shmflags, const char *name); }
 572	AUE_NULL	UNIMPL	shm_rename
 573	AUE_NULL	UNIMPL	sigfastblock
 574	AUE_NULL	UNIMPL	__realpathat
