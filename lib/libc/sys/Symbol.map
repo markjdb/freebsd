@@ -407,6 +407,7 @@ FBSD_1.6 {
 	fhlinkat;
 	fhreadlink;
 	getfhat;
+	memfd_create;
 };
 
 FBSDprivate_1.0 {
