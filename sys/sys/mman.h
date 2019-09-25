@@ -231,6 +231,8 @@ struct shmfd {
 	struct rangelock shm_rl;
 	struct mtx	shm_mtx;
 	vm_ooffset_t	shm_size;
+
+	int		shm_seals;
 };
 #endif
 
