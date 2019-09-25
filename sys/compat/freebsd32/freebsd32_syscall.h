@@ -495,5 +495,6 @@
 #define	FREEBSD32_SYS_fhlinkat	566
 #define	FREEBSD32_SYS_fhreadlink	567
 #define	FREEBSD32_SYS_freebsd32___sysctlbyname	570
+#define	FREEBSD32_SYS_shm_open2	571
 #define	FREEBSD32_SYS_close_range	575
 #define	FREEBSD32_SYS_MAXSYSCALL	576

@@ -1798,6 +1798,13 @@ struct __sysctlbyname_args {
 	char new_l_[PADL_(void *)]; void * new; char new_r_[PADR_(void *)];
 	char newlen_l_[PADL_(size_t)]; size_t newlen; char newlen_r_[PADR_(size_t)];
 };
+struct shm_open2_args {
+	char path_l_[PADL_(const char *)]; const char * path; char path_r_[PADR_(const char *)];
+	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
+	char mode_l_[PADL_(mode_t)]; mode_t mode; char mode_r_[PADR_(mode_t)];
+	char shmflags_l_[PADL_(int)]; int shmflags; char shmflags_r_[PADR_(int)];
+	char name_l_[PADL_(const char *)]; const char * name; char name_r_[PADR_(const char *)];
+};
 struct close_range_args {
 	char lowfd_l_[PADL_(u_int)]; u_int lowfd; char lowfd_r_[PADR_(u_int)];
 	char highfd_l_[PADL_(u_int)]; u_int highfd; char highfd_r_[PADR_(u_int)];
@@ -2188,6 +2195,7 @@ int	sys_fhlink(struct thread *, struct fhlink_args *);
 int	sys_fhlinkat(struct thread *, struct fhlinkat_args *);
 int	sys_fhreadlink(struct thread *, struct fhreadlink_args *);
 int	sys___sysctlbyname(struct thread *, struct __sysctlbyname_args *);
+int	sys_shm_open2(struct thread *, struct shm_open2_args *);
 int	sys_close_range(struct thread *, struct close_range_args *);
 
 #ifdef COMPAT_43
@@ -3091,6 +3099,7 @@ int	freebsd11_mknodat(struct thread *, struct freebsd11_mknodat_args *);
 #define	SYS_AUE_fhlinkat	AUE_NULL
 #define	SYS_AUE_fhreadlink	AUE_NULL
 #define	SYS_AUE___sysctlbyname	AUE_SYSCTL
+#define	SYS_AUE_shm_open2	AUE_SHMOPEN
 #define	SYS_AUE_close_range	AUE_CLOSERANGE
 
 #undef PAD_
