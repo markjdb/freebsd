@@ -257,6 +257,8 @@ data_abort(struct thread *td, struct trapframe *frame, uint64_t esr,
 	if (lower)
 		map = &p->p_vmspace->vm_map;
 	else {
+		intr_enable();
+
 		/* The top bit tells us which range to use */
 		if (far >= VM_MAXUSER_ADDRESS) {
 			map = kernel_map;
@@ -402,7 +404,6 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 	case EXCP_INSN_ABORT:
 	case EXCP_DATA_ABORT:
 		far = READ_SPECIALREG(far_el1);
-		intr_enable();
 		dfsc = esr & ISS_DATA_DFSC_MASK;
 		if (dfsc < nitems(abort_handlers) &&
 		    abort_handlers[dfsc] != NULL) {
