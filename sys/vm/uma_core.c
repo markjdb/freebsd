@@ -580,8 +580,8 @@ zone_put_bucket(uma_zone_t zone, uma_zone_domain_t zdom, uma_bucket_t bucket,
 {
 
 	ZONE_LOCK_ASSERT(zone);
-	KASSERT(zone->uz_bkt_count < zone->uz_bkt_max, ("%s: zone %p overflow",
-	    __func__, zone));
+	KASSERT(!ws || zone->uz_bkt_count < zone->uz_bkt_max,
+	    ("%s: zone %p overflow", __func__, zone));
 
 	LIST_INSERT_HEAD(&zdom->uzd_buckets, bucket, ub_link);
 	zdom->uzd_nitems += bucket->ub_cnt;
@@ -656,12 +656,13 @@ zone_domain_update_wss(uma_zone_domain_t zdom)
 static void
 zone_timeout(uma_zone_t zone)
 {
+	uma_keg_t keg;
 	u_int slabs;
-	uma_keg_t keg = zone->uz_keg;
 
 	if ((zone->uz_flags & UMA_ZFLAG_CACHE) != 0)
 		goto update_wss;
 
+	keg = zone->uz_keg;
 	KEG_LOCK(keg);
 	/*
 	 * Expand the keg hash table.
@@ -699,6 +700,7 @@ zone_timeout(uma_zone_t zone)
 		}
 	}
 
+update_wss:
 	for (int i = 0; i < vm_ndomains; i++)
 		zone_domain_update_wss(&zone->uz_domain[i]);
 
@@ -1125,7 +1127,8 @@ zone_drain_wait(uma_zone_t zone, int waitok)
 	 * we're running.  Normally the uma_rwlock would protect us but we
 	 * must be able to release and acquire the right lock for each keg.
 	 */
-	keg_drain(zone->uz_keg);
+	if ((zone->uz_flags & UMA_ZFLAG_CACHE) == 0)
+		keg_drain(zone->uz_keg);
 	ZONE_LOCK(zone);
 	zone->uz_flags &= ~UMA_ZFLAG_DRAINING;
 	wakeup(zone);
@@ -2105,6 +2108,8 @@ zone_foreach(void (*zfunc)(uma_zone_t))
 		LIST_FOREACH(zone, &keg->uk_zones, uz_link)
 			zfunc(zone);
 	}
+	LIST_FOREACH(zone, &uma_cachezones, uz_link)
+		zfunc(zone);
 	rw_runlock(&uma_rwlock);
 }
 
