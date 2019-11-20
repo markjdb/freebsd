@@ -659,6 +659,9 @@ zone_timeout(uma_zone_t zone)
 	u_int slabs;
 	uma_keg_t keg = zone->uz_keg;
 
+	if ((zone->uz_flags & UMA_ZONE_HASH) == 0)
+		goto update_wss;
+
 	KEG_LOCK(keg);
 	/*
 	 * Expand the keg hash table.
@@ -1640,7 +1643,14 @@ keg_small_init(uma_keg_t keg)
 		    "new wasted space = %d\n", keg->uk_name, keg, wastedspace,
 		    slabsize / UMA_MAX_WASTE, keg->uk_ipers,
 		    slabsize - keg->uk_ipers * keg->uk_rsize);
-		keg->uk_flags |= UMA_ZONE_OFFPAGE;
+		/*
+		 * If we had access to memory to embed a slab header we
+		 * also have a page structure to use vtoslab() instead of
+		 * hash to find slabs.  If the zone was explicitly created
+		 * OFFPAGE we can't necessarily touch the memory.
+		 */
+		if ((keg->uk_flags & UMA_ZONE_OFFPAGE) == 0)
+			keg->uk_flags |= UMA_ZONE_OFFPAGE | UMA_ZONE_VTOSLAB;
 	}
 
 	if ((keg->uk_flags & UMA_ZONE_OFFPAGE) &&
@@ -1681,7 +1691,7 @@ keg_large_init(uma_keg_t keg)
 		 * slab header.
 		 */
 		if ((keg->uk_flags & UMA_ZFLAG_INTERNAL) == 0)
-			keg->uk_flags |= UMA_ZONE_OFFPAGE;
+			keg->uk_flags |= UMA_ZONE_OFFPAGE | UMA_ZONE_VTOSLAB;
 		else
 			keg->uk_ppera++;
 	}
