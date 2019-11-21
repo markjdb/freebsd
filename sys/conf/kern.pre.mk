@@ -131,6 +131,12 @@ SAN_CFLAGS+=	-fsanitize=kernel-address \
 		-mllvm -asan-use-after-scope=true \
 		-mllvm -asan-instrumentation-with-call-threshold=0
 .endif
+
+KCSAN_ENABLED!=	grep KCSAN opt_global.h || true ; echo
+.if !empty(KCSAN_ENABLED)
+SAN_CFLAGS+=	-fsanitize=thread
+.endif
+
 CFLAGS+=	${SAN_CFLAGS}
 
 # Put configuration-specific C flags last (except for ${PROF}) so that they

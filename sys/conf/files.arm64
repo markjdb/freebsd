@@ -276,8 +276,10 @@ libkern/ffsll.c			standard
 libkern/fls.c			standard
 libkern/flsl.c			standard
 libkern/flsll.c			standard
-libkern/memcmp.c		standard
-libkern/memset.c		standard
+libkern/memcmp.c		standard				\
+	compile-with "${NORMAL_C:N-fsanitize*}"
+libkern/memset.c		standard				\
+	compile-with "${NORMAL_C:N-fsanitize*}"
 libkern/arm64/crc32c_armv8.S	standard
 cddl/dev/dtrace/aarch64/dtrace_asm.S			optional dtrace compile-with "${DTRACE_S}"
 cddl/dev/dtrace/aarch64/dtrace_subr.c			optional dtrace compile-with "${DTRACE_C}"

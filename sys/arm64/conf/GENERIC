@@ -81,6 +81,8 @@ options 	INTRNG
 options 	KDB			# Enable kernel debugger support.
 options 	KDB_TRACE		# Print a stack trace for a panic.
 
+#options 	KCSAN			# Kernel Concurrency Sanitizer
+
 # Kernel dump features.
 options 	EKCD			# Support for encrypted kernel dumps
 options 	GZIO			# gzip-compressed kernel and user dumps

@@ -224,6 +224,15 @@ uint32_t armv8_crc32c(uint32_t, const unsigned char *, unsigned int);
 #endif
 #endif
 
+#ifdef KCSAN
+char	*kcsan_strcpy(char *, const char *);
+int	kcsan_strcmp(const char *, const char *);
+size_t	kcsan_strlen(const char *);
+#define	strcpy(d, s) kcsan_strcpy((d), (s))
+#define	strcmp(s1, s2) kcsan_strcmp((s1), (s2))
+#define	strlen(s) kcsan_strlen((s))
+#endif
+
 static __inline char *
 index(const char *p, int ch)
 {

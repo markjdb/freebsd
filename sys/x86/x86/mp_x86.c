@@ -42,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bus.h>
 #include <sys/cons.h>	/* cngetc() */
 #include <sys/cpuset.h>
+#include <sys/csan.h>
 #ifdef GPROF 
 #include <sys/gmon.h>
 #endif
@@ -1081,6 +1082,8 @@ init_secondary_tail(void)
 	 * Assert that smp_after_idle_runnable condition is reasonable.
 	 */
 	MPASS(PCPU_GET(curpcb) == NULL);
+
+	kcsan_cpu_init(cpuid);
 
 	sched_throw(NULL);
 

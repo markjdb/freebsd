@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
+#include <sys/csan.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
@@ -325,6 +326,8 @@ init_secondary(uint64_t cpu)
 	 * Assert that smp_after_idle_runnable condition is reasonable.
 	 */
 	MPASS(PCPU_GET(curpcb) == NULL);
+
+	kcsan_cpu_init(cpu);
 
 	/* Enter the scheduler */
 	sched_throw(NULL);
