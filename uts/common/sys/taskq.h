@@ -60,6 +60,8 @@ struct proc;
 #define	TQ_NOALLOC	0x04	/* cannot allocate memory; may fail */
 #define	TQ_FRONT	0x08	/* Put task at the front of the queue */
 
+#define	TASKQID_INVALID	((taskqid_t)0)
+
 #ifdef _KERNEL
 
 extern taskq_t *system_taskq;
