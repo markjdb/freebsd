@@ -169,14 +169,6 @@ __FBSDID("$FreeBSD$");
 #define PMAP_INLINE
 #endif
 
-/*
- * These are configured by the mair_el1 register. This is set up in locore.S
- */
-#define	DEVICE_MEMORY	0
-#define	UNCACHED_MEMORY	1
-#define	CACHED_MEMORY	2
-
-
 #ifdef PV_STATS
 #define PV_STAT(x)	do { x ; } while (0)
 #else
@@ -1283,7 +1275,7 @@ void
 pmap_kenter_device(vm_offset_t sva, vm_size_t size, vm_paddr_t pa)
 {
 
-	pmap_kenter(sva, size, pa, DEVICE_MEMORY);
+	pmap_kenter(sva, size, pa, VM_MEMATTR_DEVICE);
 }
 
 /*
@@ -3543,7 +3535,8 @@ pmap_enter_2mpage(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		new_l2 |= ATTR_SW_MANAGED;
 		new_l2 &= ~ATTR_AF;
 	}
-	if ((prot & VM_PROT_EXECUTE) == 0 || m->md.pv_memattr == DEVICE_MEMORY)
+	if ((prot & VM_PROT_EXECUTE) == 0 ||
+	    m->md.pv_memattr == VM_MEMATTR_DEVICE)
 		new_l2 |= ATTR_S1_XN;
 	if (va < VM_MAXUSER_ADDRESS)
 		new_l2 |= ATTR_S1_AP(ATTR_S1_AP_USER) | ATTR_S1_PXN;
@@ -3841,7 +3834,8 @@ pmap_enter_quick_locked(pmap_t pmap, vm_offset_t va, vm_page_t m,
 	pa = VM_PAGE_TO_PHYS(m);
 	l3_val = pa | ATTR_DEFAULT | ATTR_S1_IDX(m->md.pv_memattr) |
 	    ATTR_S1_AP(ATTR_S1_AP_RO) | L3_PAGE;
-	if ((prot & VM_PROT_EXECUTE) == 0 || m->md.pv_memattr == DEVICE_MEMORY)
+	if ((prot & VM_PROT_EXECUTE) == 0 ||
+	    m->md.pv_memattr == VM_MEMATTR_DEVICE)
 		l3_val |= ATTR_S1_XN;
 	if (va < VM_MAXUSER_ADDRESS)
 		l3_val |= ATTR_S1_AP(ATTR_S1_AP_USER) | ATTR_S1_PXN;
@@ -5229,7 +5223,7 @@ pmap_mapbios(vm_paddr_t pa, vm_size_t size)
 			l2 = pmap_l1_to_l2(pde, va);
 			pmap_load_store(l2,
 			    pa | ATTR_DEFAULT | ATTR_S1_XN |
-			    ATTR_S1_IDX(CACHED_MEMORY) | L2_BLOCK);
+			    ATTR_S1_IDX(VM_MEMATTR_WRITE_BACK) | L2_BLOCK);
 
 			va += L2_SIZE;
 			pa += L2_SIZE;
@@ -5253,7 +5247,7 @@ pmap_mapbios(vm_paddr_t pa, vm_size_t size)
 		/* L3 table is linked */
 		va = trunc_page(va);
 		pa = trunc_page(pa);
-		pmap_kenter(va, size, pa, CACHED_MEMORY);
+		pmap_kenter(va, size, pa, VM_MEMATTR_WRITE_BACK);
 	}
 
 	return ((void *)(va + offset));
@@ -5438,7 +5432,7 @@ pmap_change_attr_locked(vm_offset_t va, vm_size_t size, int mode)
 				l3 = pmap_load(pte);
 				l3 &= ~ATTR_S1_IDX_MASK;
 				l3 |= ATTR_S1_IDX(mode);
-				if (mode == DEVICE_MEMORY)
+				if (mode == VM_MEMATTR_DEVICE)
 					l3 |= ATTR_S1_XN;
 
 				pmap_update_entry(kernel_pmap, pte, l3, tmpva,
@@ -5514,7 +5508,8 @@ pmap_demote_l1(pmap_t pmap, pt_entry_t *l1, vm_offset_t va)
 
 	if (tmpl1 != 0) {
 		pmap_kenter(tmpl1, PAGE_SIZE,
-		    DMAP_TO_PHYS((vm_offset_t)l1) & ~L3_OFFSET, CACHED_MEMORY);
+		    DMAP_TO_PHYS((vm_offset_t)l1) & ~L3_OFFSET,
+		    VM_MEMATTR_WRITE_BACK);
 		l1 = (pt_entry_t *)(tmpl1 + ((vm_offset_t)l1 & PAGE_MASK));
 	}
 
@@ -5656,7 +5651,8 @@ pmap_demote_l2_locked(pmap_t pmap, pt_entry_t *l2, vm_offset_t va,
 	 */
 	if (tmpl2 != 0) {
 		pmap_kenter(tmpl2, PAGE_SIZE,
-		    DMAP_TO_PHYS((vm_offset_t)l2) & ~L3_OFFSET, CACHED_MEMORY);
+		    DMAP_TO_PHYS((vm_offset_t)l2) & ~L3_OFFSET,
+		    VM_MEMATTR_WRITE_BACK);
 		l2 = (pt_entry_t *)(tmpl2 + ((vm_offset_t)l2 & PAGE_MASK));
 	}
 
