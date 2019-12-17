@@ -64,12 +64,14 @@ uintptr_t smrs_current;
 static void
 smrs_error(struct smrs *smrs, const char *fmt, ...)
 {
+	smr_t self;
 	va_list ap;
 
+	self = zpcpu_get(smrs_smr);
 	atomic_add_int(&smrs_failures, 1);
 	printf("SMR ERROR: wr_seq %d, rd_seq %d, c_seq %d, generation %d, count %d ",
-	    smrs_smr->c_shared->s_wr.seq, smrs_smr->c_shared->s_rd_seq,
-	    zpcpu_get(smrs_smr)->c_seq, smrs->generation, smrs->count);
+	    smr_current(smrs_smr), self->c_shared->s_rd_seq, self->c_seq,
+	    smrs->generation, smrs->count);
 	va_start(ap, fmt);
 	(void)vprintf(fmt, ap);
 	va_end(ap);
@@ -83,7 +85,7 @@ smrs_read(void)
 
 	/* Wait for the writer to exit. */
 	while (smrs_completed == 0) {
-		smr_enter(smrs_smr);
+		smr_lazy_enter(smrs_smr);
 		cur = (void *)atomic_load_acq_ptr(&smrs_current);
 		if (cur->generation == -1)
 			smrs_error(cur, "read early: Use after free!\n");
@@ -94,7 +96,7 @@ smrs_read(void)
 			smrs_error(cur, "read late: Use after free!\n");
 		else if (cnt <= 0)
 			smrs_error(cur, "Invalid ref\n");
-		smr_exit(smrs_smr);
+		smr_lazy_exit(smrs_smr);
 		maybe_yield();
 	}
 }
@@ -190,8 +192,9 @@ smrs_init(void)
 
 	smrs_zone = uma_zcreate("smrs", sizeof(struct smrs),
 	    smrs_ctor,  smrs_dtor, NULL, NULL, UMA_ALIGN_PTR,
-	    UMA_ZONE_SMR | UMA_ZONE_ZINIT);
-        smrs_smr = uma_zone_get_smr(smrs_zone);
+	    UMA_ZONE_ZINIT);
+	smrs_smr = smr_create("smrs", SMR_LAZY);
+        uma_zone_set_smr(smrs_zone, smrs_smr);
 }
 
 static void
