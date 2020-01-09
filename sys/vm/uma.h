@@ -234,14 +234,10 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
  * Definitions for uma_zcreate flags
  *
  * These flags share space with UMA_ZFLAGs in uma_int.h.  Be careful not to
- * overlap when adding new features.  0xff000000 is in use by uma_int.h.
+ * overlap when adding new features.
  */
-#define UMA_ZONE_PAGEABLE	0x0001	/* Return items not fully backed by
-					   physical memory XXX Not yet */
 #define UMA_ZONE_ZINIT		0x0002	/* Initialize with zeros */
-#define UMA_ZONE_STATIC		0x0004	/* Statically sized zone */
-#define UMA_ZONE_OFFPAGE	0x0008	/* Force the slab structure allocation
-					   off of the real memory */
+#define UMA_ZONE_NOTOUCH	0x0008	/* UMA may not access the memory */
 #define UMA_ZONE_MALLOC		0x0010	/* For use by malloc(9) only! */
 #define UMA_ZONE_NOFREE		0x0020	/* Do not free slabs of this type! */
 #define UMA_ZONE_MTXCLASS	0x0040	/* Create a new lock class */
@@ -249,20 +245,17 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
 					 * Used for internal vm datastructures
 					 * only.
 					 */
-#define	UMA_ZONE_HASH		0x0100	/*
-					 * Use a hash table instead of caching
-					 * information in the vm_page.
-					 */
+#define	UMA_ZONE_NOTPAGE	0x0100	/* allocf memory not vm pages */
 #define	UMA_ZONE_SECONDARY	0x0200	/* Zone is a Secondary Zone */
 #define	UMA_ZONE_NOBUCKET	0x0400	/* Do not use buckets. */
 #define	UMA_ZONE_MAXBUCKET	0x0800	/* Use largest buckets. */
-#define	UMA_ZONE_CACHESPREAD	0x1000	/*
+#define	UMA_ZONE_MINBUCKET	0x1000	/* Use smallest buckets. */
+#define	UMA_ZONE_CACHESPREAD	0x2000	/*
 					 * Spread memory start locations across
 					 * all possible cache lines.  May
 					 * require many virtually contiguous
 					 * backend pages and can fail early.
 					 */
-#define	UMA_ZONE_VTOSLAB	0x2000	/* Zone uses vtoslab for lookup. */
 #define	UMA_ZONE_NODUMP		0x4000	/*
 					 * Zone's pages will not be included in
 					 * mini-dumps.
@@ -274,13 +267,13 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
 					 * NUMA aware Zone.  Implements a best
 					 * effort first-touch policy.
 					 */
-#define	UMA_ZONE_MINBUCKET	0x20000	/* Use smallest buckets. */
 
 #define	UMA_ZONE_NOKASAN	0x80000	/*
 					 * Disable KASAN verification.  This is
 					 * implied by NOFREE.  Cache zones are
 					 * not verified by default.
 					 */
+/* In use by UMA_ZFLAGs:	0xffe00000 */
 
 /*
  * These flags are shared between the keg and zone.  In zones wishing to add
@@ -288,8 +281,7 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
  * physical parameters of the request and may not be provided by the consumer.
  */
 #define	UMA_ZONE_INHERIT						\
-    (UMA_ZONE_OFFPAGE | UMA_ZONE_MALLOC | UMA_ZONE_NOFREE |		\
-    UMA_ZONE_HASH | UMA_ZONE_VTOSLAB | UMA_ZONE_PCPU | UMA_ZONE_NOKASAN)
+    (UMA_ZONE_MALLOC | UMA_ZONE_NOFREE | UMA_ZONE_PCPU | UMA_ZONE_NOKASAN)
 
 /* Definitions for align */
 #define UMA_ALIGN_PTR	(sizeof(void *) - 1)	/* Alignment fit for ptr */
