@@ -344,12 +344,15 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 		intr_enable();
 		dfsc = esr & ISS_DATA_DFSC_MASK;
 		if (dfsc < nitems(abort_handlers) &&
-		    abort_handlers[dfsc] != NULL)
+		    abort_handlers[dfsc] != NULL) {
 			abort_handlers[dfsc](td, frame, esr, far, 0);
-		else
+		} else {
+			print_registers(frame);
+			printf(" far: %16lx\n", far);
 			panic("Unhandled EL1 %s abort: %x",
 			    exception == EXCP_INSN_ABORT ? "instruction" :
 			    "data", dfsc);
+		}
 		break;
 	case EXCP_BRK:
 #ifdef KDTRACE_HOOKS
