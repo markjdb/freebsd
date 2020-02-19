@@ -1267,3 +1267,10 @@ sysdecode_sctp_sinfo_flags(FILE *fp, int sinfo_flags)
 		}
 	}
 }
+
+bool
+sysdecode_shmflags(FILE *fp, int flags, int *rem)
+{
+
+	return (print_mask_0(fp, shmflags, flags, rem));
+}
