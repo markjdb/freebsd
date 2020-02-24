@@ -252,7 +252,7 @@ struct uma_bucket_zone {
 #define	BUCKET_SIZE(n)						\
     (((sizeof(void *) * (n)) - sizeof(struct uma_bucket)) / sizeof(void *))
 
-#define	BUCKET_MAX	BUCKET_SIZE(256)
+#define	BUCKET_MAX	BUCKET_SIZE(512)
 
 struct uma_bucket_zone bucket_zones[] = {
 	/* Literal bucket sizes. */
@@ -265,6 +265,7 @@ struct uma_bucket_zone bucket_zones[] = {
 	{ NULL, "64 Bucket", BUCKET_SIZE(64), 256 },
 	{ NULL, "128 Bucket", BUCKET_SIZE(128), 128 },
 	{ NULL, "256 Bucket", BUCKET_SIZE(256), 64 },
+	{ NULL, "512 Bucket", BUCKET_SIZE(512), 64 },
 	{ NULL, NULL, 0}
 };
 
@@ -1401,6 +1402,7 @@ cache_drain(uma_zone_t zone)
 	seq = SMR_SEQ_INVALID;
 	if ((zone->uz_flags & UMA_ZONE_SMR) != 0)
 		seq = smr_advance(zone->uz_smr);
+	pause("umawait", hz/10);
 	CPU_FOREACH(cpu) {
 		cache = &zone->uz_cpu[cpu];
 		bucket = cache_bucket_unload_alloc(cache);
