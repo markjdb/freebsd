@@ -125,9 +125,12 @@ struct faultstate {
 	vm_prot_t	fault_type;
 	vm_prot_t	prot;
 	int		fault_flags;
+	boolean_t	wired;
+
+	/* Control state. */
 	struct timeval	oom_start_time;
 	bool		oom_started;
-	boolean_t	wired;
+	int		nera;
 
 	/* Page reference for cow. */
 	vm_page_t m_cow;
@@ -1126,8 +1129,7 @@ vm_fault_allocate(struct faultstate *fs)
 		return (KERN_OUT_OF_BOUNDS);
 
 	if (fs->object == fs->first_object &&
-	    (fs->first_object->flags & OBJ_POPULATE) != 0 &&
-	    fs->first_object->shadow_count == 0) {
+	    (fs->first_object->flags & OBJ_POPULATE) != 0) {
 		rv = vm_fault_populate(fs);
 		switch (rv) {
 		case KERN_SUCCESS:
@@ -1184,7 +1186,7 @@ vm_fault_allocate(struct faultstate *fs)
  * pages at the same time.
  */
 static int
-vm_fault_getpages(struct faultstate *fs, int nera, int *behindp, int *aheadp)
+vm_fault_getpages(struct faultstate *fs, int *behindp, int *aheadp)
 {
 	vm_offset_t e_end, e_start;
 	int ahead, behind, cluster_offset, rv;
@@ -1201,6 +1203,18 @@ vm_fault_getpages(struct faultstate *fs, int nera, int *behindp, int *aheadp)
 	e_start = fs->entry->start;
 	e_end = fs->entry->end;
 	behavior = vm_map_entry_behavior(fs->entry);
+
+	/*
+	 * Determine the number of additional pages to read and
+	 * potentially reprioritize previously read pages for
+	 * earlier reclamation.  These operations should only
+	 * be performed once per page fault.  Even if the current
+	 * pager doesn't have the page, the number of additional
+	 * pages to read will apply to subsequent objects in the
+	 * shadow chain.
+	 */
+	if (fs->nera == -1 && !P_KILLED(curproc))
+		fs->nera = vm_fault_readahead(fs);
 
 	/*
 	 * Release the map lock before locking the vnode or
@@ -1221,15 +1235,15 @@ vm_fault_getpages(struct faultstate *fs, int nera, int *behindp, int *aheadp)
 	 * Page in the requested page and hint the pager,
 	 * that it may bring up surrounding pages.
 	 */
-	if (nera == -1 || behavior == MAP_ENTRY_BEHAV_RANDOM ||
+	if (fs->nera == -1 || behavior == MAP_ENTRY_BEHAV_RANDOM ||
 	    P_KILLED(curproc)) {
 		behind = 0;
 		ahead = 0;
 	} else {
 		/* Is this a sequential fault? */
-		if (nera > 0) {
+		if (fs->nera > 0) {
 			behind = 0;
-			ahead = nera;
+			ahead = fs->nera;
 		} else {
 			/*
 			 * Request a cluster of pages that is
@@ -1261,8 +1275,14 @@ vm_fault_getpages(struct faultstate *fs, int nera, int *behindp, int *aheadp)
 	 * outside the range of the pager, clean up and return
 	 * an error.
 	 */
-	if (rv == VM_PAGER_ERROR || rv == VM_PAGER_BAD)
+	if (rv == VM_PAGER_ERROR || rv == VM_PAGER_BAD) {
+		VM_OBJECT_WLOCK(fs->object);
+		fault_page_free(&fs->m);
+		unlock_and_deallocate(fs);
 		return (KERN_OUT_OF_BOUNDS);
+	}
+	MPASS(rv == VM_PAGER_FAIL);
+
 	return (KERN_NOT_RECEIVER);
 }
 
@@ -1308,7 +1328,7 @@ vm_fault(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 {
 	struct faultstate fs;
 	int ahead, behind, faultcount;
-	int nera, result, rv;
+	int result, rv;
 	bool dead, hardfault;
 
 	VM_CNT_INC(v_vm_faults);
@@ -1323,8 +1343,8 @@ vm_fault(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	fs.map = map;
 	fs.lookup_still_valid = false;
 	fs.oom_started = false;
+	fs.nera = -1;
 	faultcount = 0;
-	nera = -1;
 	hardfault = false;
 
 RetryFault:
@@ -1490,22 +1510,7 @@ RetryFault:
 			 * the object lock is dropped.
 		 	 */
 			VM_OBJECT_WUNLOCK(fs.object);
-
-			/*
-			 * If the pager for the current object might have
-			 * the page, then determine the number of additional
-			 * pages to read and potentially reprioritize
-			 * previously read pages for earlier reclamation.
-			 * These operations should only be performed once per
-			 * page fault.  Even if the current pager doesn't
-			 * have the page, the number of additional pages to
-			 * read will apply to subsequent objects in the
-			 * shadow chain.
-			 */
-			if (nera == -1 && !P_KILLED(curproc))
-				nera = vm_fault_readahead(&fs);
-
-			rv = vm_fault_getpages(&fs, nera, &behind, &ahead);
+			rv = vm_fault_getpages(&fs, &behind, &ahead);
 			if (rv == KERN_SUCCESS) {
 				faultcount = behind + 1 + ahead;
 				hardfault = true;
@@ -1513,12 +1518,9 @@ RetryFault:
 			}
 			if (rv == KERN_RESOURCE_SHORTAGE)
 				goto RetryFault;
-			VM_OBJECT_WLOCK(fs.object);
-			if (rv == KERN_OUT_OF_BOUNDS) {
-				fault_page_free(&fs.m);
-				unlock_and_deallocate(&fs);
+			if (rv == KERN_OUT_OF_BOUNDS)
 				return (rv);
-			}
+			VM_OBJECT_WLOCK(fs.object);
 		}
 
 		/*
