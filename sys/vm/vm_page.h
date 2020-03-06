@@ -519,8 +519,8 @@ vm_page_t PHYS_TO_VM_PAGE(vm_paddr_t pa);
  * vm_page_alloc_freelist().  Some functions support only a subset
  * of the flags, and ignore others, see the flags legend.
  *
- * The meaning of VM_ALLOC_ZERO differs slightly between the vm_page_alloc*()
- * and the vm_page_grab*() functions.  See these functions for details.
+ * vm_page_grab* functions will set the page state to valid if
+ * VM_ALLOC_ZERO is set.
  *
  * Bits 0 - 1 define class.
  * Bits 2 - 15 dedicated for flags.
