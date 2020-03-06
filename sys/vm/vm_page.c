@@ -4729,11 +4729,8 @@ vm_page_grab_valid(vm_page_t *mp, vm_object_t object, vm_pindex_t pindex, int al
 	vm_page_t ma[VM_INITIAL_PAGEIN];
 	int after, i, pflags, rv;
 
-	KASSERT((allocflags & VM_ALLOC_SBUSY) == 0 ||
-	    (allocflags & VM_ALLOC_IGN_SBUSY) != 0,
-	    ("vm_page_grab_valid: VM_ALLOC_SBUSY/VM_ALLOC_IGN_SBUSY mismatch"));
-	KASSERT((allocflags &
-	    (VM_ALLOC_NOWAIT | VM_ALLOC_WAITFAIL | VM_ALLOC_ZERO)) == 0,
+	vm_page_grab_check(allocflags);
+	KASSERT((allocflags & (VM_ALLOC_NOWAIT | VM_ALLOC_WAITFAIL)) == 0,
 	    ("vm_page_grab_valid: Invalid flags 0x%X", allocflags));
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	/* We never want to allocate non-busy pages. */
@@ -4770,49 +4767,53 @@ retrylookup:
 	} else if ((m = vm_page_alloc(object, pindex, pflags)) == NULL) {
 		goto retrylookup;
 	}
-
 	vm_page_assert_xbusied(m);
-	if (vm_pager_has_page(object, pindex, NULL, &after)) {
-		after = MIN(after, VM_INITIAL_PAGEIN);
-		after = MIN(after, allocflags >> VM_ALLOC_COUNT_SHIFT);
-		after = MAX(after, 1);
-		ma[0] = m;
-		for (i = 1; i < after; i++) {
-			if ((ma[i] = vm_page_next(ma[i - 1])) != NULL) {
-				if (ma[i]->valid || !vm_page_tryxbusy(ma[i]))
-					break;
-			} else {
-				ma[i] = vm_page_alloc(object, m->pindex + i,
-				    VM_ALLOC_NORMAL);
-				if (ma[i] == NULL)
-					break;
-			}
-		}
-		after = i;
-		vm_object_pip_add(object, after);
-		VM_OBJECT_WUNLOCK(object);
-		rv = vm_pager_get_pages(object, ma, after, NULL, NULL);
-		VM_OBJECT_WLOCK(object);
-		vm_object_pip_wakeupn(object, after);
-		/* Pager may have replaced a page. */
-		m = ma[0];
-		if (rv != VM_PAGER_OK) {
-			for (i = 0; i < after; i++) {
-				if (!vm_page_wired(ma[i]))
-					vm_page_free(ma[i]);
-				else
-					vm_page_xunbusy(ma[i]);
-			}
+
+	if (!vm_pager_has_page(object, pindex, NULL, &after)) {
+		if ((allocflags & VM_ALLOC_ZERO) == 0) {
+			vm_page_free(m);
 			*mp = NULL;
-			return (rv);
+			return (VM_PAGER_FAIL);
 		}
-		for (i = 1; i < after; i++)
-			vm_page_readahead_finish(ma[i]);
-		MPASS(vm_page_all_valid(m));
-	} else {
-		/* Unlike other grab functions zero is implied. */
-		vm_page_zero_invalid(m, TRUE);
+		goto out;
 	}
+
+	after = MIN(after, VM_INITIAL_PAGEIN);
+	after = MIN(after, allocflags >> VM_ALLOC_COUNT_SHIFT);
+	after = MAX(after, 1);
+	ma[0] = m;
+	for (i = 1; i < after; i++) {
+		if ((ma[i] = vm_page_next(ma[i - 1])) != NULL) {
+			if (ma[i]->valid || !vm_page_tryxbusy(ma[i]))
+				break;
+		} else {
+			ma[i] = vm_page_alloc(object, m->pindex + i,
+			    VM_ALLOC_NORMAL);
+			if (ma[i] == NULL)
+				break;
+		}
+	}
+	after = i;
+	vm_object_pip_add(object, after);
+	VM_OBJECT_WUNLOCK(object);
+	rv = vm_pager_get_pages(object, ma, after, NULL, NULL);
+	VM_OBJECT_WLOCK(object);
+	vm_object_pip_wakeupn(object, after);
+	/* Pager may have replaced a page. */
+	m = ma[0];
+	if (rv != VM_PAGER_OK) {
+		for (i = 0; i < after; i++) {
+			if (!vm_page_wired(ma[i]))
+				vm_page_free(ma[i]);
+			else
+				vm_page_xunbusy(ma[i]);
+		}
+		*mp = NULL;
+		return (rv);
+	}
+	for (i = 1; i < after; i++)
+		vm_page_readahead_finish(ma[i]);
+	MPASS(vm_page_all_valid(m));
 out:
 	vm_page_grab_release(m, allocflags);
 	*mp = m;
@@ -4831,12 +4832,8 @@ vm_page_grab_valid_unlocked(vm_page_t *mp, vm_object_t object,
 	int flags;
 	int error;
 
-	KASSERT((allocflags & VM_ALLOC_SBUSY) == 0 ||
-	    (allocflags & VM_ALLOC_IGN_SBUSY) != 0,
-	    ("vm_page_grab_valid_unlocked: VM_ALLOC_SBUSY/VM_ALLOC_IGN_SBUSY "
-	    "mismatch"));
-	KASSERT((allocflags &
-	    (VM_ALLOC_NOWAIT | VM_ALLOC_WAITFAIL | VM_ALLOC_ZERO)) == 0,
+	vm_page_grab_check(allocflags);
+	KASSERT((allocflags & (VM_ALLOC_NOWAIT | VM_ALLOC_WAITFAIL)) == 0,
 	    ("vm_page_grab_valid_unlocked: Invalid flags 0x%X", allocflags));
 
 	/*
