@@ -82,6 +82,7 @@ __elfN(linux_shared_page_init)(char **mapping, vm_size_t size)
 		m = vm_page_grab(obj, n,
 		    VM_ALLOC_ZERO);
 		vm_page_valid(m);
+		/* XXX This page should be wired. */
 		vm_page_xunbusy(m);
 		pmap_qenter(addr + n * PAGE_SIZE, &m, 1);
 	}

@@ -298,7 +298,7 @@ spigen_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 {
 	struct spigen_mmap *mmap;
 	vm_page_t *m;
-	size_t n, pages;
+	size_t pages;
 	int error;
 
 	if (size == 0 ||
@@ -323,12 +323,8 @@ spigen_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	m = malloc(sizeof(*m) * pages, M_TEMP, M_WAITOK);
 	VM_OBJECT_WLOCK(mmap->bufobj);
 	vm_object_reference_locked(mmap->bufobj); // kernel and userland both
-	for (n = 0; n < pages; n++) {
-		m[n] = vm_page_grab(mmap->bufobj, n,
-		    VM_ALLOC_ZERO | VM_ALLOC_WIRED);
-		vm_page_valid(m[n]);
-		vm_page_xunbusy(m[n]);
-	}
+	(void)vm_page_grab_pages(mmap->bufobj, 0,
+	    VM_ALLOC_ZERO | VM_ALLOC_NOBUSY | VM_ALLOC_WIRED, m, pages);
 	VM_OBJECT_WUNLOCK(mmap->bufobj);
 	pmap_qenter(mmap->kvaddr, m, pages);
 	free(m, M_TEMP);
