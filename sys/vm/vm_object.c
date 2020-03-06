@@ -2199,7 +2199,8 @@ vm_object_populate(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	for (pindex = start; pindex < end; pindex++) {
-		rv = vm_page_grab_valid(&m, object, pindex, VM_ALLOC_NORMAL);
+		rv = vm_page_grab_valid(&m, object, pindex,
+		    VM_ALLOC_NORMAL | VM_ALLOC_ZERO);
 		if (rv != VM_PAGER_OK)
 			break;
 
