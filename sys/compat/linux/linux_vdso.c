@@ -84,7 +84,7 @@ __elfN(linux_shared_page_init)(char **mapping)
 	VM_OBJECT_WLOCK(obj);
 	m = vm_page_grab(obj, 0, VM_ALLOC_ZERO);
 	VM_OBJECT_WUNLOCK(obj);
-	vm_page_valid(m);
+	/* XXX This page should be wired. */
 	vm_page_xunbusy(m);
 	addr = kva_alloc(PAGE_SIZE);
 	pmap_qenter(addr, &m, 1);

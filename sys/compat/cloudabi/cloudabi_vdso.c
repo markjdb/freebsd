@@ -62,9 +62,9 @@ cloudabi_vdso_init(struct sysentvec *sv, char *begin, char *end)
 		VM_OBJECT_WLOCK(obj);
 		m = vm_page_grab(obj, i, VM_ALLOC_ZERO);
 		VM_OBJECT_WUNLOCK(obj);
-		vm_page_valid(m);
-		vm_page_xunbusy(m);
 
+		/* XXX This page should be wired. */
+		vm_page_xunbusy(m);
 		pmap_qenter(addr, &m, 1);
 		memcpy((void *)addr, begin + i * PAGE_SIZE,
 		    MIN(vdso_length - i * PAGE_SIZE, PAGE_SIZE));
