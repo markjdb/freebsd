@@ -835,28 +835,11 @@ static bool
 vm_page_trybusy(vm_page_t m, int allocflags)
 {
 
-	if ((allocflags & (VM_ALLOC_SBUSY | VM_ALLOC_IGN_SBUSY)) != 0)
-		return (vm_page_trysbusy(m));
-	else
+	if ((allocflags & VM_ALLOC_ZERO) != 0 ||
+	    (allocflags & (VM_ALLOC_IGN_SBUSY | VM_ALLOC_SBUSY)) == 0)
 		return (vm_page_tryxbusy(m));
-}
-
-/*
- *	vm_page_tryacquire
- *
- *	Helper routine for grab functions to trylock busy and wire.
- *
- *	Returns true on success and false on failure.
- */
-static inline bool
-vm_page_tryacquire(vm_page_t m, int allocflags)
-{
-	bool locked;
-
-	locked = vm_page_trybusy(m, allocflags);
-	if (locked && (allocflags & VM_ALLOC_WIRED) != 0)
-		vm_page_wire(m);
-	return (locked);
+	else
+		return (vm_page_trysbusy(m));
 }
 
 /*
@@ -871,16 +854,20 @@ vm_page_busy_acquire(vm_page_t m, int allocflags)
 	vm_object_t obj;
 	bool locked;
 
+	KASSERT((allocflags & (VM_ALLOC_ZERO | VM_ALLOC_WIRED)) == 0,
+	    ("vm_page_busy_acquire: Invalid alloc flag."));
+	KASSERT((allocflags & VM_ALLOC_NOBUSY) == 0,
+	    ("vm_page_busy_acquire: the pages must be busied"));
+
 	/*
-	 * The page-specific object must be cached because page
-	 * identity can change during the sleep, causing the
-	 * re-lock of a different object.
-	 * It is assumed that a reference to the object is already
+	 * The page-specific object must be cached because page identity
+	 * can change during the sleep, causing the re-lock of a different
+	 * object.  It is assumed that a reference to the object is already
 	 * held by the callers.
 	 */
 	obj = atomic_load_ptr(&m->object);
 	for (;;) {
-		if (vm_page_tryacquire(m, allocflags))
+		if (vm_page_trybusy(m, allocflags))
 			return (true);
 		if ((allocflags & VM_ALLOC_NOWAIT) != 0)
 			return (false);
@@ -4481,16 +4468,36 @@ vm_page_advise(vm_page_t m, int advice)
  *
  *	Helper routine for grab functions to release busy on return.
  */
-static inline void
+static void
 vm_page_grab_release(vm_page_t m, int allocflags)
 {
 
-	if ((allocflags & VM_ALLOC_NOBUSY) != 0) {
-		if ((allocflags & VM_ALLOC_IGN_SBUSY) != 0)
-			vm_page_sunbusy(m);
+	if ((allocflags & VM_ALLOC_WIRED) != 0)
+		vm_page_wire(m);
+
+	/* Zero and validate the page if the caller requested. */
+	if (!vm_page_all_valid(m) && (allocflags & VM_ALLOC_ZERO) != 0) {
+		if ((m->flags & PG_ZERO) != 0)
+			vm_page_valid(m);
 		else
-			vm_page_xunbusy(m);
+			vm_page_zero_invalid(m, TRUE);
 	}
+	/*
+	 * Clear PG_ZERO so future grab calls with partially valid pages
+	 * do not mistake the page for zeroed.
+	 */
+	m->flags &= ~PG_ZERO;
+
+	/*
+	 * Correct the busy state according to caller requirements.  Grab
+	 * will upgrade busy for ZERO or NOBUSY because a busy lock is
+	 * required to wire or validate the page.  The caller will expect
+	 * the requested state on return.
+	 */
+	if ((allocflags & VM_ALLOC_NOBUSY) != 0)
+		vm_page_busy_release(m);
+	else if ((allocflags & VM_ALLOC_SBUSY) != 0 && vm_page_xbusied(m))
+		vm_page_busy_downgrade(m);
 }
 
 /*
@@ -4551,12 +4558,21 @@ vm_page_grab_pflags(int allocflags)
 {
 	int pflags;
 
+	/*
+	 * Drop flags handled directly by grab functions.
+	 */
 	pflags = allocflags &
 	    ~(VM_ALLOC_NOWAIT | VM_ALLOC_WAITOK | VM_ALLOC_WAITFAIL |
-	    VM_ALLOC_NOBUSY | VM_ALLOC_IGN_SBUSY);
+	    VM_ALLOC_NOBUSY | VM_ALLOC_WIRED | VM_ALLOC_SBUSY |
+	    VM_ALLOC_IGN_SBUSY);
+
+	/* Grab will loop internally on failure. */
 	if ((allocflags & VM_ALLOC_NOWAIT) == 0)
 		pflags |= VM_ALLOC_WAITFAIL;
-	if ((allocflags & VM_ALLOC_IGN_SBUSY) != 0)
+
+	/* If flags are compatible use SBUSY. */
+	if ((allocflags & (VM_ALLOC_IGN_SBUSY | VM_ALLOC_ZERO)) ==
+	    VM_ALLOC_IGN_SBUSY)
 		pflags |= VM_ALLOC_SBUSY;
 
 	return (pflags);
@@ -4583,7 +4599,7 @@ vm_page_grab(vm_object_t object, vm_pindex_t pindex, int allocflags)
 
 retrylookup:
 	if ((m = vm_page_lookup(object, pindex)) != NULL) {
-		if (!vm_page_tryacquire(m, allocflags)) {
+		if (!vm_page_trybusy(m, allocflags)) {
 			if (vm_page_grab_sleep(object, m, pindex, "pgrbwt",
 			    allocflags, true))
 				goto retrylookup;
@@ -4599,9 +4615,6 @@ retrylookup:
 			return (NULL);
 		goto retrylookup;
 	}
-	if (allocflags & VM_ALLOC_ZERO && (m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
-
 out:
 	vm_page_grab_release(m, allocflags);
 
@@ -4665,8 +4678,6 @@ vm_page_acquire_unlocked(vm_object_t object, vm_pindex_t pindex,
 		    allocflags, false))
 			return (false);
 	}
-	if ((allocflags & VM_ALLOC_WIRED) != 0)
-		vm_page_wire(m);
 	vm_page_grab_release(m, allocflags);
 	*mp = m;
 	return (true);
@@ -4725,9 +4736,9 @@ vm_page_grab_valid(vm_page_t *mp, vm_object_t object, vm_pindex_t pindex, int al
 	    (VM_ALLOC_NOWAIT | VM_ALLOC_WAITFAIL | VM_ALLOC_ZERO)) == 0,
 	    ("vm_page_grab_valid: Invalid flags 0x%X", allocflags));
 	VM_OBJECT_ASSERT_WLOCKED(object);
-	pflags = allocflags & ~(VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY |
-	    VM_ALLOC_WIRED | VM_ALLOC_IGN_SBUSY);
-	pflags |= VM_ALLOC_WAITFAIL;
+	/* We never want to allocate non-busy pages. */
+	pflags = vm_page_grab_pflags(allocflags &
+	    ~(VM_ALLOC_SBUSY | VM_ALLOC_IGN_SBUSY | VM_ALLOC_NOBUSY));
 
 retrylookup:
 	if ((m = vm_page_lookup(object, pindex)) != NULL) {
@@ -4799,15 +4810,11 @@ retrylookup:
 			vm_page_readahead_finish(ma[i]);
 		MPASS(vm_page_all_valid(m));
 	} else {
+		/* Unlike other grab functions zero is implied. */
 		vm_page_zero_invalid(m, TRUE);
 	}
 out:
-	if ((allocflags & VM_ALLOC_WIRED) != 0)
-		vm_page_wire(m);
-	if ((allocflags & VM_ALLOC_SBUSY) != 0 && vm_page_xbusied(m))
-		vm_page_busy_downgrade(m);
-	else if ((allocflags & VM_ALLOC_NOBUSY) != 0)
-		vm_page_busy_release(m);
+	vm_page_grab_release(m, allocflags);
 	*mp = m;
 	return (VM_PAGER_OK);
 }
@@ -4841,8 +4848,6 @@ vm_page_grab_valid_unlocked(vm_page_t *mp, vm_object_t object,
 		return (VM_PAGER_FAIL);
 	if ((m = *mp) != NULL) {
 		if (vm_page_all_valid(m)) {
-			if ((allocflags & VM_ALLOC_WIRED) != 0)
-				vm_page_wire(m);
 			vm_page_grab_release(m, allocflags);
 			return (VM_PAGER_OK);
 		}
@@ -4911,7 +4916,7 @@ retrylookup:
 		mpred = TAILQ_PREV(m, pglist, listq);
 	for (; i < count; i++) {
 		if (m != NULL) {
-			if (!vm_page_tryacquire(m, allocflags)) {
+			if (!vm_page_trybusy(m, allocflags)) {
 				if (vm_page_grab_sleep(object, m, pindex + i,
 				    "grbmaw", allocflags, true))
 					goto retrylookup;
@@ -4929,12 +4934,6 @@ retrylookup:
 				goto retrylookup;
 			}
 		}
-		if (vm_page_none_valid(m) &&
-		    (allocflags & VM_ALLOC_ZERO) != 0) {
-			if ((m->flags & PG_ZERO) == 0)
-				pmap_zero_page(m);
-			vm_page_valid(m);
-		}
 		vm_page_grab_release(m, allocflags);
 		ma[i] = mpred = m;
 		m = vm_page_next(m);
@@ -4951,31 +4950,19 @@ vm_page_grab_pages_unlocked(vm_object_t object, vm_pindex_t pindex,
     int allocflags, vm_page_t *ma, int count)
 {
 	vm_page_t m, pred;
-	int flags;
 	int i;
 
 	KASSERT(count > 0,
 	    ("vm_page_grab_pages_unlocked: invalid page count %d", count));
 	vm_page_grab_check(allocflags);
-
-	/*
-	 * Modify flags for lockless acquire to hold the page until we
-	 * set it valid if necessary.
-	 */
-	flags = allocflags & ~VM_ALLOC_NOBUSY;
 	pred = NULL;
 	for (i = 0; i < count; i++, pindex++) {
-		if (!vm_page_acquire_unlocked(object, pindex, pred, &m, flags))
+		if (!vm_page_acquire_unlocked(object, pindex, pred, &m,
+		    allocflags))
 			return (i);
 		if (m == NULL)
 			break;
-		if ((flags & VM_ALLOC_ZERO) != 0 && vm_page_none_valid(m)) {
-			if ((m->flags & PG_ZERO) == 0)
-				pmap_zero_page(m);
-			vm_page_valid(m);
-		}
 		/* m will still be wired or busy according to flags. */
-		vm_page_grab_release(m, allocflags);
 		pred = ma[i] = m;
 	}
 	if (i == count || (allocflags & VM_ALLOC_NOCREAT) != 0)
@@ -5413,6 +5400,12 @@ vm_page_zero_invalid(vm_page_t m, boolean_t setvalid)
 	int b;
 	int i;
 
+	/* Short circuit for all invalid. */
+	if (vm_page_none_valid(m)) {
+		pmap_zero_page(m);
+		goto out;
+	}
+
 	/*
 	 * Scan the valid bits looking for invalid sections that
 	 * must be zeroed.  Invalid sub-DEV_BSIZE'd areas ( where the
@@ -5429,7 +5422,7 @@ vm_page_zero_invalid(vm_page_t m, boolean_t setvalid)
 			b = i + 1;
 		}
 	}
-
+out:
 	/*
 	 * setvalid is TRUE when we can safely set the zero'd areas
 	 * as being valid.  We can do this if there are no cache consistancy
