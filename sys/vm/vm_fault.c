@@ -164,6 +164,7 @@ struct faultstate {
 #define	FAULT_RESTART		4		/* Restart fault. */
 #define	FAULT_OUT_OF_BOUNDS	5		/* Invalid address for pager. */
 #define	FAULT_HARD		6		/* Performed I/O. */
+#define	FAULT_SOFT		7		/* Found valid page. */
 
 static void vm_fault_dontneed(const struct faultstate *fs, vm_offset_t vaddr,
 	    int ahead);
@@ -1333,6 +1334,79 @@ vm_fault_busy_sleep(struct faultstate *fs)
 	vm_object_deallocate(fs->first_object);
 }
 
+/*
+ * Handle page lookup, populate, allocate, page-in for the current object.
+ *
+ * The object is locked on entry and will remain locked with a return
+ * code of FAULT_CONTINUE so that fault may follow the shadow chain.
+ *
+ * All other return codes unlock the object.
+ */
+static int
+vm_fault_object(struct faultstate *fs, int *behindp, int *aheadp)
+{
+	int rv;
+
+	/*
+	 * See if page is resident
+	 */
+	fs->m = vm_page_lookup(fs->object, fs->pindex);
+	if (fs->m != NULL) {
+		if (vm_page_tryxbusy(fs->m) == 0) {
+			vm_fault_busy_sleep(fs);
+			return (FAULT_RESTART);
+		}
+
+		/*
+		 * The page is marked busy for other processes and the
+		 * pagedaemon.  If it still is completely valid we
+		 * are done.
+		 */
+		if (vm_page_all_valid(fs->m)) {
+			VM_OBJECT_WUNLOCK(fs->object);
+			return (FAULT_SOFT);
+		}
+	}
+	VM_OBJECT_ASSERT_WLOCKED(fs->object);
+
+	/*
+	 * Page is not resident.  If the pager might contain the page
+	 * or this is the beginning of the search, allocate a new
+	 * page.  (Default objects are zero-fill, so there is no real
+	 * pager for them.)
+	 */
+	if (fs->m == NULL && (fs->object->type != OBJT_DEFAULT ||
+	    fs->object == fs->first_object)) {
+		rv = vm_fault_allocate(fs);
+		if (rv != FAULT_CONTINUE)
+			return (rv);
+	}
+
+	/*
+	 * Default objects have no pager so no exclusive busy exists
+	 * to protect this page in the chain.  Skip to the next
+	 * object without dropping the lock to preserve atomicity of
+	 * shadow faults.
+	 */
+	if (fs->object->type != OBJT_DEFAULT) {
+		/*
+		 * At this point, we have either allocated a new page
+		 * or found an existing page that is only partially
+		 * valid.
+		 *
+		 * We hold a reference on the current object and the
+		 * page is exclusive busied.  The exclusive busy
+		 * prevents simultaneous faults and collapses while
+		 * the object lock is dropped.
+		 */
+		VM_OBJECT_WUNLOCK(fs->object);
+		rv = vm_fault_getpages(fs, behindp, aheadp);
+		if (rv == FAULT_CONTINUE)
+			VM_OBJECT_WLOCK(fs->object);
+	}
+	return (rv);
+}
+
 int
 vm_fault(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
     int fault_flags, vm_page_t *m_hold)
@@ -1452,89 +1526,27 @@ RetryFault:
 			pause("vmf_de", 1);
 			goto RetryFault;
 		}
-
-		/*
-		 * See if page is resident
-		 */
-		fs.m = vm_page_lookup(fs.object, fs.pindex);
-		if (fs.m != NULL) {
-			if (vm_page_tryxbusy(fs.m) == 0) {
-				vm_fault_busy_sleep(&fs);
-				goto RetryFault;
-			}
-
-			/*
-			 * The page is marked busy for other processes and the
-			 * pagedaemon.  If it still is completely valid we
-			 * are done.
-			 */
-			if (vm_page_all_valid(fs.m)) {
-				VM_OBJECT_WUNLOCK(fs.object);
-				break; /* break to PAGE HAS BEEN FOUND. */
-			}
+		rv = vm_fault_object(&fs, &behind, &ahead);
+		if (rv == FAULT_SOFT)
+			break;
+		if (rv == FAULT_HARD) {
+			faultcount = behind + 1 + ahead;
+			hardfault = true;
+			break;
 		}
-		VM_OBJECT_ASSERT_WLOCKED(fs.object);
-
-		/*
-		 * Page is not resident.  If the pager might contain the page
-		 * or this is the beginning of the search, allocate a new
-		 * page.  (Default objects are zero-fill, so there is no real
-		 * pager for them.)
-		 */
-		if (fs.m == NULL && (fs.object->type != OBJT_DEFAULT ||
-		    fs.object == fs.first_object)) {
-			rv = vm_fault_allocate(&fs);
-			switch (rv) {
-			case FAULT_RESTART:
-				goto RetryFault;
-			case FAULT_SUCCESS:
-				return (KERN_SUCCESS);
-			case FAULT_FAILURE:
-				return (KERN_FAILURE);
-			case FAULT_OUT_OF_BOUNDS:
-				return (KERN_OUT_OF_BOUNDS);
-			case FAULT_CONTINUE:
-				break;
-			default:
-				panic("vm_fault: Unhandled rv %d", rv);
-			}
-		}
-
-		/*
-		 * Default objects have no pager so no exclusive busy exists
-		 * to protect this page in the chain.  Skip to the next
-		 * object without dropping the lock to preserve atomicity of
-		 * shadow faults.
-		 */
-		if (fs.object->type != OBJT_DEFAULT) {
-			/*
-			 * At this point, we have either allocated a new page
-			 * or found an existing page that is only partially
-			 * valid.
-			 *
-			 * We hold a reference on the current object and the
-			 * page is exclusive busied.  The exclusive busy
-			 * prevents simultaneous faults and collapses while
-			 * the object lock is dropped.
-		 	 */
-			VM_OBJECT_WUNLOCK(fs.object);
-			rv = vm_fault_getpages(&fs, &behind, &ahead);
-			if (rv == FAULT_HARD) {
-				faultcount = behind + 1 + ahead;
-				hardfault = true;
-				break; /* break to PAGE HAS BEEN FOUND. */
-			}
-			switch (rv) {
-			case FAULT_RESTART:
-				goto RetryFault;
-			case FAULT_OUT_OF_BOUNDS:
-				return (KERN_OUT_OF_BOUNDS);
-			case FAULT_CONTINUE:
-				break;
-			default:
-				panic("vm_fault: Unhandled rv %d", rv);
-			}
-			VM_OBJECT_WLOCK(fs.object);
+		switch (rv) {
+		case FAULT_RESTART:
+			goto RetryFault;
+		case FAULT_SUCCESS:
+			return (KERN_SUCCESS);
+		case FAULT_FAILURE:
+			return (KERN_FAILURE);
+		case FAULT_OUT_OF_BOUNDS:
+			return (KERN_OUT_OF_BOUNDS);
+		case FAULT_CONTINUE:
+			break;
+		default:
+			panic("vm_fault: Unhandled rv %d", rv);
 		}
 
 		/*
@@ -1554,12 +1566,12 @@ RetryFault:
 		vm_fault_zerofill(&fs);
 		/* Don't try to prefault neighboring pages. */
 		faultcount = 1;
-		break;	/* break to PAGE HAS BEEN FOUND. */
+		break;
 	}
 
 	/*
-	 * PAGE HAS BEEN FOUND.  A valid page has been found and exclusively
-	 * busied.  The object lock must no longer be held.
+	 * A valid page has been found and exclusively busied.  The object
+	 * lock must no longer be held.
 	 */
 	vm_page_assert_xbusied(fs.m);
 	VM_OBJECT_ASSERT_UNLOCKED(fs.object);
