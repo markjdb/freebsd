@@ -155,6 +155,16 @@ struct faultstate {
 	struct vnode	*vp;
 };
 
+/*
+ * Return codes for internal fault routines.
+ */
+#define	FAULT_SUCCESS		1		/* Return success to user. */
+#define	FAULT_FAILURE		2		/* Return failure to user. */
+#define	FAULT_CONTINUE		3		/* Continue faulting. */
+#define	FAULT_RESTART		4		/* Restart fault. */
+#define	FAULT_OUT_OF_BOUNDS	5		/* Invalid address for pager. */
+#define	FAULT_HARD		6		/* Performed I/O. */
+
 static void vm_fault_dontneed(const struct faultstate *fs, vm_offset_t vaddr,
 	    int ahead);
 static void vm_fault_prefault(const struct faultstate *fs, vm_offset_t addra,
@@ -456,11 +466,11 @@ vm_fault_populate(struct faultstate *fs)
 		 */
 		vm_fault_restore_map_lock(fs);
 		if (fs->map->timestamp != fs->map_generation)
-			return (KERN_RESTART);
-		return (KERN_NOT_RECEIVER);
+			return (FAULT_RESTART);
+		return (FAULT_CONTINUE);
 	}
 	if (rv != VM_PAGER_OK)
-		return (KERN_FAILURE); /* AKA SIGSEGV */
+		return (FAULT_FAILURE); /* AKA SIGSEGV */
 
 	/* Ensure that the driver is obeying the interface. */
 	MPASS(pager_first <= pager_last);
@@ -480,7 +490,7 @@ vm_fault_populate(struct faultstate *fs)
 			if (m != fs->m)
 				vm_page_xunbusy(m);
 		}
-		return (KERN_RESTART);
+		return (FAULT_RESTART);
 	}
 
 	/*
@@ -596,7 +606,7 @@ vm_fault_populate(struct faultstate *fs)
 	}
 out:
 	curthread->td_ru.ru_majflt++;
-	return (rv);
+	return (rv == KERN_SUCCESS ? FAULT_SUCCESS : FAULT_FAILURE);
 }
 
 static int prot_fault_translation;
@@ -706,11 +716,11 @@ vm_fault_lock_vnode(struct faultstate *fs, bool objlocked)
 	int error, locked;
 
 	if (fs->object->type != OBJT_VNODE)
-		return (KERN_SUCCESS);
+		return (FAULT_CONTINUE);
 	vp = fs->object->handle;
 	if (vp == fs->vp) {
 		ASSERT_VOP_LOCKED(vp, "saved vnode is not locked");
-		return (KERN_SUCCESS);
+		return (FAULT_CONTINUE);
 	}
 
 	/*
@@ -732,7 +742,7 @@ vm_fault_lock_vnode(struct faultstate *fs, bool objlocked)
 	error = vget(vp, locked | LK_CANRECURSE | LK_NOWAIT);
 	if (error == 0) {
 		fs->vp = vp;
-		return (KERN_SUCCESS);
+		return (FAULT_CONTINUE);
 	}
 
 	vhold(vp);
@@ -744,7 +754,7 @@ vm_fault_lock_vnode(struct faultstate *fs, bool objlocked)
 	vdrop(vp);
 	fs->vp = vp;
 	KASSERT(error == 0, ("vm_fault: vget failed %d", error));
-	return (KERN_RESOURCE_SHORTAGE);
+	return (FAULT_RESTART);
 }
 
 /*
@@ -1120,24 +1130,26 @@ vm_fault_allocate(struct faultstate *fs)
 
 	if ((fs->object->flags & OBJ_SIZEVNLOCK) != 0) {
 		rv = vm_fault_lock_vnode(fs, true);
-		MPASS(rv == KERN_SUCCESS || rv == KERN_RESOURCE_SHORTAGE);
-		if (rv == KERN_RESOURCE_SHORTAGE)
+		MPASS(rv == FAULT_CONTINUE || rv == FAULT_RESTART);
+		if (rv == FAULT_RESTART)
 			return (rv);
 	}
 
-	if (fs->pindex >= fs->object->size)
-		return (KERN_OUT_OF_BOUNDS);
+	if (fs->pindex >= fs->object->size) {
+		unlock_and_deallocate(fs);
+		return (FAULT_OUT_OF_BOUNDS);
+	}
 
 	if (fs->object == fs->first_object &&
 	    (fs->first_object->flags & OBJ_POPULATE) != 0) {
 		rv = vm_fault_populate(fs);
 		switch (rv) {
-		case KERN_SUCCESS:
-		case KERN_FAILURE:
-		case KERN_PROTECTION_FAILURE:
-		case KERN_RESTART:
+		case FAULT_SUCCESS:
+		case FAULT_FAILURE:
+		case FAULT_RESTART:
+			unlock_and_deallocate(fs);
 			return (rv);
-		case KERN_NOT_RECEIVER:
+		case FAULT_CONTINUE:
 			/*
 			 * Pager's populate() method
 			 * returned VM_PAGER_BAD.
@@ -1173,11 +1185,11 @@ vm_fault_allocate(struct faultstate *fs)
 	if (fs->m == NULL) {
 		if (vm_fault_allocate_oom(fs))
 			vm_waitpfault(dset, vm_pfault_oom_wait * hz);
-		return (KERN_RESOURCE_SHORTAGE);
+		return (FAULT_RESTART);
 	}
 	fs->oom_started = false;
 
-	return (KERN_NOT_RECEIVER);
+	return (FAULT_CONTINUE);
 }
 
 /*
@@ -1225,8 +1237,8 @@ vm_fault_getpages(struct faultstate *fs, int *behindp, int *aheadp)
 	unlock_map(fs);
 
 	rv = vm_fault_lock_vnode(fs, false);
-	MPASS(rv == KERN_SUCCESS || rv == KERN_RESOURCE_SHORTAGE);
-	if (rv == KERN_RESOURCE_SHORTAGE)
+	MPASS(rv == FAULT_CONTINUE || rv == FAULT_RESTART);
+	if (rv == FAULT_RESTART)
 		return (rv);
 	KASSERT(fs->vp == NULL || !fs->map->system_map,
 	    ("vm_fault: vnode-backed object mapped by system map"));
@@ -1266,7 +1278,7 @@ vm_fault_getpages(struct faultstate *fs, int *behindp, int *aheadp)
 	*aheadp = ahead;
 	rv = vm_pager_get_pages(fs->object, &fs->m, 1, behindp, aheadp);
 	if (rv == VM_PAGER_OK)
-		return (KERN_SUCCESS);
+		return (FAULT_HARD);
 	if (rv == VM_PAGER_ERROR)
 		printf("vm_fault: pager read error, pid %d (%s)\n",
 		    curproc->p_pid, curproc->p_comm);
@@ -1279,11 +1291,11 @@ vm_fault_getpages(struct faultstate *fs, int *behindp, int *aheadp)
 		VM_OBJECT_WLOCK(fs->object);
 		fault_page_free(&fs->m);
 		unlock_and_deallocate(fs);
-		return (KERN_OUT_OF_BOUNDS);
+		return (FAULT_OUT_OF_BOUNDS);
 	}
 	MPASS(rv == VM_PAGER_FAIL);
 
-	return (KERN_NOT_RECEIVER);
+	return (FAULT_CONTINUE);
 }
 
 /*
@@ -1473,18 +1485,15 @@ RetryFault:
 		    fs.object == fs.first_object)) {
 			rv = vm_fault_allocate(&fs);
 			switch (rv) {
-			case KERN_RESTART:
-				unlock_and_deallocate(&fs);
-				/* FALLTHROUGH */
-			case KERN_RESOURCE_SHORTAGE:
+			case FAULT_RESTART:
 				goto RetryFault;
-			case KERN_SUCCESS:
-			case KERN_FAILURE:
-			case KERN_PROTECTION_FAILURE:
-			case KERN_OUT_OF_BOUNDS:
-				unlock_and_deallocate(&fs);
-				return (rv);
-			case KERN_NOT_RECEIVER:
+			case FAULT_SUCCESS:
+				return (KERN_SUCCESS);
+			case FAULT_FAILURE:
+				return (KERN_FAILURE);
+			case FAULT_OUT_OF_BOUNDS:
+				return (KERN_OUT_OF_BOUNDS);
+			case FAULT_CONTINUE:
 				break;
 			default:
 				panic("vm_fault: Unhandled rv %d", rv);
@@ -1510,15 +1519,21 @@ RetryFault:
 		 	 */
 			VM_OBJECT_WUNLOCK(fs.object);
 			rv = vm_fault_getpages(&fs, &behind, &ahead);
-			if (rv == KERN_SUCCESS) {
+			if (rv == FAULT_HARD) {
 				faultcount = behind + 1 + ahead;
 				hardfault = true;
 				break; /* break to PAGE HAS BEEN FOUND. */
 			}
-			if (rv == KERN_RESOURCE_SHORTAGE)
+			switch (rv) {
+			case FAULT_RESTART:
 				goto RetryFault;
-			if (rv == KERN_OUT_OF_BOUNDS)
-				return (rv);
+			case FAULT_OUT_OF_BOUNDS:
+				return (KERN_OUT_OF_BOUNDS);
+			case FAULT_CONTINUE:
+				break;
+			default:
+				panic("vm_fault: Unhandled rv %d", rv);
+			}
 			VM_OBJECT_WLOCK(fs.object);
 		}
 
