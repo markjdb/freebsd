@@ -173,6 +173,7 @@
  * shmflags for shm_open2()
  */
 #define	SHM_ALLOW_SEALING		0x00000001
+#define	SHM_GROW_ON_WRITE		0x00000002
 
 /*
  * Flags for memfd_create().
@@ -262,6 +263,7 @@ struct shmfd {
 	struct mtx	shm_mtx;
 	vm_ooffset_t	shm_size;
 
+	int		shm_flags;
 	int		shm_seals;
 };
 #endif
