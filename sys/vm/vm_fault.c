@@ -161,14 +161,16 @@ struct faultstate {
 /*
  * Return codes for internal fault routines.
  */
-#define	FAULT_SUCCESS		1		/* Return success to user. */
-#define	FAULT_FAILURE		2		/* Return failure to user. */
-#define	FAULT_CONTINUE		3		/* Continue faulting. */
-#define	FAULT_RESTART		4		/* Restart fault. */
-#define	FAULT_OUT_OF_BOUNDS	5		/* Invalid address for pager. */
-#define	FAULT_HARD		6		/* Performed I/O. */
-#define	FAULT_SOFT		7		/* Found valid page. */
-#define	FAULT_PROTECTION_FAILURE 8
+enum fault_status {
+	FAULT_SUCCESS =	1,	/* Return success to user. */
+	FAULT_FAILURE,		/* Return failure to user. */
+	FAULT_CONTINUE,		/* Continue faulting. */
+	FAULT_RESTART,		/* Restart fault. */
+	FAULT_OUT_OF_BOUNDS,	/* Invalid address for pager. */
+	FAULT_HARD,		/* Performed I/O. */
+	FAULT_SOFT,		/* Found valid page. */
+	FAULT_PROTECTION_FAILURE,
+};
 
 static void vm_fault_dontneed(const struct faultstate *fs, vm_offset_t vaddr,
 	    int ahead);
@@ -458,7 +460,7 @@ vm_fault_populate_cleanup(vm_object_t object, vm_pindex_t first,
 	}
 }
 
-static int
+static enum fault_status
 vm_fault_populate(struct faultstate *fs)
 {
 	vm_offset_t vaddr;
@@ -740,7 +742,7 @@ vm_fault_trap(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	return (result);
 }
 
-static int
+static enum fault_status
 vm_fault_lock_vnode(struct faultstate *fs, bool objlocked)
 {
 	struct vnode *vp;
@@ -1155,11 +1157,11 @@ vm_fault_allocate_oom(struct faultstate *fs)
 /*
  * Allocate a page directly or via the object populate method.
  */
-static int
+static enum fault_status
 vm_fault_allocate(struct faultstate *fs)
 {
 	struct domainset *dset;
-	int rv;
+	enum fault_status rv;
 
 	if ((fs->object->flags & OBJ_SIZEVNLOCK) != 0) {
 		rv = vm_fault_lock_vnode(fs, true);
@@ -1378,10 +1380,10 @@ vm_fault_busy_sleep(struct faultstate *fs, bool locked)
  * maintain atomicity with collapse until a page us busied or the current
  * object lock is acquired.
  */
-static int
+static enum fault_status
 vm_fault_object(struct faultstate *fs, int *behindp, int *aheadp)
 {
-	int rv;
+	enum fault_status rv;
 	bool dead;
 
 	VM_OBJECT_ASSERT_UNLOCKED(fs->object);
