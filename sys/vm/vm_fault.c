@@ -1466,7 +1466,7 @@ vm_fault_object(struct faultstate *fs, int *behindp, int *aheadp)
 	 * shadow faults.
 	 */
 	if (fs->object->type == OBJT_DEFAULT)
-		return (rv);
+		return (FAULT_CONTINUE);
 	/*
 	 * At this point, we have either allocated a new page or found an
 	 * existing page that is only partially valid.
