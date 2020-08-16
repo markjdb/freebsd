@@ -193,7 +193,7 @@ smrs_init(void)
 	smrs_zone = uma_zcreate("smrs", sizeof(struct smrs),
 	    smrs_ctor,  smrs_dtor, NULL, NULL, UMA_ALIGN_PTR,
 	    UMA_ZONE_ZINIT);
-	smrs_smr = smr_create("smrs", SMR_LAZY);
+	smrs_smr = smr_create("smrs", 0, SMR_LAZY);
         uma_zone_set_smr(smrs_zone, smrs_smr);
 }
 
