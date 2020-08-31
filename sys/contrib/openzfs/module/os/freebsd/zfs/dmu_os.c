@@ -194,12 +194,12 @@ dmu_read_pages(objset_t *os, uint64_t object, vm_page_t *ma, int count,
 	db = dbp[0];
 	for (i = 0; i < *rbehind; i++) {
 		m = vm_page_grab_unlocked(vmobj, ma[0]->pindex - 1 - i,
-		    VM_ALLOC_NORMAL | VM_ALLOC_NOWAIT | VM_ALLOC_BUSY_FLAGS);
+		    VM_ALLOC_NORMAL | VM_ALLOC_NOWAIT);
 		if (m == NULL)
 			break;
 		if (!vm_page_none_valid(m)) {
 			ASSERT3U(m->valid, ==, VM_PAGE_BITS_ALL);
-			vm_page_do_sunbusy(m);
+			vm_page_xunbusy(m);
 			break;
 		}
 		ASSERT(m->dirty == 0);
@@ -217,7 +217,7 @@ dmu_read_pages(objset_t *os, uint64_t object, vm_page_t *ma, int count,
 		else
 			vm_page_deactivate(m);
 		dmu_page_unlock(m);
-		vm_page_do_sunbusy(m);
+		vm_page_xunbusy(m);
 	}
 	*rbehind = i;
 
@@ -310,12 +310,12 @@ dmu_read_pages(objset_t *os, uint64_t object, vm_page_t *ma, int count,
 
 	for (i = 0; i < *rahead; i++) {
 		m = vm_page_grab_unlocked(vmobj, ma[count - 1]->pindex + 1 + i,
-		    VM_ALLOC_NORMAL | VM_ALLOC_NOWAIT | VM_ALLOC_BUSY_FLAGS);
+		    VM_ALLOC_NORMAL | VM_ALLOC_NOWAIT);
 		if (m == NULL)
 			break;
 		if (!vm_page_none_valid(m)) {
 			ASSERT3U(m->valid, ==, VM_PAGE_BITS_ALL);
-			vm_page_do_sunbusy(m);
+			vm_page_xunbusy(m);
 			break;
 		}
 		ASSERT(m->dirty == 0);
@@ -339,7 +339,7 @@ dmu_read_pages(objset_t *os, uint64_t object, vm_page_t *ma, int count,
 		else
 			vm_page_deactivate(m);
 		dmu_page_unlock(m);
-		vm_page_do_sunbusy(m);
+		vm_page_xunbusy(m);
 	}
 	*rahead = i;
 	zfs_vmobject_wunlock_12(vmobj);
