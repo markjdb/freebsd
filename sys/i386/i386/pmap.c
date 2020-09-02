@@ -5822,7 +5822,7 @@ retry:
 			/* Compute the physical address of the 4KB page. */
 			pa = ((pde & PG_PS_FRAME) | (addr & PDRMASK)) &
 			    PG_FRAME;
-			val = MINCORE_SUPER;
+			val = MINCORE_PSIND(1);
 		} else {
 			pte = pmap_pte_ufast(pmap, addr, pde);
 			pa = pte & PG_FRAME;

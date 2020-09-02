@@ -6254,7 +6254,7 @@ retry:
 	if (pte1_is_section(pte1)) {
 		pa = trunc_page(pte1_pa(pte1) | (addr & PTE1_OFFSET));
 		managed = pte1_is_managed(pte1);
-		val = MINCORE_SUPER | MINCORE_INCORE;
+		val = MINCORE_PSIND(1) | MINCORE_INCORE;
 		if (pte1_is_dirty(pte1))
 			val |= MINCORE_MODIFIED | MINCORE_MODIFIED_OTHER;
 		if (pte1 & PTE1_A)

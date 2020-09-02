@@ -5630,7 +5630,7 @@ retry:
 		managed = (tpte & ATTR_SW_MANAGED) != 0;
 		val = MINCORE_INCORE;
 		if (lvl != 3)
-			val |= MINCORE_SUPER;
+			val |= MINCORE_PSIND(3 - lvl);
 		if ((managed && pmap_pte_dirty(tpte)) || (!managed &&
 		    (tpte & ATTR_AP_RW_BIT) == ATTR_AP(ATTR_AP_RW)))
 			val |= MINCORE_MODIFIED | MINCORE_MODIFIED_OTHER;
