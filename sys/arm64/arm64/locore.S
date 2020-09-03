@@ -95,6 +95,9 @@ _start:
 	/* Enable the mmu */
 	bl	start_mmu
 
+	/* Load the new ttbr0 pagetable */
+	adr	x27, pagetable_l0_ttbr0
+
 	/* Jump to the virtual address space */
 	ldr	x15, .Lvirtdone
 	br	x15
@@ -133,6 +136,7 @@ virtdone:
 	str	x25, [x0, #BP_KERN_STACK]
 	str	x24, [x0, #BP_KERN_L0PT]
 	str	x23, [x0, #BP_BOOT_EL]
+	str	x27, [x0, 40]	/* kern_ttbr0 */
 
 #ifdef KASAN
 	/* Save bootparams */
@@ -182,10 +186,13 @@ ENTRY(mpentry)
 	/* Load the kernel page table */
 	adr	x24, pagetable_l0_ttbr1
 	/* Load the identity page table */
-	adr	x27, pagetable_l0_ttbr0
+	adr	x27, pagetable_l0_ttbr0_boostrap
 
 	/* Enable the mmu */
 	bl	start_mmu
+
+	/* Load the new ttbr0 pagetable */
+	adr	x27, pagetable_l0_ttbr0
 
 	/* Jump to the virtual address space */
 	ldr	x15, =mp_virtdone
@@ -196,6 +203,16 @@ mp_virtdone:
 	ldr	x4, =bootstack
 	ldr	x4, [x4]
 	mov	sp, x4
+
+	/* Load the kernel ttbr0 pagetable */
+	msr	ttbr0_el1, x27
+	isb
+
+	/* Invalidate the TLB */
+	tlbi	vmalle1
+	dsb	sy
+	isb
+
 	b	init_secondary
 END(mpentry)
 #endif
@@ -652,10 +669,13 @@ abort:
 	.section .init_pagetable, "aw", %nobits
 	.align PAGE_SHIFT
 	/*
-	 * 3 initial tables (in the following order):
+	 * 6 initial tables (in the following order):
 	 *           L2 for kernel (High addresses)
 	 *           L1 for kernel
-	 *           L1 for user   (Low addresses)
+	 *           L0 for kernel
+	 *           L1 bootstrap for user   (Low addresses)
+	 *           L0 bootstrap for user
+	 *           L0 for user
 	 */
 pagetable:
 	.space	PAGE_SIZE
@@ -663,7 +683,9 @@ pagetable_l1_ttbr1:
 	.space	PAGE_SIZE
 pagetable_l0_ttbr1:
 	.space	PAGE_SIZE
-pagetable_l1_ttbr0:
+pagetable_l1_ttbr0_bootstrap:
+	.space	PAGE_SIZE
+pagetable_l0_ttbr0_boostrap:
 	.space	PAGE_SIZE
 pagetable_l0_ttbr0:
 	.space	PAGE_SIZE
