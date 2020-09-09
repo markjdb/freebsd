@@ -404,7 +404,7 @@ vm_fault_populate(struct faultstate *fs, vm_prot_t prot, int fault_type,
 	vm_offset_t vaddr;
 	vm_page_t m;
 	vm_pindex_t map_first, map_last, pager_first, pager_last, pidx;
-	int i, npages, psind, rv;
+	int bdry_idx, i, npages, psind, rv;
 
 	MPASS(fs->object == fs->first_object);
 	VM_OBJECT_ASSERT_WLOCKED(fs->first_object);
@@ -449,15 +449,57 @@ vm_fault_populate(struct faultstate *fs, vm_prot_t prot, int fault_type,
 	MPASS(pager_last < fs->first_object->size);
 
 	vm_fault_restore_map_lock(fs);
+	bdry_idx = (fs->entry->eflags & MAP_ENTRY_SPLIT_BOUNDARY_MASK) >>
+	    MAP_ENTRY_SPLIT_BOUNDARY_SHIFT;
 	if (fs->map->timestamp != fs->map_generation) {
-		vm_fault_populate_cleanup(fs->first_object, pager_first,
-		    pager_last);
+		if (bdry_idx == 0) {
+			vm_fault_populate_cleanup(fs->first_object, pager_first,
+			    pager_last);
+		} else {
+			m = vm_page_lookup(fs->first_object, pager_first);
+			if (m != fs->m)
+				vm_page_xunbusy(m);
+		}
 		return (KERN_RESOURCE_SHORTAGE); /* RetryFault */
 	}
 
 	/*
 	 * The map is unchanged after our last unlock.  Process the fault.
 	 *
+	 * First, the special case of largepage mappings, where
+	 * populate only busies the first page in superpage run.
+	 */
+	if (bdry_idx != 0) {
+		m = vm_page_lookup(fs->first_object, pager_first);
+		vm_fault_populate_check_page(m);
+		VM_OBJECT_WUNLOCK(fs->first_object);
+		vaddr = fs->entry->start + IDX_TO_OFF(pager_first) -
+		    fs->entry->offset;
+		/* assert alignment for entry */
+		KASSERT((vaddr & (pagesizes[bdry_idx] - 1)) == 0,
+    ("unaligned superpage start %#jx pager_first %#jx offset %#jx vaddr %#jx",
+		    (uintmax_t)fs->entry->start, (uintmax_t)pager_first,
+		    (uintmax_t)fs->entry->offset, (uintmax_t)vaddr));
+		KASSERT((VM_PAGE_TO_PHYS(m) & (pagesizes[bdry_idx] - 1)) == 0,
+		    ("unaligned superpage m %p %#jx", m,
+		    (uintmax_t)VM_PAGE_TO_PHYS(m)));
+		rv = pmap_enter(fs->map->pmap, vaddr, m, prot,
+		    fault_type | (wired ? PMAP_ENTER_WIRED : 0) |
+		    PMAP_ENTER_LARGEPAGE, bdry_idx);
+		VM_OBJECT_WLOCK(fs->first_object);
+		vm_page_xunbusy(m);
+		if ((fault_flags & VM_FAULT_WIRE) != 0) {
+			for (i = 0; i < atop(pagesizes[bdry_idx]); i++)
+				vm_page_wire(m + i);
+		}
+		if (m_hold != NULL) {
+			*m_hold = m + (fs->first_pindex - pager_first);
+			vm_page_wire(*m_hold);
+		}
+		goto out;
+	}
+
+	/*
 	 * The range [pager_first, pager_last] that is given to the
 	 * pager is only a hint.  The pager may populate any range
 	 * within the object that includes the requested page index.
@@ -528,6 +570,7 @@ vm_fault_populate(struct faultstate *fs, vm_prot_t prot, int fault_type,
 		if (m_mtx != NULL)
 			mtx_unlock(m_mtx);
 	}
+out:
 	curthread->td_ru.ru_majflt++;
 	return (KERN_SUCCESS);
 }
@@ -760,6 +803,7 @@ RetryFault_oom:
 	 * run in parallel on the same top-level object.
 	 */
 	if (fs.vp == NULL /* avoid locked vnode leak */ &&
+	    (fs.entry->eflags & MAP_ENTRY_SPLIT_BOUNDARY_MASK) == 0 &&
 	    (fault_flags & (VM_FAULT_WIRE | VM_FAULT_DIRTY)) == 0 &&
 	    /* avoid calling vm_object_set_writeable_dirty() */
 	    ((prot & VM_PROT_WRITE) == 0 ||
@@ -805,6 +849,29 @@ RetryFault_oom:
 	 */
 	fs.object = fs.first_object;
 	fs.pindex = fs.first_pindex;
+
+	if ((fs.entry->eflags & MAP_ENTRY_SPLIT_BOUNDARY_MASK) != 0) {
+		rv = vm_fault_populate(&fs, prot, fault_type,
+		    fault_flags, wired, m_hold);
+		switch (rv) {
+		case KERN_SUCCESS:
+		case KERN_FAILURE:
+			unlock_and_deallocate(&fs);
+			return (rv);
+		case KERN_RESOURCE_SHORTAGE:
+			unlock_and_deallocate(&fs);
+			goto RetryFault;
+		case KERN_NOT_RECEIVER:
+			/*
+			 * Pager's populate() method
+			 * returned VM_PAGER_BAD.
+			 */
+			break;
+		default:
+			panic("inconsistent return codes");
+		}
+	}
+
 	while (TRUE) {
 		/*
 		 * If the object is marked for imminent termination,

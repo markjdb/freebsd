@@ -202,7 +202,7 @@ kern_mmap_fpcheck(struct thread *td, uintptr_t addr0, size_t size, int prot,
 	struct vmspace *vms;
 	struct file *fp;
 	struct proc *p;
-	vm_offset_t addr;
+	vm_offset_t addr, orig_addr;
 	vm_size_t pageoff;
 	vm_prot_t cap_maxprot;
 	int align, error;
@@ -212,7 +212,7 @@ kern_mmap_fpcheck(struct thread *td, uintptr_t addr0, size_t size, int prot,
 	vms = p->p_vmspace;
 	fp = NULL;
 	AUDIT_ARG_FD(fd);
-	addr = addr0;
+	orig_addr = addr = addr0;
 
 	/*
 	 * Ignore old flags that used to be defined but did not do anything.
@@ -378,6 +378,8 @@ kern_mmap_fpcheck(struct thread *td, uintptr_t addr0, size_t size, int prot,
 			if (error != 0)
 				goto done;
 		}
+		if (fp->f_ops == &shm_ops && shm_largepage(fp->f_data))
+			addr = orig_addr;
 		/* This relies on VM_PROT_* matching PROT_*. */
 		error = fo_mmap(fp, &vms->vm_map, &addr, size, prot,
 		    cap_maxprot, flags, pos, td);
@@ -1056,7 +1058,14 @@ kern_mlock(struct proc *proc, struct ucred *cred, uintptr_t addr0, size_t len)
 		PROC_UNLOCK(proc);
 	}
 #endif
-	return (error == KERN_SUCCESS ? 0 : ENOMEM);
+	switch (error) {
+	case KERN_SUCCESS:
+		return (0);
+	case KERN_INVALID_ARGUMENT:
+		return (EINVAL);
+	default:
+		return (ENOMEM);
+	}
 }
 
 #ifndef _SYS_SYSPROTO_H_
