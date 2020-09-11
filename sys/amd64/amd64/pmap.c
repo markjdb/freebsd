@@ -3616,6 +3616,90 @@ out:
 	return (m);
 }
 
+void
+pmap_extract_and_hold_pages(pmap_t pmap, vm_offset_t va, vm_prot_t prot,
+    vm_page_t *ma, int count)
+{
+	pdp_entry_t pdpe, *pdpep;
+	pd_entry_t pde, *pdep;
+	pt_entry_t pte, *ptep, PG_RW, PG_V;
+	vm_page_t m;
+	vm_offset_t bva;
+	int i;
+
+	PG_RW = pmap_rw_bit(pmap);
+	PG_V = pmap_valid_bit(pmap);
+
+	PMAP_LOCK(pmap);
+	for (i = 0; i < count; va += PAGE_SIZE, i++) {
+		ma[i] = NULL;
+
+		pdpep = pmap_pdpe(pmap, va);
+		if (pdpep == NULL || ((pdpe = *pdpep) & PG_V) == 0)
+			continue;
+		if ((pdpe & PG_PS) != 0) {
+			if ((pdpe & PG_RW) == 0 && (prot & VM_PROT_WRITE) != 0)
+				continue;
+			bva = (va & PDPMASK);
+			m = PHYS_TO_VM_PAGE((pdpe & PG_PS_FRAME) | bva);
+			if (__predict_false(m == NULL))
+				continue;
+			do {
+				/* XXX assumes pages are contiguous */
+				ma[i++] = m++;
+				va += PAGE_SIZE;
+			} while (i < count && (va & PDPMASK) == bva);
+
+			i--;
+			va -= PAGE_SIZE;
+			continue;
+		}
+
+		pdep = pmap_pdpe_to_pde(pdpep, va);
+		if (pdep == NULL || ((pde = *pdep) & PG_V) == 0)
+			continue;
+		if ((pde & PG_PS) != 0) {
+			if ((pde & PG_RW) == 0 && (prot & VM_PROT_WRITE) != 0)
+				continue;
+			bva = (va & PDRMASK);
+			m = PHYS_TO_VM_PAGE((pde & PG_PS_FRAME) | bva);
+			if (__predict_false(m == NULL))
+				continue;
+			do {
+				/* XXX assumes pages are contiguous */
+				ma[i++] = m++;
+				va += PAGE_SIZE;
+			} while (i < count && (va & PDRMASK) == bva);
+
+			i--;
+			va -= PAGE_SIZE;
+			continue;
+		}
+
+		ptep = pmap_pde_to_pte(pdep, va);
+		bva = (va & PDRMASK);
+		for (; i < count && (va & PDRMASK) == bva; va += PAGE_SIZE, ptep++) {
+			pte = *ptep;
+			if ((pte & PG_V) == 0 ||
+			    ((pte & PG_RW) == 0 && (prot & VM_PROT_WRITE) != 0))
+				goto next_pte;
+			m = PHYS_TO_VM_PAGE(pte & PG_FRAME);
+			if (__predict_false(m == NULL))
+				goto next_pte;
+			ma[i++] = m;
+		}
+
+		i--;
+		va -= PAGE_SIZE;
+next_pte:;
+	}
+	for (i = 0; i < count; i++) {
+		if (ma[i] != NULL && !vm_page_wire_mapped(ma[i]))
+			ma[i] = NULL;
+	}
+	PMAP_UNLOCK(pmap);
+}
+
 vm_paddr_t
 pmap_kextract(vm_offset_t va)
 {
