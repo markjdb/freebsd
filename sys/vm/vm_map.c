@@ -287,6 +287,7 @@ vmspace_container_reset(struct proc *p)
 static inline void
 vmspace_dofree(struct vmspace *vm)
 {
+	int rv __unused;
 
 	CTR1(KTR_VM, "vmspace_free: %p", vm);
 
@@ -301,8 +302,9 @@ vmspace_dofree(struct vmspace *vm)
 	 * Delete all of the mappings and pages they hold, then call
 	 * the pmap module to reclaim anything left.
 	 */
-	(void)vm_map_remove(&vm->vm_map, vm_map_min(&vm->vm_map),
+	rv = vm_map_remove(&vm->vm_map, vm_map_min(&vm->vm_map),
 	    vm_map_max(&vm->vm_map));
+	KASSERT(rv == KERN_SUCCESS, ("vm_map_remove() failed: %d", rv));
 
 	pmap_release(vmspace_pmap(vm));
 	vm->vm_map.pmap = NULL;
