@@ -972,8 +972,9 @@ void *
 vm_gpa_hold(struct vm *vm, int vcpuid, vm_paddr_t gpa, size_t len, int reqprot,
 	    void **cookie)
 {
-	int i, count, pageoff;
+	int i, pageoff;
 	struct mem_map *mm;
+	struct mem_seg *seg;
 	vm_page_t m;
 #ifdef INVARIANTS
 	/*
@@ -996,17 +997,26 @@ vm_gpa_hold(struct vm *vm, int vcpuid, vm_paddr_t gpa, size_t len, int reqprot,
 	if (len > PAGE_SIZE - pageoff)
 		panic("vm_gpa_hold: invalid gpa/len: 0x%016lx/%lu", gpa, len);
 
-	count = 0;
+	m = NULL;
 	for (i = 0; i < VM_MAX_MEMMAPS; i++) {
 		mm = &vm->mem_maps[i];
-		if (gpa >= mm->gpa && gpa < mm->gpa + mm->len) {
-			count = vm_fault_quick_hold_pages(&vm->vmspace->vm_map,
-			    trunc_page(gpa), PAGE_SIZE, reqprot, &m, 1);
+		if (gpa < mm->gpa || gpa >= mm->gpa + mm->len)
+			continue;
+		if ((mm->prot & reqprot) != reqprot)
 			break;
-		}
+
+		seg = &vm->mem_segs[mm->segid];
+		m = vm_page_grab_unlocked(seg->object,
+		    OFF_TO_IDX(mm->segoff + gpa - mm->gpa),
+		    VM_ALLOC_NOCREAT | VM_ALLOC_IGN_SBUSY | VM_ALLOC_WIRED);
+		if (m == NULL)
+			if (vm_fault_quick_hold_pages(&vm->vmspace->vm_map,
+			    trunc_page(gpa), PAGE_SIZE, reqprot, &m, 1) != 1)
+				m = NULL;
+		break;
 	}
 
-	if (count == 1) {
+	if (m != NULL) {
 		*cookie = m;
 		return ((void *)(PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m)) + pageoff));
 	} else {
