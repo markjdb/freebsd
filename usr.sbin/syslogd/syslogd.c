@@ -414,11 +414,9 @@ static volatile sig_atomic_t MarkSet, WantDie, WantInitialize, WantReapchild;
 struct iovlist;
 
 static int	allowaddr(char *);
-static int	addfile(struct filed *);
-static int	addpeer(struct peer *);
-static int	addsock(struct addrinfo *, struct socklist *);
-static struct filed *cfline(const char *, const char *, const char *,
-    const char *);
+static void	addpeer(struct peer *);
+static void	addsock(struct addrinfo *, struct socklist *);
+static void	cfline(const char *, const char *, const char *, const char *);
 static const char *cvthname(struct sockaddr *);
 static void	deadq_enter(pid_t, const char *);
 static int	deadq_remove(struct deadq_entry *);
@@ -490,21 +488,7 @@ close_filed(struct filed *f)
 	f->f_file = -1;
 }
 
-static int
-addfile(struct filed *f0)
-{
-	struct filed *f;
-
-	f = calloc(1, sizeof(*f));
-	if (f == NULL)
-		err(1, "malloc failed");
-	*f = *f0;
-	STAILQ_INSERT_TAIL(&fhead, f, next);
-
-	return (0);
-}
-
-static int
+static void
 addpeer(struct peer *pe0)
 {
 	struct peer *pe;
@@ -514,11 +498,9 @@ addpeer(struct peer *pe0)
 		err(1, "malloc failed");
 	*pe = *pe0;
 	STAILQ_INSERT_TAIL(&pqueue, pe, next);
-
-	return (0);
 }
 
-static int
+static void
 addsock(struct addrinfo *ai, struct socklist *sl0)
 {
 	struct socklist *sl;
@@ -537,8 +519,6 @@ addsock(struct addrinfo *ai, struct socklist *sl0)
 			sl->sl_sa = NULL;
 	}
 	STAILQ_INSERT_TAIL(&shead, sl, next);
-
-	return (0);
 }
 
 int
@@ -2414,7 +2394,6 @@ static void
 _readconfigfile(FILE *cf, bool allow_includes)
 {
 	FILE *cf2;
-	struct filed *f;
 	struct dirent **ent;
 	char cline[LINE_MAX];
 	char host[MAXHOSTNAMELEN];
@@ -2541,29 +2520,19 @@ _readconfigfile(FILE *cf, bool allow_includes)
 		}
 		for (i = strlen(cline) - 1; i >= 0 && isspace(cline[i]); i--)
 			cline[i] = '\0';
-		f = cfline(cline, prog, host, pfilter);
-		if (f != NULL)
-			addfile(f);
-		free(f);
+		cfline(cline, prog, host, pfilter);
 	}
 }
 
 static void
 readconfigfile(const char *path)
 {
-	struct filed *f;
 	FILE *cf;
 
 	if ((cf = fopen(path, "r")) == NULL) {
 		dprintf("cannot open %s\n", path);
-		f = cfline("*.ERR\t/dev/console", "*", "*", "*");
-		if (f != NULL)
-			addfile(f);
-		free(f);
-		f = cfline("*.PANIC\t*", "*", "*", "*");
-		if (f != NULL)
-			addfile(f);
-		free(f);
+		cfline("*.ERR\t/dev/console", "*", "*", "*");
+		cfline("*.PANIC\t*", "*", "*", "*");
 	} else {
 		_readconfigfile(cf, true);
 	}
@@ -2910,7 +2879,7 @@ prop_filter_compile(struct prop_filter *pfilter, char *filter)
 /*
  * Crack a configuration file line
  */
-static struct filed *
+static void
 cfline(const char *line, const char *prog, const char *host,
     const char *pfilter)
 {
@@ -3048,7 +3017,7 @@ cfline(const char *line, const char *prog, const char *host,
 				    "unknown priority name \"%s\"", buf);
 				logerror(ebuf);
 				free(f);
-				return (NULL);
+				return;
 			}
 		}
 		if (!pri_cmp)
@@ -3079,7 +3048,7 @@ cfline(const char *line, const char *prog, const char *host,
 					    buf);
 					logerror(ebuf);
 					free(f);
-					return (NULL);
+					return;
 				}
 				f->f_pmask[i >> 3] = pri;
 				f->f_pcmp[i >> 3] = pri_cmp;
@@ -3197,7 +3166,7 @@ cfline(const char *line, const char *prog, const char *host,
 		f->f_type = F_USERS;
 		break;
 	}
-	return (f);
+	STAILQ_INSERT_TAIL(&fhead, f, next);
 }
 
 
