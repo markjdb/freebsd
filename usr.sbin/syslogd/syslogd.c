@@ -2411,7 +2411,7 @@ configfiles(const struct dirent *dp)
 }
 
 static void
-readconfigfile(FILE *cf, int allow_includes)
+_readconfigfile(FILE *cf, bool allow_includes)
 {
 	FILE *cf2;
 	struct filed *f;
@@ -2472,7 +2472,7 @@ readconfigfile(FILE *cf, int allow_includes)
 				if (cf2 == NULL)
 					continue;
 				dprintf("reading %s\n", file);
-				readconfigfile(cf2, 0);
+				_readconfigfile(cf2, false);
 				fclose(cf2);
 			}
 			free(ent);
@@ -2549,6 +2549,27 @@ readconfigfile(FILE *cf, int allow_includes)
 }
 
 static void
+readconfigfile(const char *path)
+{
+	struct filed *f;
+	FILE *cf;
+
+	if ((cf = fopen(path, "r")) == NULL) {
+		dprintf("cannot open %s\n", path);
+		f = cfline("*.ERR\t/dev/console", "*", "*", "*");
+		if (f != NULL)
+			addfile(f);
+		free(f);
+		f = cfline("*.PANIC\t*", "*", "*", "*");
+		if (f != NULL)
+			addfile(f);
+		free(f);
+	} else {
+		_readconfigfile(cf, true);
+	}
+}
+
+static void
 sighandler(int signo)
 {
 
@@ -2563,7 +2584,6 @@ static void
 init(int signo)
 {
 	int i;
-	FILE *cf;
 	struct filed *f;
 	char *p;
 	char oldLocalHostName[MAXHOSTNAMELEN];
@@ -2654,27 +2674,7 @@ init(int signo)
 		free(f);
 	}
 
-	/* open the configuration file */
-	if ((cf = fopen(ConfFile, "r")) == NULL) {
-		dprintf("cannot open %s\n", ConfFile);
-		f = cfline("*.ERR\t/dev/console", "*", "*", "*");
-		if (f != NULL)
-			addfile(f);
-		free(f);
-		f = cfline("*.PANIC\t*", "*", "*", "*");
-		if (f != NULL)
-			addfile(f);
-		free(f);
-		Initialized = 1;
-
-		return;
-	}
-
-	readconfigfile(cf, 1);
-
-	/* close the configuration file */
-	(void)fclose(cf);
-
+	readconfigfile(ConfFile);
 	Initialized = 1;
 
 	if (Debug) {
