@@ -106,6 +106,7 @@ __FBSDID("$FreeBSD$");
 #define	RCVBUF_MINSIZE	(80 * 1024)	/* minimum size of dgram rcv buffer */
 
 #include <sys/param.h>
+#include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/queue.h>
@@ -418,10 +419,7 @@ static int	LogFacPri;	/* Put facility and priority in log message: */
 static int	KeepKernFac;	/* Keep remotely logged kernel facility */
 static int	needdofsync = 0; /* Are any file(s) waiting to be fsynced? */
 static struct pidfh *pfh;
-static int	sigpipe[2];	/* Pipe to catch a signal during select(). */
 static bool	RFC3164OutputFormat = true; /* Use legacy format by default. */
-
-static volatile sig_atomic_t MarkSet, WantDie, WantInitialize, WantReapchild;
 
 struct iovlist;
 
@@ -436,9 +434,7 @@ static int	deadq_remove(struct deadq_entry *);
 static int	deadq_removebypid(pid_t);
 static int	decode(const char *, const CODE *);
 static void	die(int) __dead2;
-static void	dodie(int);
 static void	dofsync(void);
-static void	domark(int);
 static void	fprintlog_first(struct filed *, const char *, const char *,
     const char *, const char *, const char *, const char *, int);
 static void	fprintlog_write(struct filed *, struct iovlist *, int);
@@ -452,8 +448,6 @@ static void	markit(void);
 static int	socksetup(struct peer *);
 static int	socklist_recv_file(struct socklist *);
 static int	socklist_recv_sock(struct socklist *);
-static int	socklist_recv_signal(struct socklist *);
-static void	sighandler(int);
 static int	skip_message(const char *, const char *, int);
 static int	evaluate_prop_filter(const struct prop_filter *filter,
     const char *value);
@@ -462,7 +456,7 @@ static int	prop_filter_compile(struct prop_filter *pfilter,
 static void	parsemsg(const char *, char *);
 static void	printsys(char *);
 static int	p_open(const char *, pid_t *);
-static void	reapchild(int);
+static void	reapchild(void);
 static const char *ttymsg_check(struct iovec *, int, char *, int);
 static void	usage(void);
 static int	validate(struct sockaddr *, const char *);
@@ -537,17 +531,22 @@ addsock(struct addrinfo *ai, struct socklist *sl0)
 int
 main(int argc, char *argv[])
 {
-	int ch, i, s, fdsrmax = 0, bflag = 0, pflag = 0, Sflag = 0;
-	fd_set *fdsr = NULL;
-	struct timeval tv, *tvp;
+	struct kevent ev;
 	struct peer *pe;
 	struct socklist *sl;
-	pid_t ppid = 1, spid;
+	struct timespec ts, *tsp;
+	sigset_t sigset;
 	char *p;
+	pid_t ppid, spid;
+	int bflag, pflag, Sflag;
+	int ch, kq, rc, s;
 
 	if (madvise(NULL, 0, MADV_PROTECT) != 0)
 		dprintf("madvise() failed: %s\n", strerror(errno));
 
+	bflag = 0;
+	pflag = 0;
+	Sflag = 0;
 	while ((ch = getopt(argc, argv, "468Aa:b:cCdf:FHkl:M:m:nNoO:p:P:sS:Tuv"))
 	    != -1)
 		switch (ch) {
@@ -714,17 +713,6 @@ main(int argc, char *argv[])
 	if (RFC3164OutputFormat && MaxForwardLen > 1024)
 		errx(1, "RFC 3164 messages may not exceed 1024 bytes");
 
-	/* Pipe to catch a signal during select(). */
-	s = pipe2(sigpipe, O_CLOEXEC);
-	if (s < 0) {
-		err(1, "cannot open a pipe for signals");
-	} else {
-		addsock(NULL, &(struct socklist){
-		    .sl_socket = sigpipe[0],
-		    .sl_recv = socklist_recv_signal
-		});
-	}
-
 	/* Listen by default: /dev/klog. */
 	s = open(_PATH_KLOG, O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0);
 	if (s < 0) {
@@ -762,7 +750,8 @@ main(int argc, char *argv[])
 		warn("cannot open pid file");
 	}
 
-	if ((!Foreground) && (!Debug)) {
+	ppid = 1;
+	if (!Foreground && !Debug) {
 		ppid = waitdaemon(30);
 		if (ppid < 0) {
 			warn("could not become daemon");
@@ -772,113 +761,117 @@ main(int argc, char *argv[])
 	} else if (Debug)
 		setlinebuf(stdout);
 
-	/* XXX move this to init() */
+	/* XXXMJ move this to init() */
 	consfile.f_type = F_CONSOLE;
 	(void)strlcpy(consfile.fu_fname, ctty + sizeof _PATH_DEV - 1,
 	    sizeof(consfile.fu_fname));
+
 	(void)strlcpy(bootfile, getbootfile(), sizeof(bootfile));
-	(void)signal(SIGTERM, dodie);
-	(void)signal(SIGINT, Debug ? dodie : SIG_IGN);
-	(void)signal(SIGQUIT, Debug ? dodie : SIG_IGN);
-	(void)signal(SIGHUP, sighandler);
-	(void)signal(SIGCHLD, sighandler);
-	(void)signal(SIGALRM, domark);
-	(void)signal(SIGPIPE, SIG_IGN);	/* We'll catch EPIPE instead. */
+
+	kq = kqueue();
+	if (kq < 0) {
+		warn("kqueue");
+		pidfile_remove(pfh);
+		exit(1);
+	}
+
+	/* Do not block SIGCHLD. */
+	(void)sigemptyset(&sigset);
+	(void)sigaddset(&sigset, SIGTERM);
+	(void)sigaddset(&sigset, SIGINT);
+	(void)sigaddset(&sigset, SIGQUIT);
+	(void)sigaddset(&sigset, SIGHUP);
+	(void)sigaddset(&sigset, SIGALRM);
+	(void)sigaddset(&sigset, SIGPIPE);
+
+	if (sigprocmask(SIG_BLOCK, &sigset, NULL) != 0) {
+		warn("sigprocmask");
+		pidfile_remove(pfh);
+		exit(1);
+	}
+
+	/* XXXMJ subroutine */
+	EV_SET(&ev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, SIGQUIT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, SIGHUP, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, SIGCHLD, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, SIGALRM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, SIGPIPE, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+
 	(void)alarm(TIMERINTVL);
 
-	/* tuck my process id away */
+	STAILQ_FOREACH(sl, &shead, next) {
+		EV_SET(&ev, sl->sl_socket, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0,
+		    sl);
+		if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
+			warn("kevent");
+			pidfile_remove(pfh);
+			exit(1);
+		}
+	}
+
 	pidfile_write(pfh);
 
 	dprintf("off & running....\n");
 
-	tvp = &tv;
-	tv.tv_sec = tv.tv_usec = 0;
+	ts.tv_sec = ts.tv_nsec = 0;
+	tsp = &ts;
 
-	STAILQ_FOREACH(sl, &shead, next) {
-		if (sl->sl_socket > fdsrmax)
-			fdsrmax = sl->sl_socket;
-	}
-	fdsr = (fd_set *)calloc(howmany(fdsrmax+1, NFDBITS),
-	    sizeof(*fdsr));
-	if (fdsr == NULL)
-		errx(1, "calloc fd_set");
-
+	init(0);
 	for (;;) {
-		if (Initialized == 0)
-			init(0);
-		else if (WantInitialize)
-			init(WantInitialize);
-		if (WantReapchild)
-			reapchild(WantReapchild);
-		if (MarkSet)
-			markit();
-		if (WantDie) {
-			free(fdsr);
-			die(WantDie);
-		}
-
-		bzero(fdsr, howmany(fdsrmax+1, NFDBITS) *
-		    sizeof(*fdsr));
-
-		STAILQ_FOREACH(sl, &shead, next) {
-			if (sl->sl_socket != -1 && sl->sl_recv != NULL)
-				FD_SET(sl->sl_socket, fdsr);
-		}
-		i = select(fdsrmax + 1, fdsr, NULL, NULL,
-		    needdofsync ? &tv : tvp);
-		switch (i) {
+		rc = kevent(kq, NULL, 0, &ev, 1, needdofsync ? &ts : tsp);
+		switch (rc) {
 		case 0:
 			dofsync();
-			needdofsync = 0;
-			if (tvp) {
-				tvp = NULL;
+			if (tsp) {
+				tsp = NULL;
 				if (ppid != 1)
 					kill(ppid, SIGALRM);
 			}
 			continue;
 		case -1:
 			if (errno != EINTR)
-				logerror("select");
+				logerror("kevent");
 			continue;
 		}
-		STAILQ_FOREACH(sl, &shead, next) {
-			if (FD_ISSET(sl->sl_socket, fdsr))
-				(*sl->sl_recv)(sl);
-		}
-	}
-	free(fdsr);
-}
 
-static int
-socklist_recv_signal(struct socklist *sl __unused)
-{
-	ssize_t len;
-	int i, nsig, signo;
-
-	if (ioctl(sigpipe[0], FIONREAD, &i) != 0) {
-		logerror("ioctl(FIONREAD)");
-		err(1, "signal pipe read failed");
-	}
-	nsig = i / sizeof(signo);
-	dprintf("# of received signals = %d\n", nsig);
-	for (i = 0; i < nsig; i++) {
-		len = read(sigpipe[0], &signo, sizeof(signo));
-		if (len != sizeof(signo)) {
-			logerror("signal pipe read failed");
-			err(1, "signal pipe read failed");
-		}
-		dprintf("Received signal: %d from fd=%d\n", signo,
-		    sigpipe[0]);
-		switch (signo) {
-		case SIGHUP:
-			WantInitialize = 1;
+		switch (ev.filter) {
+		case EVFILT_SIGNAL:
+			switch (ev.ident) {
+			case SIGTERM:
+				die((int)ev.ident);
+				break;
+			case SIGINT:
+			case SIGQUIT:
+				if (Debug)
+					die((int)ev.ident);
+				break;
+			case SIGALRM:
+				markit();
+				break;
+			case SIGHUP:
+				init(1);
+				break;
+			case SIGCHLD:
+				reapchild();
+				break;
+			}
 			break;
-		case SIGCHLD:
-			WantReapchild = 1;
+		case EVFILT_READ:
+			sl = ev.udata;
+			if (sl->sl_socket != -1 && sl->sl_recv != NULL)
+				sl->sl_recv(sl);
 			break;
 		}
 	}
-	return (0);
 }
 
 static int
@@ -1741,6 +1734,7 @@ logmsg(int pri, const struct logtime *timestamp, const char *hostname,
 			 * flush it now (so we don't hold isolated messages),
 			 * but back off so we'll flush less often
 			 * in the future.
+			 * XXX comment
 			 */
 			if (now > REPEATTIME(f)) {
 				fprintlog_successive(f, flags);
@@ -1775,6 +1769,7 @@ dofsync(void)
 			(void)fsync(f->f_file);
 		}
 	}
+	needdofsync = 0;
 }
 
 /*
@@ -2255,7 +2250,7 @@ ttymsg_check(struct iovec *iov, int iovcnt, char *line, int tmout)
 }
 
 static void
-reapchild(int signo __unused)
+reapchild(void)
 {
 	int status;
 	pid_t pid;
@@ -2276,7 +2271,6 @@ reapchild(int signo __unused)
 			}
 		}
 	}
-	WantReapchild = 0;
 }
 
 /*
@@ -2313,20 +2307,6 @@ cvthname(struct sockaddr *f)
 	if (RFC3164OutputFormat)
 		trimdomain(hname, hl);
 	return (hname);
-}
-
-static void
-dodie(int signo)
-{
-
-	WantDie = signo;
-}
-
-static void
-domark(int signo __unused)
-{
-
-	MarkSet = 1;
 }
 
 /*
@@ -2572,14 +2552,6 @@ readconfigfile(const char *path)
 	}
 }
 
-static void
-sighandler(int signo)
-{
-
-	/* Send an wake-up signal to the select() loop. */
-	write(sigpipe[1], &signo, sizeof(signo));
-}
-
 /*
  *  INIT -- Initialize syslogd from configuration table
  */
@@ -2594,7 +2566,6 @@ init(int signo)
 	char bootfileMsg[MAXLINE + 1];
 
 	dprintf("init\n");
-	WantInitialize = 0;
 
 	/*
 	 * Load hostname (may have changed).
@@ -3142,8 +3113,8 @@ cfline(const char *line, const char *prog, const char *host,
 			.ai_family = family,
 			.ai_socktype = SOCK_DGRAM
 		};
-		error = getaddrinfo(f->fu_forw_hname,
-				p ? p : "syslog", &hints, &res);
+		error = getaddrinfo(f->fu_forw_hname, p ? p : "syslog", &hints,
+		    &res);
 		if (error) {
 			logerror(gai_strerror(error));
 			break;
@@ -3281,7 +3252,6 @@ markit(void)
 			dq->dq_timeout--;
 		}
 	}
-	MarkSet = 0;
 	(void)alarm(TIMERINTVL);
 }
 
