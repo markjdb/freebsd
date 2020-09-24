@@ -405,7 +405,16 @@ register const int	doextend;
 		** to hold the longest file name string that the implementation
 		** guarantees can be opened."
 		*/
-		char		*fullname;
+		char		*ep, *fullname;
+		unsigned long	fdul;
+
+		fullname = NULL;
+		if (name[0] == '@') {
+			fdul = strtoul(name + 1, &ep, 0);
+			if (*ep == '\0' && fdul <= INT_MAX &&
+			    _fcntl((int)fdul, F_GETFD) != -1)
+				goto check;
+		}
 
 		fullname = malloc(FILENAME_MAX + 1);
 		if (fullname == NULL)
@@ -431,6 +440,7 @@ register const int	doextend;
 			free(fullname);
 			return -1;
 		}
+check:
 		if ((_fstat(fid, &stab) < 0) || !S_ISREG(stab.st_mode)) {
 			free(fullname);
 			_close(fid);
