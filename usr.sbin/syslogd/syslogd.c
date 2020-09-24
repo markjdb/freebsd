@@ -270,9 +270,9 @@ enum f_type {
 struct filed {
 	STAILQ_ENTRY(filed)	next;	/* next in linked list */
 	enum f_type f_type;
-	int	f_file;			/* file descriptor */
-	time_t	f_time;			/* time this was last written */
-	char	*f_host;		/* host from which to recd. */
+
+	/* Fields used for filtering. */
+	char	*f_host;		/* host from which to read. */
 	u_char	f_pmask[LOG_NFACILITIES+1];	/* priority mask */
 	u_char	f_pcmp[LOG_NFACILITIES+1];	/* compare priority */
 #define PRI_LT	0x1
@@ -280,18 +280,24 @@ struct filed {
 #define PRI_GT	0x4
 	char	*f_program;		/* program this applies to */
 	struct prop_filter *f_prop_filter; /* property-based filter */
+
+	/* Logging destination fields. */
+	int	f_file; /* F_FILE, F_CONSOLE, F_TTY, F_FORW, F_PIPE */
+#define	FFLAG_SYNC	0x01
+#define	FFLAG_NEEDSYNC	0x02
+	int	f_flags;
 	union {
-		char	f_uname[MAXUNAMES][MAXLOGNAME];
+		char	f_fname[MAXPATHLEN]; /* F_FILE, F_CONSOLE, F_TTY */
 		struct {
 			char	f_hname[MAXHOSTNAMELEN];
 			struct addrinfo *f_addr;
 
-		} f_forw;		/* forwarding address */
-		char	f_fname[MAXPATHLEN];
+		} f_forw; /* F_FORW */
+		char	f_uname[MAXUNAMES][MAXLOGNAME]; /* F_WALL, F_USERS */
 		struct {
 			char	f_pname[MAXPATHLEN];
 			pid_t	f_pid;
-		} f_pipe;
+		} f_pipe; /* F_PIPE */
 	} f_un;
 #define	fu_uname	f_un.f_uname
 #define	fu_forw_hname	f_un.f_forw.f_hname
@@ -299,16 +305,24 @@ struct filed {
 #define	fu_fname	f_un.f_fname
 #define	fu_pipe_pname	f_un.f_pipe.f_pname
 #define	fu_pipe_pid	f_un.f_pipe.f_pid
+
+	/* Bookkeeping fields. */
+	time_t	f_time;				/* time this was last written */
 	char	f_prevline[MAXSVLINE];		/* last message logged */
 	struct logtime f_lasttime;		/* time of last occurrence */
 	int	f_prevpri;			/* pri of f_prevline */
 	size_t	f_prevlen;			/* length of f_prevline */
 	int	f_prevcount;			/* repetition cnt of prevline */
 	u_int	f_repeatcount;			/* number of "repeated" msgs */
-	int	f_flags;			/* file-specific flags */
-#define	FFLAG_SYNC 0x01
-#define	FFLAG_NEEDSYNC	0x02
 };
+
+/* Array of configured log destinations. */
+static struct filed **fa;
+static int facnt;
+STAILQ_HEAD(filed_head, filed);
+
+#define	LOGDST_FOREACH(f)			\
+	for (int __i = 0; (f) = fa[__i], __i < facnt; __i++)
 
 /*
  * Queue of about-to-be dead processes we should watch out for.
@@ -369,8 +383,6 @@ static const char *TypeNames[] = {
 	"FORW",		"USERS",	"WALL",		"PIPE"
 };
 
-static STAILQ_HEAD(, filed) fhead =
-    STAILQ_HEAD_INITIALIZER(fhead);	/* Log files that we write to */
 static struct filed consfile;	/* Console */
 
 static int	Debug;		/* debug flag */
@@ -416,7 +428,8 @@ struct iovlist;
 static int	allowaddr(char *);
 static void	addpeer(struct peer *);
 static void	addsock(struct addrinfo *, struct socklist *);
-static void	cfline(const char *, const char *, const char *, const char *);
+static void	cfline(const char *, const char *, const char *, const char *,
+		    struct filed_head *);
 static const char *cvthname(struct sockaddr *);
 static void	deadq_enter(pid_t, const char *);
 static int	deadq_remove(struct deadq_entry *);
@@ -759,6 +772,7 @@ main(int argc, char *argv[])
 	} else if (Debug)
 		setlinebuf(stdout);
 
+	/* XXX move this to init() */
 	consfile.f_type = F_CONSOLE;
 	(void)strlcpy(consfile.fu_fname, ctty + sizeof _PATH_DEV - 1,
 	    sizeof(consfile.fu_fname));
@@ -1658,7 +1672,7 @@ logmsg(int pri, const struct logtime *timestamp, const char *hostname,
 	    msgid == NULL ? "-" : msgid,
 	    structured_data == NULL ? "-" : structured_data, msg);
 
-	STAILQ_FOREACH(f, &fhead, next) {
+	LOGDST_FOREACH(f) {
 		/* skip messages that are incorrect priority */
 		if (!(((f->f_pcmp[fac] & PRI_EQ) && (f->f_pmask[fac] == prilev))
 		     ||((f->f_pcmp[fac] & PRI_LT) && (f->f_pmask[fac] < prilev))
@@ -1754,7 +1768,7 @@ dofsync(void)
 {
 	struct filed *f;
 
-	STAILQ_FOREACH(f, &fhead, next) {
+	LOGDST_FOREACH(f) {
 		if ((f->f_type == F_FILE) &&
 		    (f->f_flags & FFLAG_NEEDSYNC)) {
 			f->f_flags &= ~FFLAG_NEEDSYNC;
@@ -2253,7 +2267,7 @@ reapchild(int signo __unused)
 			continue;
 
 		/* Now, look in list of active processes. */
-		STAILQ_FOREACH(f, &fhead, next) {
+		LOGDST_FOREACH(f) {
 			if (f->f_type == F_PIPE &&
 			    f->fu_pipe_pid == pid) {
 				close_filed(f);
@@ -2347,7 +2361,7 @@ die(int signo)
 	struct socklist *sl;
 	char buf[100];
 
-	STAILQ_FOREACH(f, &fhead, next) {
+	LOGDST_FOREACH(f) {
 		/* flush any pending output */
 		if (f->f_prevcount)
 			fprintlog_successive(f, 0);
@@ -2391,7 +2405,7 @@ configfiles(const struct dirent *dp)
 }
 
 static void
-_readconfigfile(FILE *cf, bool allow_includes)
+_readconfigfile(FILE *cf, struct filed_head *l, bool allow_includes)
 {
 	FILE *cf2;
 	struct dirent **ent;
@@ -2451,7 +2465,7 @@ _readconfigfile(FILE *cf, bool allow_includes)
 				if (cf2 == NULL)
 					continue;
 				dprintf("reading %s\n", file);
-				_readconfigfile(cf2, false);
+				_readconfigfile(cf2, l, false);
 				fclose(cf2);
 			}
 			free(ent);
@@ -2520,21 +2534,41 @@ _readconfigfile(FILE *cf, bool allow_includes)
 		}
 		for (i = strlen(cline) - 1; i >= 0 && isspace(cline[i]); i--)
 			cline[i] = '\0';
-		cfline(cline, prog, host, pfilter);
+		cfline(cline, prog, host, pfilter, l);
 	}
 }
 
 static void
 readconfigfile(const char *path)
 {
+	struct filed_head l;
+	struct filed *f;
 	FILE *cf;
+	int count, i;
 
+	STAILQ_INIT(&l);
 	if ((cf = fopen(path, "r")) == NULL) {
 		dprintf("cannot open %s\n", path);
-		cfline("*.ERR\t/dev/console", "*", "*", "*");
-		cfline("*.PANIC\t*", "*", "*", "*");
+		cfline("*.ERR\t/dev/console", "*", "*", "*", &l);
+		cfline("*.PANIC\t*", "*", "*", "*", &l);
 	} else {
-		_readconfigfile(cf, true);
+		_readconfigfile(cf, &l, true);
+	}
+
+	count = 0;
+	STAILQ_FOREACH(f, &l, next)
+		count++;
+	fa = calloc(count, sizeof(struct filed *));
+	if (fa == NULL) {
+		logerror("calloc()");
+		exit(1);
+	}
+	facnt = count;
+
+	i = 0;
+	STAILQ_FOREACH(f, &l, next) {
+		fa[i] = f;
+		i++;
 	}
 }
 
@@ -2601,7 +2635,7 @@ init(int signo)
 	 *  Close all open log files.
 	 */
 	Initialized = 0;
-	STAILQ_FOREACH(f, &fhead, next) {
+	LOGDST_FOREACH(f) {
 		/* flush any pending output */
 		if (f->f_prevcount)
 			fprintlog_successive(f, 0);
@@ -2621,9 +2655,7 @@ init(int signo)
 			break;
 		}
 	}
-	while(!STAILQ_EMPTY(&fhead)) {
-		f = STAILQ_FIRST(&fhead);
-		STAILQ_REMOVE_HEAD(&fhead, next);
+	LOGDST_FOREACH(f) {
 		free(f->f_program);
 		free(f->f_host);
 		if (f->f_prop_filter) {
@@ -2642,13 +2674,15 @@ init(int signo)
 		}
 		free(f);
 	}
+	free(fa);
+	facnt = 0;
 
 	readconfigfile(ConfFile);
 	Initialized = 1;
 
 	if (Debug) {
 		int port;
-		STAILQ_FOREACH(f, &fhead, next) {
+		LOGDST_FOREACH(f) {
 			for (i = 0; i <= LOG_NFACILITIES; i++)
 				if (f->f_pmask[i] == INTERNAL_NOPRI)
 					printf("X ");
@@ -2881,7 +2915,7 @@ prop_filter_compile(struct prop_filter *pfilter, char *filter)
  */
 static void
 cfline(const char *line, const char *prog, const char *host,
-    const char *pfilter)
+    const char *pfilter, struct filed_head *l)
 {
 	struct filed *f;
 	struct addrinfo hints, *res;
@@ -3166,9 +3200,9 @@ cfline(const char *line, const char *prog, const char *host,
 		f->f_type = F_USERS;
 		break;
 	}
-	STAILQ_INSERT_TAIL(&fhead, f, next);
-}
 
+	STAILQ_INSERT_TAIL(l, f, next);
+}
 
 /*
  *  Decode a symbolic name to a numeric value
@@ -3210,7 +3244,7 @@ markit(void)
 		MarkSeq = 0;
 	}
 
-	STAILQ_FOREACH(f, &fhead, next) {
+	LOGDST_FOREACH(f) {
 		if (f->f_prevcount && now >= REPEATTIME(f)) {
 			dprintf("flush %s: repeated %d times, %d sec.\n",
 			    TypeNames[f->f_type], f->f_prevcount,
