@@ -1649,15 +1649,12 @@ reinsert:
 
 /*
  * Dispatch a number of inactive threads according to load and collect the
- * results to prevent a coherent (CEM: incoherent?) view of paging activity on
- * this domain.
+ * results to present a coherent view of paging activity on this domain.
  */
 static int
 vm_pageout_inactive_dispatch(struct vm_domain *vmd, int shortage)
 {
-	u_int freed, pps, threads, us;
-
-	vmd->vmd_inactive_shortage = shortage;
+	u_int freed, pps, slop, threads, us;
 
 	/*
 	 * If we have more work than we can do in a quarter of our interval, we
@@ -1667,15 +1664,19 @@ vm_pageout_inactive_dispatch(struct vm_domain *vmd, int shortage)
 	    shortage > vmd->vmd_inactive_pps / VM_INACT_SCAN_RATE / 4) {
 		threads = vmd->vmd_inactive_threads;
 		vm_domain_pageout_lock(vmd);
-		vmd->vmd_inactive_shortage /= threads;
+		vmd->vmd_inactive_shortage = shortage / threads;
+		slop = shortage % threads;
 		blockcount_acquire(&vmd->vmd_inactive_starting, threads - 1);
 		blockcount_acquire(&vmd->vmd_inactive_running, threads - 1);
 		wakeup(&vmd->vmd_inactive_shortage);
 		vm_domain_pageout_unlock(vmd);
+	} else {
+		vmd->vmd_inactive_shortage = shortage;
+		slop = 0;
 	}
 
 	/* Run the local thread scan. */
-	vm_pageout_scan_inactive(vmd, vmd->vmd_inactive_shortage);
+	vm_pageout_scan_inactive(vmd, vmd->vmd_inactive_shortage + slop);
 
 	/*
 	 * Block until helper threads report results and then accumulate
