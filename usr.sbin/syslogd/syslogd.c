@@ -3531,15 +3531,11 @@ validate(struct sockaddr *sa, const char *hname)
 #endif
 	struct addrinfo hints, *res;
 	u_short sport;
-	int num = 0;
 
-	STAILQ_FOREACH(ap, &aphead, next) {
-		num++;
-	}
-	dprintf("# of validation rule: %d\n", num);
-	if (num == 0)
+	if (STAILQ_EMPTY(&aphead)) {
 		/* traditional behaviour, allow everything */
 		return (1);
+	}
 
 	(void)strlcpy(name, hname, sizeof(name));
 	hints = (struct addrinfo){
