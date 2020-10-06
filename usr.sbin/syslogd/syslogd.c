@@ -109,6 +109,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/procdesc.h>
 #include <sys/queue.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -297,7 +298,7 @@ struct filed {
 		char	f_uname[MAXUNAMES][MAXLOGNAME]; /* F_WALL, F_USERS */
 		struct {
 			char	f_pname[MAXPATHLEN];
-			pid_t	f_pid;
+			pid_t	f_pd;
 		} f_pipe; /* F_PIPE */
 	} f_un;
 #define	fu_uname	f_un.f_uname
@@ -305,7 +306,7 @@ struct filed {
 #define	fu_forw_addr	f_un.f_forw.f_addr
 #define	fu_fname	f_un.f_fname
 #define	fu_pipe_pname	f_un.f_pipe.f_pname
-#define	fu_pipe_pid	f_un.f_pipe.f_pid
+#define	fu_pipe_pd	f_un.f_pipe.f_pd
 
 	/* Bookkeeping fields. */
 	time_t	f_time;				/* time this was last written */
@@ -329,7 +330,7 @@ STAILQ_HEAD(filed_head, filed);
  * Queue of about-to-be dead processes we should watch out for.
  */
 struct deadq_entry {
-	pid_t				dq_pid;
+	int				dq_pd;
 	int				dq_timeout;
 	TAILQ_ENTRY(deadq_entry)	dq_entries;
 };
@@ -429,9 +430,11 @@ static void	addsock(struct addrinfo *, struct socklist *);
 static void	cfline(const char *, const char *, const char *, const char *,
 		    struct filed_head *);
 static const char *cvthname(struct sockaddr *);
-static void	deadq_enter(pid_t, const char *);
-static int	deadq_remove(struct deadq_entry *);
+static void	deadq_enter(pid_t);
+static void	deadq_remove(struct deadq_entry *);
+#if 0
 static int	deadq_removebypid(pid_t);
+#endif
 static int	decode(const char *, const CODE *);
 static void	die(int) __dead2;
 static void	dofsync(void);
@@ -456,7 +459,7 @@ static int	prop_filter_compile(struct prop_filter *pfilter,
 static void	parsemsg(const char *, char *);
 static void	printsys(char *);
 static int	p_open(const char *, pid_t *);
-static void	reapchild(void);
+static void	reapchild(int);
 static const char *ttymsg_check(struct iovec *, int, char *, int);
 static void	usage(void);
 static int	validate(struct sockaddr *, const char *);
@@ -486,7 +489,8 @@ close_filed(struct filed *f)
 		f->f_type = F_UNUSED;
 		break;
 	case F_PIPE:
-		f->fu_pipe_pid = 0;
+		/* XXXMJ need to ensure that the pd isn't leaked */
+		f->fu_pipe_pd = -1;
 		break;
 	default:
 		break;
@@ -799,8 +803,6 @@ main(int argc, char *argv[])
 	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
 	EV_SET(&ev, SIGHUP, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
 	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-	EV_SET(&ev, SIGCHLD, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
 	EV_SET(&ev, SIGALRM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
 	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
 	EV_SET(&ev, SIGPIPE, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
@@ -860,10 +862,11 @@ main(int argc, char *argv[])
 			case SIGHUP:
 				init(1);
 				break;
-			case SIGCHLD:
-				reapchild();
-				break;
 			}
+			break;
+		case EVFILT_PROCDESC:
+			if ((ev.fflags & NOTE_EXIT) != 0)
+				reapchild((int)ev.ident);
 			break;
 		case EVFILT_READ:
 			sl = ev.udata;
@@ -1937,9 +1940,9 @@ fprintlog_write(struct filed *f, struct iovlist *il, int flags)
 	case F_PIPE:
 		dprintf(" %s\n", f->fu_pipe_pname);
 		iovlist_append(il, "\n");
-		if (f->fu_pipe_pid == 0) {
-			if ((f->f_file = p_open(f->fu_pipe_pname,
-						&f->fu_pipe_pid)) < 0) {
+		if (f->fu_pipe_pd == -1) {
+			f->f_file = p_open(f->fu_pipe_pname, &f->fu_pipe_pd);
+			if (f->f_file < 0) {
 				logerror(f->fu_pipe_pname);
 				break;
 			}
@@ -1947,7 +1950,7 @@ fprintlog_write(struct filed *f, struct iovlist *il, int flags)
 		if (writev(f->f_file, il->iov, il->iovcnt) < 0) {
 			int e = errno;
 
-			deadq_enter(f->fu_pipe_pid, f->fu_pipe_pname);
+			deadq_enter(f->fu_pipe_pd);
 			close_filed(f);
 			errno = e;
 			logerror(f->fu_pipe_pname);
@@ -2250,25 +2253,22 @@ ttymsg_check(struct iovec *iov, int iovcnt, char *line, int tmout)
 }
 
 static void
-reapchild(void)
+reapchild(int pd)
 {
+	struct filed *f;
 	int status;
 	pid_t pid;
-	struct filed *f;
 
-	while ((pid = wait3(&status, WNOHANG, (struct rusage *)NULL)) > 0) {
-		/* First, look if it's a process from the dead queue. */
-		if (deadq_removebypid(pid))
-			continue;
-
-		/* Now, look in list of active processes. */
-		LOGDST_FOREACH(f) {
-			if (f->f_type == F_PIPE &&
-			    f->fu_pipe_pid == pid) {
-				close_filed(f);
-				log_deadchild(pid, status, f->fu_pipe_pname);
-				break;
-			}
+	LOGDST_FOREACH(f) {
+		if (f->f_type == F_PIPE && f->fu_pipe_pd == pd) {
+			(void)pdgetpid(pd, &pid);
+			if (waitpid(pid, &status, 0) != pid)
+				/* XXXMJ */
+				abort();
+			(void)close(pd);
+			close_filed(f);
+			log_deadchild(pid, status, f->fu_pipe_pname);
+			break;
 		}
 	}
 }
@@ -2345,7 +2345,7 @@ die(int signo)
 		/* flush any pending output */
 		if (f->f_prevcount)
 			fprintlog_successive(f, 0);
-		if (f->f_type == F_PIPE && f->fu_pipe_pid > 0)
+		if (f->f_type == F_PIPE && f->fu_pipe_pd >= 0)
 			close_filed(f);
 	}
 	if (signo) {
@@ -2356,6 +2356,7 @@ die(int signo)
 	}
 	STAILQ_FOREACH(sl, &shead, next) {
 		if (sl->sl_sa != NULL && sl->sl_family == AF_LOCAL)
+			/* XXXMJ capmode */
 			unlink(sl->sl_peer->pe_name);
 	}
 	pidfile_remove(pfh);
@@ -2619,7 +2620,7 @@ init(int signo)
 			close_filed(f);
 			break;
 		case F_PIPE:
-			deadq_enter(f->fu_pipe_pid, f->fu_pipe_pname);
+			deadq_enter(f->fu_pipe_pd);
 			close_filed(f);
 			break;
 		default:
@@ -3145,7 +3146,7 @@ cfline(const char *line, const char *prog, const char *host,
 		break;
 
 	case '|':
-		f->fu_pipe_pid = 0;
+		f->fu_pipe_pd = -1;
 		(void)strlcpy(f->fu_pipe_pname, p + 1,
 		    sizeof(f->fu_pipe_pname));
 		f->f_type = F_PIPE;
@@ -3230,10 +3231,9 @@ markit(void)
 		switch (dq->dq_timeout) {
 		case 0:
 			/* Already signalled once, try harder now. */
-			if (kill(dq->dq_pid, SIGKILL) != 0)
-				(void)deadq_remove(dq);
+			if (pdkill(dq->dq_pd, SIGKILL) != 0)
+				deadq_remove(dq);
 			break;
-
 		case 1:
 			/*
 			 * Timed out on dead queue, send terminate
@@ -3243,13 +3243,14 @@ markit(void)
 			 * didn't even really exist, in case we simply
 			 * drop it from the dead queue).
 			 */
-			if (kill(dq->dq_pid, SIGTERM) != 0)
-				(void)deadq_remove(dq);
+			if (pdkill(dq->dq_pd, SIGTERM) != 0)
+				deadq_remove(dq);
 			else
 				dq->dq_timeout--;
 			break;
 		default:
 			dq->dq_timeout--;
+			break;
 		}
 	}
 	(void)alarm(TIMERINTVL);
@@ -3621,12 +3622,12 @@ validate(struct sockaddr *sa, const char *hname)
  * opposed to a FILE *.
  */
 static int
-p_open(const char *prog, pid_t *rpid)
+p_open(const char *prog, int *rpd)
 {
-	int pfd[2], nulldesc;
-	pid_t pid;
 	char *argv[4]; /* sh -c cmd NULL */
 	char errmsg[200];
+	int nulldesc, pfd[2], pd;
+	pid_t pid;
 
 	if (pipe(pfd) == -1)
 		return (-1);
@@ -3634,7 +3635,8 @@ p_open(const char *prog, pid_t *rpid)
 		/* we are royally screwed anyway */
 		return (-1);
 
-	switch ((pid = fork())) {
+	pid = pdfork(&pd, PD_CLOEXEC);
+	switch (pid) {
 	case -1:
 		close(nulldesc);
 		return (-1);
@@ -3684,28 +3686,17 @@ p_open(const char *prog, pid_t *rpid)
 			       (int)pid);
 		logerror(errmsg);
 	}
-	*rpid = pid;
+	*rpd = pd;
 	return (pfd[1]);
 }
 
 static void
-deadq_enter(pid_t pid, const char *name)
+deadq_enter(int pd)
 {
 	struct deadq_entry *dq;
-	int status;
 
-	if (pid == 0)
+	if (pd == -1)
 		return;
-	/*
-	 * Be paranoid, if we can't signal the process, don't enter it
-	 * into the dead queue (perhaps it's already dead).  If possible,
-	 * we try to fetch and log the child's status.
-	 */
-	if (kill(pid, 0) != 0) {
-		if (waitpid(pid, &status, WNOHANG) > 0)
-			log_deadchild(pid, status, name);
-		return;
-	}
 
 	dq = malloc(sizeof(*dq));
 	if (dq == NULL) {
@@ -3713,35 +3704,34 @@ deadq_enter(pid_t pid, const char *name)
 		exit(1);
 	}
 	*dq = (struct deadq_entry){
-		.dq_pid = pid,
+		.dq_pd = pd,
 		.dq_timeout = DQ_TIMO_INIT
 	};
 	TAILQ_INSERT_TAIL(&deadq_head, dq, dq_entries);
 }
 
-static int
+static void
 deadq_remove(struct deadq_entry *dq)
 {
 	if (dq != NULL) {
 		TAILQ_REMOVE(&deadq_head, dq, dq_entries);
 		free(dq);
-		return (1);
 	}
-
-	return (0);
 }
 
+#if 0
 static int
 deadq_removebypid(pid_t pid)
 {
 	struct deadq_entry *dq;
 
 	TAILQ_FOREACH(dq, &deadq_head, dq_entries) {
-		if (dq->dq_pid == pid)
+		if (dq->dq_pd == pid)
 			break;
 	}
 	return (deadq_remove(dq));
 }
+#endif
 
 static void
 log_deadchild(pid_t pid, int status, const char *name)
