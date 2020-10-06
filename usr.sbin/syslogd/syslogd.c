@@ -178,17 +178,16 @@ static const char include_ext[] = ".conf";
 	(((d)->s6_addr32[2] ^ (a)->s6_addr32[2]) & (m)->s6_addr32[2]) == 0 && \
 	(((d)->s6_addr32[3] ^ (a)->s6_addr32[3]) & (m)->s6_addr32[3]) == 0 )
 #endif
-/*
- * List of peers and sockets for binding.
- */
+
 struct peer {
 	const char	*pe_name;
 	const char	*pe_serv;
 	mode_t		pe_mode;
-	STAILQ_ENTRY(peer)	next;
 };
-static STAILQ_HEAD(, peer) pqueue = STAILQ_HEAD_INITIALIZER(pqueue);
 
+/*
+ * Sockets on which we listen for messages.
+ */
 struct socklist {
 	struct addrinfo		sl_ai;
 #define	sl_sa		sl_ai.ai_addr
@@ -200,6 +199,27 @@ struct socklist {
 	STAILQ_ENTRY(socklist)	next;
 };
 static STAILQ_HEAD(, socklist) shead = STAILQ_HEAD_INITIALIZER(shead);
+
+/*
+ * Struct to hold records of network addresses that are allowed to log
+ * to us.
+ */
+struct allowedpeer {
+	int isnumeric;
+	u_short port;
+	union {
+		struct {
+			struct sockaddr_storage addr;
+			struct sockaddr_storage mask;
+		} numeric;
+		char *name;
+	} u;
+#define a_addr u.numeric.addr
+#define a_mask u.numeric.mask
+#define a_name u.name
+	STAILQ_ENTRY(allowedpeer)	next;
+};
+static STAILQ_HEAD(, allowedpeer) aphead = STAILQ_HEAD_INITIALIZER(aphead);
 
 /*
  * Flags to logmsg().
@@ -342,30 +362,7 @@ static TAILQ_HEAD(, deadq_entry) deadq_head =
  * of measure is `mark intervals', i.e. 20 minutes by default.
  * Processes on the dead queue will be terminated after that time.
  */
-
 #define	 DQ_TIMO_INIT	2
-
-/*
- * Struct to hold records of network addresses that are allowed to log
- * to us.
- */
-struct allowedpeer {
-	int isnumeric;
-	u_short port;
-	union {
-		struct {
-			struct sockaddr_storage addr;
-			struct sockaddr_storage mask;
-		} numeric;
-		char *name;
-	} u;
-#define a_addr u.numeric.addr
-#define a_mask u.numeric.mask
-#define a_name u.name
-	STAILQ_ENTRY(allowedpeer)	next;
-};
-static STAILQ_HEAD(, allowedpeer) aphead = STAILQ_HEAD_INITIALIZER(aphead);
-
 
 /*
  * Intervals at which we flush out "message repeated" messages,
@@ -425,7 +422,6 @@ static bool	RFC3164OutputFormat = true; /* Use legacy format by default. */
 struct iovlist;
 
 static int	allowaddr(char *);
-static void	addpeer(struct peer *);
 static void	addsock(struct addrinfo *, struct socklist *);
 static void	cfline(const char *, const char *, const char *, const char *,
 		    struct filed_head *);
@@ -500,18 +496,6 @@ close_filed(struct filed *f)
 }
 
 static void
-addpeer(struct peer *pe0)
-{
-	struct peer *pe;
-
-	pe = calloc(1, sizeof(*pe));
-	if (pe == NULL)
-		err(1, "malloc failed");
-	*pe = *pe0;
-	STAILQ_INSERT_TAIL(&pqueue, pe, next);
-}
-
-static void
 addsock(struct addrinfo *ai, struct socklist *sl0)
 {
 	struct socklist *sl;
@@ -536,7 +520,6 @@ int
 main(int argc, char *argv[])
 {
 	struct kevent ev;
-	struct peer *pe;
 	struct socklist *sl;
 	struct timespec ts, *tsp;
 	sigset_t sigset;
@@ -586,14 +569,14 @@ main(int argc, char *argv[])
 			}
 			if (p == NULL) {
 				/* A hostname or filename only. */
-				addpeer(&(struct peer){
+				socksetup(&(struct peer){
 					.pe_name = optarg,
 					.pe_serv = "syslog"
 				});
 			} else {
 				/* The case of "name:service". */
 				*p++ = '\0';
-				addpeer(&(struct peer){
+				socksetup(&(struct peer){
 					.pe_serv = p,
 					.pe_name = (strlen(optarg) == 0) ?
 					    NULL : optarg,
@@ -658,7 +641,7 @@ main(int argc, char *argv[])
 			} else
 				errx(1, "invalid filename %s, exiting",
 				    optarg);
-			addpeer(&(struct peer){
+			socksetup(&(struct peer){
 				.pe_name = name,
 				.pe_mode = mode
 			});
@@ -729,23 +712,21 @@ main(int argc, char *argv[])
 	}
 	/* Listen by default: *:514 if no -b flag. */
 	if (bflag == 0)
-		addpeer(&(struct peer){
+		socksetup(&(struct peer){
 			.pe_serv = "syslog"
 		});
 	/* Listen by default: /var/run/log if no -p flag. */
 	if (pflag == 0)
-		addpeer(&(struct peer){
+		socksetup(&(struct peer){
 			.pe_name = _PATH_LOG,
 			.pe_mode = DEFFILEMODE,
 		});
 	/* Listen by default: /var/run/logpriv if no -S flag. */
 	if (Sflag == 0)
-		addpeer(&(struct peer){
+		socksetup(&(struct peer){
 			.pe_name = _PATH_LOG_PRIV,
 			.pe_mode = S_IRUSR | S_IWUSR,
 		});
-	STAILQ_FOREACH(pe, &pqueue, next)
-		socksetup(pe);
 
 	pfh = pidfile_open(PidFile, 0600, &spid);
 	if (pfh == NULL) {
