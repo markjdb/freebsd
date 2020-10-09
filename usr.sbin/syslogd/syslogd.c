@@ -1023,7 +1023,11 @@ parsemsg_rfc5424(const char *from, int pri, char *msg)
 
 	omsg = msg;
 	IF_NOT_NILVALUE(timestamp) {
-		/* Parse RFC 3339-like timestamp. */
+		if (RemoteAddDate) {
+			PARSE_CHAR("TIMESTAMP", ' ');
+			timestamp = NULL;
+		} else {
+			/* Parse RFC 3339-like timestamp. */
 #define	PARSE_NUMBER(dest, length, min, max) do {			\
 	int i, v;							\
 									\
@@ -1035,53 +1039,56 @@ parsemsg_rfc5424(const char *from, int pri, char *msg)
 	FAIL_IF("TIMESTAMP", v < min || v > max);			\
 	dest = v;							\
 } while (0)
-		/* Date and time. */
-		memset(&timestamp_remote, 0, sizeof(timestamp_remote));
-		PARSE_NUMBER(timestamp_remote.tm.tm_year, 4, 0, 9999);
-		timestamp_remote.tm.tm_year -= 1900;
-		PARSE_CHAR("TIMESTAMP", '-');
-		PARSE_NUMBER(timestamp_remote.tm.tm_mon, 2, 1, 12);
-		--timestamp_remote.tm.tm_mon;
-		PARSE_CHAR("TIMESTAMP", '-');
-		PARSE_NUMBER(timestamp_remote.tm.tm_mday, 2, 1, 31);
-		PARSE_CHAR("TIMESTAMP", 'T');
-		PARSE_NUMBER(timestamp_remote.tm.tm_hour, 2, 0, 23);
-		PARSE_CHAR("TIMESTAMP", ':');
-		PARSE_NUMBER(timestamp_remote.tm.tm_min, 2, 0, 59);
-		PARSE_CHAR("TIMESTAMP", ':');
-		PARSE_NUMBER(timestamp_remote.tm.tm_sec, 2, 0, 59);
-		/* Perform normalization. */
-		timegm(&timestamp_remote.tm);
-		/* Optional: fractional seconds. */
-		if (msg[0] == '.' && msg[1] >= '0' && msg[1] <= '9') {
-			int i;
-
-			++msg;
-			for (i = 100000; i != 0; i /= 10) {
-				if (*msg < '0' || *msg > '9')
-					break;
-				timestamp_remote.usec += (*msg++ - '0') * i;
-			}
-		}
-		/* Timezone. */
-		if (*msg == 'Z') {
-			/* UTC. */
-			++msg;
-		} else {
-			int sign, tz_hour, tz_min;
-
-			/* Local time zone offset. */
-			FAIL_IF("TIMESTAMP", *msg != '-' && *msg != '+');
-			sign = *msg++ == '-' ? -1 : 1;
-			PARSE_NUMBER(tz_hour, 2, 0, 23);
+			/* Date and time. */
+			memset(&timestamp_remote, 0, sizeof(timestamp_remote));
+			PARSE_NUMBER(timestamp_remote.tm.tm_year, 4, 0, 9999);
+			timestamp_remote.tm.tm_year -= 1900;
+			PARSE_CHAR("TIMESTAMP", '-');
+			PARSE_NUMBER(timestamp_remote.tm.tm_mon, 2, 1, 12);
+			--timestamp_remote.tm.tm_mon;
+			PARSE_CHAR("TIMESTAMP", '-');
+			PARSE_NUMBER(timestamp_remote.tm.tm_mday, 2, 1, 31);
+			PARSE_CHAR("TIMESTAMP", 'T');
+			PARSE_NUMBER(timestamp_remote.tm.tm_hour, 2, 0, 23);
 			PARSE_CHAR("TIMESTAMP", ':');
-			PARSE_NUMBER(tz_min, 2, 0, 59);
-			timestamp_remote.tm.tm_gmtoff =
-			    sign * (tz_hour * 3600 + tz_min * 60);
-		}
+			PARSE_NUMBER(timestamp_remote.tm.tm_min, 2, 0, 59);
+			PARSE_CHAR("TIMESTAMP", ':');
+			PARSE_NUMBER(timestamp_remote.tm.tm_sec, 2, 0, 59);
+			/* Perform normalization. */
+			timegm(&timestamp_remote.tm);
+			/* Optional: fractional seconds. */
+			if (msg[0] == '.' && msg[1] >= '0' && msg[1] <= '9') {
+				int i;
+
+				++msg;
+				for (i = 100000; i != 0; i /= 10) {
+					if (*msg < '0' || *msg > '9')
+						break;
+					timestamp_remote.usec +=
+					    (*msg++ - '0') * i;
+				}
+			}
+			/* Timezone. */
+			if (*msg == 'Z') {
+				/* UTC. */
+				++msg;
+			} else {
+				int sign, tz_hour, tz_min;
+
+				/* Local time zone offset. */
+				FAIL_IF("TIMESTAMP", *msg != '-' &&
+				    *msg != '+');
+				sign = *msg++ == '-' ? -1 : 1;
+				PARSE_NUMBER(tz_hour, 2, 0, 23);
+				PARSE_CHAR("TIMESTAMP", ':');
+				PARSE_NUMBER(tz_min, 2, 0, 59);
+				timestamp_remote.tm.tm_gmtoff =
+				    sign * (tz_hour * 3600 + tz_min * 60);
+			}
+			PARSE_CHAR("TIMESTAMP", ' ');
+			timestamp = &timestamp_remote;
 #undef PARSE_NUMBER
-		PARSE_CHAR("TIMESTAMP", ' ');
-		timestamp = RemoteAddDate ? NULL : &timestamp_remote;
+		}
 	}
 
 	/* String fields part of the HEADER. */
