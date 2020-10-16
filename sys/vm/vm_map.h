@@ -205,6 +205,7 @@ struct vm_map {
 	struct sx lock;			/* Lock for map data */
 	struct mtx system_mtx;
 	int nentries;			/* Number of entries */
+	int busy;
 	vm_size_t size;			/* virtual size */
 	u_int timestamp;		/* Version number */
 	u_char needs_wakeup;
@@ -213,7 +214,6 @@ struct vm_map {
 	vm_map_entry_t root;		/* Root of a binary search tree */
 	pmap_t pmap;			/* (c) Physical map */
 	vm_offset_t anon_loc;
-	int busy;
 #ifdef DIAGNOSTIC
 	int nupdates;
 #endif
