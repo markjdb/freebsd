@@ -1556,7 +1556,6 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
     int aflags)
 {
 	uma_domain_t dom;
-	uma_alloc allocf;
 	uma_slab_t slab;
 	unsigned long size;
 	uint8_t *mem;
@@ -1566,7 +1565,6 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	KASSERT(domain >= 0 && domain < vm_ndomains,
 	    ("keg_alloc_slab: domain %d out of range", domain));
 
-	allocf = keg->uk_allocf;
 	slab = NULL;
 	mem = NULL;
 	if (keg->uk_flags & UMA_ZFLAG_OFFPAGE) {
@@ -1595,7 +1593,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
-	mem = allocf(zone, size, domain, &sflags, aflags);
+	mem = keg->uk_allocf(zone, size, domain, &sflags, aflags);
 	if (mem == NULL) {
 		if (keg->uk_flags & UMA_ZFLAG_OFFPAGE)
 			zone_free_item(slabzone(keg->uk_ipers),
@@ -4828,36 +4826,29 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 void
 uma_prealloc(uma_zone_t zone, int items)
 {
-	struct vm_domainset_iter di;
 	uma_domain_t dom;
 	uma_slab_t slab;
 	uma_keg_t keg;
-	int aflags, domain, slabs;
+	int domain, i, slabs;
 
 	KEG_GET(zone, keg);
 	slabs = howmany(items, keg->uk_ipers);
-	while (slabs-- > 0) {
-		aflags = M_NOWAIT;
-		vm_domainset_iter_policy_ref_init(&di, &keg->uk_dr, &domain,
-		    &aflags);
-		for (;;) {
-			slab = keg_alloc_slab(keg, zone, domain, M_WAITOK,
-			    aflags);
-			if (slab != NULL) {
-				dom = &keg->uk_domain[slab->us_domain];
-				/*
-				 * keg_alloc_slab() always returns a slab on the
-				 * partial list.
-				 */
-				LIST_REMOVE(slab, us_link);
-				LIST_INSERT_HEAD(&dom->ud_free_slab, slab,
-				    us_link);
-				dom->ud_free_slabs++;
-				KEG_UNLOCK(keg, slab->us_domain);
-				break;
-			}
-			if (vm_domainset_iter_policy(&di, &domain) != 0)
-				vm_wait_doms(&keg->uk_dr.dr_policy->ds_mask, 0);
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		if (VM_DOMAIN_EMPTY(domain))
+			continue;
+		for (i = 0; i < slabs; i++) {
+			slab = keg_alloc_slab(keg, zone, domain, M_NOWAIT,
+			    M_NOWAIT);
+
+			/*
+			 * keg_alloc_slab() always puts the returned slab on the
+			 * partial list, so it must be moved.
+			 */
+			dom = &keg->uk_domain[slab->us_domain];
+			LIST_REMOVE(slab, us_link);
+			LIST_INSERT_HEAD(&dom->ud_free_slab, slab, us_link);
+			dom->ud_free_slabs++;
+			KEG_UNLOCK(keg, slab->us_domain);
 		}
 	}
 }
