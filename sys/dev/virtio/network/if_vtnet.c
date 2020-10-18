@@ -347,8 +347,6 @@ vtnet_modevent(module_t mod, int type, void *unused)
 			/*
 			 * We need to allocate from this zone in the transmit path, so ensure
 			 * that we have at least one item per header available.
-			 * XXX add a separate zone like we do for mbufs? otherwise we may alloc
-			 * buckets
 			 */
 			uma_zone_reserve(vtnet_tx_header_zone, DEBUGNET_MAX_IN_FLIGHT * 2);
 			uma_prealloc(vtnet_tx_header_zone, DEBUGNET_MAX_IN_FLIGHT * 2);
@@ -4089,7 +4087,7 @@ vtnet_debugnet_transmit(struct ifnet *ifp, struct mbuf *m)
 		return (EBUSY);
 
 	txq = &sc->vtnet_txqs[0];
-	error = vtnet_txq_encap(txq, &m, M_NOWAIT | M_USE_RESERVE);
+	error = vtnet_txq_encap(txq, &m, M_NOWAIT | M_USE_RESERVE | M_NOVM);
 	if (error == 0)
 		(void)vtnet_txq_notify(txq);
 	return (error);
