@@ -564,6 +564,7 @@ struct qat_sym_cookie {
 	uint8_t qsc_auth_res[QAT_SYM_HASH_BUFFER_LEN];
 	uint8_t qsc_gcm_aad[QAT_GCM_AAD_SIZE_MAX];
 	uint8_t qsc_content_desc[CONTENT_DESC_MAX_SIZE];
+	struct cryptodesc *qsc_mac;
 
 	bus_dmamap_t qsc_buf_dmamap;	/* qsc_flat_bufs DMA mapping */
 	bus_dma_tag_t qsc_buf_dma_tag;

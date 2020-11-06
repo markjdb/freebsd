@@ -914,7 +914,8 @@ qat_hw15_crypto_setup_req_params(struct qat_crypto_bank *qcb,
 			cipher_req->curr_id = FW_SLICE_CIPHER;
 			cipher_req->next_id = next_slice;
 
-			cipher_req->cipher_off = enc->crd_skip;
+			cipher_req->cipher_off = mac != NULL ?
+			    mac->crd_len : 0;
 			cipher_req->cipher_len = enc->crd_len;
 			cipher_req->state_address = qsc->qsc_iv_buf_paddr;
 		}

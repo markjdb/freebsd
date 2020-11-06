@@ -1759,20 +1759,11 @@ qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 
 	error = 0;
 	if ((auth_sz = qs->qs_auth_mlen) != 0) {
-		/* XXXMJ */
-#if 0
-		if ((crp->crp_op & CRYPTO_OP_VERIFY_DIGEST) != 0) {
-			crypto_copydata(crp, crp->crp_digest_start,
-			    auth_sz, icv);
-			if (timingsafe_bcmp(icv, qsc->qsc_auth_res,
-			    auth_sz) != 0) {
-				error = EBADMSG;
-			}
-		} else {
-			crypto_copyback(crp, crp->crp_digest_start,
-			    auth_sz, qsc->qsc_auth_res);
+		if (qsc->qsc_mac != NULL) {
+			crypto_copyback(crp->crp_flags, crp->crp_buf,
+			    qsc->qsc_mac->crd_inject, auth_sz,
+			    qsc->qsc_auth_res);
 		}
-#endif
 	}
 
 	qat_crypto_free_sym_cookie(qcb, qsc);
@@ -2176,6 +2167,7 @@ qat_process(device_t dev, struct cryptop *crp, int hint)
 	else
 		desc = qs->qs_dec_desc;
 
+	qsc->qsc_mac = mac;
 	error = qat_crypto_load(qs, qsc, crp, enc, mac);
 	if (error != 0)
 		goto fail2;

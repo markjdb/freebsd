@@ -545,8 +545,8 @@ qat_hw17_crypto_req_setkey(const struct qat_crypto_desc *desc,
 		case FW_SLICE_AUTH:
 			auth = (union hw_auth_algo_blk *)
 			    (cdesc + desc->qcd_auth_offset);
-			qat_hw17_crypto_setup_auth_cdesc(desc, qs, mac->crd_key,
-			    auth);
+			qat_hw17_crypto_setup_auth_cdesc(desc, qs,
+			    mac->crd_key, auth);
 			break;
 		case FW_SLICE_DRAM_WR:
 			i = MAX_FW_SLICE; /* end of chain */
@@ -637,7 +637,8 @@ qat_hw17_crypto_setup_req_params(struct qat_crypto_bank *qcb __unused,
 		}
 	} else {
 		if (cmd_id != FW_LA_CMD_AUTH) {
-			cipher_param->cipher_offset = enc->crd_skip;
+			cipher_param->cipher_offset = mac != NULL ?
+			    mac->crd_len - enc->crd_len : 0;
 			cipher_param->cipher_length = enc->crd_len;
 		}
 		if (cmd_id != FW_LA_CMD_CIPHER) {
