@@ -634,6 +634,7 @@ struct qat_session {
 	const uint8_t *qs_auth_key;
 	int qs_auth_klen;
 	int qs_auth_mlen;
+	int qs_ivlen;
 
 	uint32_t qs_status;
 #define QAT_SESSION_STATUS_ACTIVE	(1 << 0)
