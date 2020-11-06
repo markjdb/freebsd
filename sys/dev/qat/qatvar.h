@@ -688,7 +688,7 @@ struct qat_hw {
 	size_t qhw_crypto_opaque_offset;
 	void (*qhw_crypto_setup_req_params)(struct qat_crypto_bank *,
 	    struct qat_session *, struct qat_crypto_desc const *,
-	    struct qat_sym_cookie *, struct cryptop *);
+	    struct qat_sym_cookie *, struct cryptodesc *, struct cryptodesc *);
 	void (*qhw_crypto_setup_desc)(struct qat_crypto *, struct qat_session *,
 	    struct qat_crypto_desc *);
 

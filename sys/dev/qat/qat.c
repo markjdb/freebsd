@@ -1403,16 +1403,16 @@ qat_crypto_load_cb(void *_arg, bus_dma_segment_t *segs, int nseg,
 		 * padded to a multiple of 16 bytes.  To satisfy these
 		 * constraints we bounce the AAD into a per-request buffer.
 		 */
-		crypto_copydata(crp, crp->crp_aad_start, crp->crp_aad_length,
-		    qsc->qsc_gcm_aad);
-		memset(qsc->qsc_gcm_aad + crp->crp_aad_length, 0,
-		    roundup2(crp->crp_aad_length, QAT_AES_GCM_AAD_ALIGN) -
-		    crp->crp_aad_length);
-		skip = crp->crp_payload_start;
-	} else if (crp->crp_aad_length > 0) {
-		skip = crp->crp_aad_start;
+		crypto_copydata(crp->crp_flags, crp->crp_buf, mac->crd_skip,
+		    mac->crd_len, qsc->qsc_gcm_aad);
+		memset(qsc->qsc_gcm_aad + mac->crd_len, 0,
+		    roundup2(mac->crd_len, QAT_AES_GCM_AAD_ALIGN) -
+		    mac->crd_len);
+		skip = enc->crd_skip;
+	} else if (mac->crd_len > 0) {
+		skip = mac->crd_skip;
 	} else {
-		skip = crp->crp_payload_start;
+		skip = enc->crd_skip;
 	}
 
 	for (iseg = oseg = 0; iseg < nseg; iseg++) {
@@ -1437,6 +1437,13 @@ qat_crypto_load_cb(void *_arg, bus_dma_segment_t *segs, int nseg,
 	qsc->qsc_buf_list.num_buffers = oseg;
 }
 
+static void
+qat_crypto_load_cb2(void *arg, bus_dma_segment_t *segs, int nseg,
+    bus_size_t mapsize __unused, int error)
+{
+	qat_crypto_load_cb(arg, segs, nseg, error);
+}
+
 static int
 qat_crypto_load(struct qat_session *qs, struct qat_sym_cookie *qsc,
     struct qat_crypto_desc const *desc, struct cryptop *crp,
@@ -1452,7 +1459,7 @@ qat_crypto_load(struct qat_session *qs, struct qat_sym_cookie *qsc,
 		else
 			arc4rand(qsc->qsc_iv_buf, 0 /* XXXMJ ivlen */, 0);
 
-		if ((enc->crd_flags & CRD_IV_PRESENT) == 0) {
+		if ((enc->crd_flags & CRD_F_IV_PRESENT) == 0) {
 			crypto_copyback(crp->crp_flags, crp->crp_buf,
 			    enc->crd_inject, 0 /* XXXMJ ivlen */, qsc->qsc_iv_buf);
 		}
@@ -1475,14 +1482,14 @@ qat_crypto_load(struct qat_session *qs, struct qat_sym_cookie *qsc,
 	if ((crp->crp_flags & CRYPTO_F_IOV) != 0) {
 		error = bus_dmamap_load_uio(qsc->qsc_buf_dma_tag,
 		    qsc->qsc_buf_dmamap, (struct uio *)crp->crp_buf,
-		    qat_crypto_load_cb, &arg, BUS_DMA_NOWAIT);
+		    qat_crypto_load_cb2, &arg, BUS_DMA_NOWAIT);
 	} else if ((crp->crp_flags & CRYPTO_F_IMBUF) != 0) {
 		error = bus_dmamap_load_mbuf(qsc->qsc_buf_dma_tag,
 		    qsc->qsc_buf_dmamap, (struct mbuf *)crp->crp_buf,
-		    qat_crypto_load_cb, &arg, BUS_DMA_NOWAIT);
+		    qat_crypto_load_cb2, &arg, BUS_DMA_NOWAIT);
 	} else {
-		error = bus_dmapmap_load(qsc->qsc_buf_dma_tag,
-		    qsc->qsc_buf_dmapmap, crp->crp_ilen,
+		error = bus_dmamap_load(qsc->qsc_buf_dma_tag,
+		    qsc->qsc_buf_dmamap, crp->crp_buf, crp->crp_ilen,
 		    qat_crypto_load_cb, &arg, BUS_DMA_NOWAIT);
 	}
 	if (error == 0)
@@ -1704,7 +1711,9 @@ qat_crypto_stop(struct qat_softc *sc)
 static int
 qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 {
+#if 0
 	char icv[QAT_SYM_HASH_BUFFER_LEN];
+#endif
 	struct qat_crypto_bank *qcb = arg;
 	struct qat_crypto *qcy;
 	struct qat_session *qs;
@@ -1730,6 +1739,8 @@ qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 
 	error = 0;
 	if ((auth_sz = qs->qs_auth_mlen) != 0) {
+		/* XXXMJ */
+#if 0
 		if ((crp->crp_op & CRYPTO_OP_VERIFY_DIGEST) != 0) {
 			crypto_copydata(crp, crp->crp_digest_start,
 			    auth_sz, icv);
@@ -1741,6 +1752,7 @@ qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 			crypto_copyback(crp, crp->crp_digest_start,
 			    auth_sz, qsc->qsc_auth_res);
 		}
+#endif
 	}
 
 	qat_crypto_free_sym_cookie(qcb, qsc);
@@ -1765,18 +1777,15 @@ qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 }
 
 static int
-qat_probesession(struct cryptoini *enc, struct cryptoini *mac)
+qat_probesession(device_t dev, struct cryptoini *enc, struct cryptoini *mac)
 {
-	/* XXXMJ */
-#if 0
-	if (csp->csp_cipher_alg == CRYPTO_AES_XTS &&
+	if (enc != NULL && enc->cri_alg == CRYPTO_AES_XTS &&
 	    qat_lookup(dev)->qatp_chip == QAT_CHIP_C2XXX) {
 		/*
 		 * AES-XTS is not supported by the NanoQAT.
 		 */
 		return EINVAL;
 	}
-#endif
 
 	if (enc != NULL) {
 		switch (enc->cri_alg) {
@@ -1822,6 +1831,7 @@ qat_probesession(struct cryptoini *enc, struct cryptoini *mac)
 static int
 qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 {
+	struct cryptoini *enc, *mac;
 	struct qat_crypto *qcy;
 	struct qat_dmamem *qdm;
 	struct qat_session *qs;
@@ -1832,6 +1842,26 @@ qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 	sc = device_get_softc(dev);
 	qs = crypto_get_driver_session(cses);
 	qcy = &sc->sc_crypto;
+
+	enc = mac = NULL;
+	if (qat_is_hash(cri->cri_alg))
+		mac = cri;
+	else
+		enc = cri;
+	cri = cri->cri_next;
+
+	if (cri != NULL) {
+		if (enc == NULL && !qat_is_hash(cri->cri_alg))
+			enc = cri;
+		if (mac == NULL && qat_is_hash(cri->cri_alg))
+			mac = cri;
+		if (cri->cri_next != NULL || !(enc != NULL && mac != NULL))
+			return EINVAL;
+	}
+
+	error = qat_probesession(dev, enc, mac);
+	if (error != 0)
+		return error;
 
 	qdm = &qs->qs_desc_mem;
 	error = qat_alloc_dmamem(sc, qdm, QAT_MAXSEG,
@@ -1856,91 +1886,97 @@ qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 	qs->qs_status = QAT_SESSION_STATUS_ACTIVE;
 	qs->qs_inflight = 0;
 
-	qs->qs_cipher_key = csp->csp_cipher_key;
-	qs->qs_cipher_klen = csp->csp_cipher_klen;
-	qs->qs_auth_key = csp->csp_auth_key;
-	qs->qs_auth_klen = csp->csp_auth_klen;
-
-	switch (csp->csp_cipher_alg) {
-	case CRYPTO_AES_CBC:
-		qs->qs_cipher_algo = qat_aes_cipher_algo(csp->csp_cipher_klen);
-		qs->qs_cipher_mode = HW_CIPHER_CBC_MODE;
-		break;
-	case CRYPTO_AES_ICM:
-		qs->qs_cipher_algo = qat_aes_cipher_algo(csp->csp_cipher_klen);
-		qs->qs_cipher_mode = HW_CIPHER_CTR_MODE;
-		break;
-	case CRYPTO_AES_XTS:
-		qs->qs_cipher_algo =
-		    qat_aes_cipher_algo(csp->csp_cipher_klen / 2);
-		qs->qs_cipher_mode = HW_CIPHER_XTS_MODE;
-		break;
-	case CRYPTO_AES_NIST_GCM_16:
-		qs->qs_cipher_algo = qat_aes_cipher_algo(csp->csp_cipher_klen);
-		qs->qs_cipher_mode = HW_CIPHER_CTR_MODE;
-		qs->qs_auth_algo = HW_AUTH_ALGO_GALOIS_128;
-		qs->qs_auth_mode = HW_AUTH_MODE1;
-		break;
-	case 0:
-		break;
-	default:
-		panic("%s: unhandled cipher algorithm %d", __func__,
-		    csp->csp_cipher_alg);
+	if (enc != NULL) {
+		qs->qs_cipher_key = enc->cri_key;
+		qs->qs_cipher_klen = enc->cri_klen;
+	}
+	if (mac != NULL) {
+		qs->qs_auth_key = mac->cri_key;
+		qs->qs_auth_klen = mac->cri_klen;
 	}
 
-	switch (csp->csp_auth_alg) {
-	case CRYPTO_SHA1_HMAC:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA1;
-		qs->qs_auth_mode = HW_AUTH_MODE1;
-		break;
-	case CRYPTO_SHA1:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA1;
-		qs->qs_auth_mode = HW_AUTH_MODE0;
-		break;
-	case CRYPTO_SHA2_256_HMAC:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA256;
-		qs->qs_auth_mode = HW_AUTH_MODE1;
-		break;
-	case CRYPTO_SHA2_256:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA256;
-		qs->qs_auth_mode = HW_AUTH_MODE0;
-		break;
-	case CRYPTO_SHA2_384_HMAC:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA384;
-		qs->qs_auth_mode = HW_AUTH_MODE1;
-		break;
-	case CRYPTO_SHA2_384:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA384;
-		qs->qs_auth_mode = HW_AUTH_MODE0;
-		break;
-	case CRYPTO_SHA2_512_HMAC:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA512;
-		qs->qs_auth_mode = HW_AUTH_MODE1;
-		break;
-	case CRYPTO_SHA2_512:
-		qs->qs_auth_algo = HW_AUTH_ALGO_SHA512;
-		qs->qs_auth_mode = HW_AUTH_MODE0;
-		break;
-	case CRYPTO_AES_NIST_GMAC:
-		qs->qs_cipher_algo = qat_aes_cipher_algo(csp->csp_auth_klen);
-		qs->qs_cipher_mode = HW_CIPHER_CTR_MODE;
-		qs->qs_auth_algo = HW_AUTH_ALGO_GALOIS_128;
-		qs->qs_auth_mode = HW_AUTH_MODE1;
+	if (enc != NULL) {
+		switch (enc->cri_alg) {
+		case CRYPTO_AES_CBC:
+			qs->qs_cipher_algo = qat_aes_cipher_algo(enc->cri_klen);
+			qs->qs_cipher_mode = HW_CIPHER_CBC_MODE;
+			break;
+		case CRYPTO_AES_ICM:
+			qs->qs_cipher_algo = qat_aes_cipher_algo(enc->cri_klen);
+			qs->qs_cipher_mode = HW_CIPHER_CTR_MODE;
+			break;
+		case CRYPTO_AES_XTS:
+			qs->qs_cipher_algo =
+			    qat_aes_cipher_algo(enc->cri_klen / 2);
+			qs->qs_cipher_mode = HW_CIPHER_XTS_MODE;
+			break;
+		case CRYPTO_AES_NIST_GCM_16:
+			qs->qs_cipher_algo = qat_aes_cipher_algo(enc->cri_klen);
+			qs->qs_cipher_mode = HW_CIPHER_CTR_MODE;
+			qs->qs_auth_algo = HW_AUTH_ALGO_GALOIS_128;
+			qs->qs_auth_mode = HW_AUTH_MODE1;
+			break;
+		case 0:
+			break;
+		default:
+			panic("%s: unhandled cipher algorithm %d", __func__,
+			    enc->cri_alg);
+		}
+	}
 
-		qs->qs_cipher_key = qs->qs_auth_key;
-		qs->qs_cipher_klen = qs->qs_auth_klen;
-		break;
-	case 0:
-		break;
-	default:
-		panic("%s: unhandled auth algorithm %d", __func__,
-		    csp->csp_auth_alg);
+	if (mac != NULL) {
+		switch (mac->cri_alg) {
+		case CRYPTO_SHA1_HMAC:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA1;
+			qs->qs_auth_mode = HW_AUTH_MODE1;
+			break;
+		case CRYPTO_SHA1:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA1;
+			qs->qs_auth_mode = HW_AUTH_MODE0;
+			break;
+		case CRYPTO_SHA2_256_HMAC:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA256;
+			qs->qs_auth_mode = HW_AUTH_MODE1;
+			break;
+		case CRYPTO_SHA2_256:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA256;
+			qs->qs_auth_mode = HW_AUTH_MODE0;
+			break;
+		case CRYPTO_SHA2_384_HMAC:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA384;
+			qs->qs_auth_mode = HW_AUTH_MODE1;
+			break;
+		case CRYPTO_SHA2_384:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA384;
+			qs->qs_auth_mode = HW_AUTH_MODE0;
+			break;
+		case CRYPTO_SHA2_512_HMAC:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA512;
+			qs->qs_auth_mode = HW_AUTH_MODE1;
+			break;
+		case CRYPTO_SHA2_512:
+			qs->qs_auth_algo = HW_AUTH_ALGO_SHA512;
+			qs->qs_auth_mode = HW_AUTH_MODE0;
+			break;
+		case CRYPTO_AES_NIST_GMAC:
+			qs->qs_cipher_algo = qat_aes_cipher_algo(mac->cri_klen);
+			qs->qs_cipher_mode = HW_CIPHER_CTR_MODE;
+			qs->qs_auth_algo = HW_AUTH_ALGO_GALOIS_128;
+			qs->qs_auth_mode = HW_AUTH_MODE1;
+
+			qs->qs_cipher_key = qs->qs_auth_key;
+			qs->qs_cipher_klen = qs->qs_auth_klen;
+			break;
+		case 0:
+			break;
+		default:
+			panic("%s: unhandled auth algorithm %d", __func__,
+			    mac->cri_alg);
+		}
 	}
 
 	slices = 0;
-	switch (csp->csp_mode) {
-	case CSP_MODE_AEAD:
-	case CSP_MODE_ETA:
+	if (enc != NULL && mac != NULL) {
 		/* auth then decrypt */
 		ddesc->qcd_slices[0] = FW_SLICE_AUTH;
 		ddesc->qcd_slices[1] = FW_SLICE_CIPHER;
@@ -1952,8 +1988,7 @@ qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 		edesc->qcd_cipher_dir = HW_CIPHER_ENCRYPT;
 		edesc->qcd_cmd_id = FW_LA_CMD_CIPHER_HASH;
 		slices = 2;
-		break;
-	case CSP_MODE_CIPHER:
+	} else if (enc != NULL) {
 		/* decrypt */
 		ddesc->qcd_slices[0] = FW_SLICE_CIPHER;
 		ddesc->qcd_cipher_dir = HW_CIPHER_DECRYPT;
@@ -1963,8 +1998,7 @@ qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 		edesc->qcd_cipher_dir = HW_CIPHER_ENCRYPT;
 		edesc->qcd_cmd_id = FW_LA_CMD_CIPHER;
 		slices = 1;
-		break;
-	case CSP_MODE_DIGEST:
+	} else if (mac != NULL) {
 		if (qs->qs_auth_algo == HW_AUTH_ALGO_GALOIS_128) {
 			/* auth then decrypt */
 			ddesc->qcd_slices[0] = FW_SLICE_AUTH;
@@ -1984,10 +2018,6 @@ qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 			edesc->qcd_cmd_id = FW_LA_CMD_AUTH;
 			slices = 1;
 		}
-		break;
-	default:
-		panic("%s: unhandled crypto algorithm %d, %d", __func__,
-		    csp->csp_cipher_alg, csp->csp_auth_alg);
 	}
 	ddesc->qcd_slices[slices] = FW_SLICE_DRAM_WR;
 	edesc->qcd_slices[slices] = FW_SLICE_DRAM_WR;
@@ -1995,13 +2025,13 @@ qat_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 	qcy->qcy_sc->sc_hw.qhw_crypto_setup_desc(qcy, qs, ddesc);
 	qcy->qcy_sc->sc_hw.qhw_crypto_setup_desc(qcy, qs, edesc);
 
-	if (csp->csp_auth_mlen != 0)
-		qs->qs_auth_mlen = csp->csp_auth_mlen;
+	if (mac != NULL && mac->cri_mlen != 0)
+		qs->qs_auth_mlen = mac->cri_mlen;
 	else
 		qs->qs_auth_mlen = edesc->qcd_auth_sz;
 
 	/* Compute the GMAC by specifying a null cipher payload. */
-	if (csp->csp_auth_alg == CRYPTO_AES_NIST_GMAC)
+	if (mac != NULL && mac->cri_alg == CRYPTO_AES_NIST_GMAC)
 		ddesc->qcd_cmd_id = edesc->qcd_cmd_id = FW_LA_CMD_AUTH;
 
 	return 0;
@@ -2034,6 +2064,7 @@ qat_freesession(device_t dev, crypto_session_t cses)
 static int
 qat_process(device_t dev, struct cryptop *crp, int hint)
 {
+	struct cryptodesc *crd, *enc, *mac;
 	struct qat_crypto *qcy;
 	struct qat_crypto_bank *qcb;
 	struct qat_crypto_desc const *desc;
@@ -2048,7 +2079,7 @@ qat_process(device_t dev, struct cryptop *crp, int hint)
 	qs = crypto_get_driver_session(crp->crp_session);
 	qsc = NULL;
 
-	if (__predict_false(crypto_buffer_len(&crp->crp_buf) > QAT_MAXLEN)) {
+	if (__predict_false(crp->crp_ilen > QAT_MAXLEN)) {
 		error = E2BIG;
 		goto fail1;
 	}
@@ -2114,7 +2145,7 @@ qat_process(device_t dev, struct cryptop *crp, int hint)
 		goto fail2;
 	}
 
-	if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op))
+	if (enc != NULL && (enc->crd_flags & CRD_F_ENCRYPT) != 0)
 		desc = qs->qs_enc_desc;
 	else
 		desc = qs->qs_dec_desc;
@@ -2128,7 +2159,7 @@ qat_process(device_t dev, struct cryptop *crp, int hint)
 	qsbc->qsbc_session = qs;
 	qsbc->qsbc_cb_tag = crp;
 
-	sc->sc_hw.qhw_crypto_setup_req_params(qcb, qs, desc, qsc, crp);
+	sc->sc_hw.qhw_crypto_setup_req_params(qcb, qs, desc, qsc, enc, mac);
 
 	bus_dmamap_sync(qsc->qsc_buf_dma_tag, qsc->qsc_buf_dmamap,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
@@ -2161,7 +2192,6 @@ static device_method_t qat_methods[] = {
 	DEVMETHOD(device_detach,	qat_detach),
 
 	/* Cryptodev interface */
-	DEVMETHOD(cryptodev_probesession, qat_probesession),
 	DEVMETHOD(cryptodev_newsession,	qat_newsession),
 	DEVMETHOD(cryptodev_freesession, qat_freesession),
 	DEVMETHOD(cryptodev_process,	qat_process),
