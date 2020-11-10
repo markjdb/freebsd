@@ -449,8 +449,7 @@ devinit(void)
 		reserve = max(devctl_queue_length / 50, 100);	/* 2% reserve */
 		uma_zone_set_max(z, devctl_queue_length);
 		uma_zone_set_maxcache(z, 0);
-		uma_zone_reserve(z, reserve);
-		uma_prealloc(z, reserve);
+		(void)uma_zone_reserve(z, reserve);
 	}
 	devctl2_init();
 }

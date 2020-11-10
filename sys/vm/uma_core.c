@@ -1531,11 +1531,10 @@ zone_trim(uma_zone_t zone, void *unused)
  *	caller specified M_NOWAIT.
  */
 static uma_slab_t
-keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
-    int aflags)
+_keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
+    int aflags, const bool prealloc)
 {
 	uma_domain_t dom;
-	uma_alloc allocf;
 	uma_slab_t slab;
 	unsigned long size;
 	uint8_t *mem;
@@ -1545,7 +1544,6 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	KASSERT(domain >= 0 && domain < vm_ndomains,
 	    ("keg_alloc_slab: domain %d out of range", domain));
 
-	allocf = keg->uk_allocf;
 	slab = NULL;
 	mem = NULL;
 	if (keg->uk_flags & UMA_ZFLAG_OFFPAGE) {
@@ -1574,7 +1572,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
-	mem = allocf(zone, size, domain, &sflags, aflags);
+	mem = keg->uk_allocf(zone, size, domain, &sflags, aflags);
 	if (mem == NULL) {
 		if (keg->uk_flags & UMA_ZFLAG_OFFPAGE)
 			zone_free_item(slabzone(keg->uk_ipers),
@@ -1631,7 +1629,12 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	 * at least one item.
 	 */
 	dom = &keg->uk_domain[domain];
-	LIST_INSERT_HEAD(&dom->ud_part_slab, slab, us_link);
+	if (prealloc) {
+		LIST_INSERT_HEAD(&dom->ud_free_slab, slab, us_link);
+		dom->ud_free_slabs++;
+	} else {
+		LIST_INSERT_HEAD(&dom->ud_part_slab, slab, us_link);
+	}
 	dom->ud_pages += keg->uk_ppera;
 	dom->ud_free_items += keg->uk_ipers;
 
@@ -1639,6 +1642,25 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 
 fail:
 	return (NULL);
+}
+
+static uma_slab_t
+keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
+    int aflags)
+{
+
+	return (_keg_alloc_slab(keg, zone, domain, flags, aflags, false));
+}
+
+static int
+keg_prealloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
+    int aflags)
+{
+	uma_slab_t slab;
+
+	slab = _keg_alloc_slab(keg, zone, domain, flags, aflags, true);
+	KEG_UNLOCK(keg, slab->us_domain);
+	return (slab != NULL);
 }
 
 /*
@@ -4792,14 +4814,33 @@ uma_zone_get_smr(uma_zone_t zone)
 }
 
 /* See uma.h */
-void
+int
 uma_zone_reserve(uma_zone_t zone, int items)
 {
+	uma_domain_t dom;
 	uma_keg_t keg;
+	int domain, ret;
 
+	ret = 1;
 	KEG_GET(zone, keg);
 	KEG_ASSERT_COLD(keg);
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		if (VM_DOMAIN_EMPTY(domain))
+			continue;
+		if ((zone->uz_flags & UMA_ZONE_FIRSTTOUCH) == 0 && domain != 0)
+			break;
+
+		dom = &keg->uk_domain[domain];
+		while (dom->ud_free_items < items) {
+			if (!keg_prealloc_slab(keg, zone, domain, M_WAITOK,
+			    M_WAITOK)) {
+				ret = 0;
+				break;
+			}
+		}
+	}
 	keg->uk_reserve = items;
+	return (ret);
 }
 
 /* See uma.h */
@@ -4848,8 +4889,6 @@ void
 uma_prealloc(uma_zone_t zone, int items)
 {
 	struct vm_domainset_iter di;
-	uma_domain_t dom;
-	uma_slab_t slab;
 	uma_keg_t keg;
 	int aflags, domain, slabs;
 
@@ -4860,21 +4899,9 @@ uma_prealloc(uma_zone_t zone, int items)
 		vm_domainset_iter_policy_ref_init(&di, &keg->uk_dr, &domain,
 		    &aflags);
 		for (;;) {
-			slab = keg_alloc_slab(keg, zone, domain, M_WAITOK,
-			    aflags);
-			if (slab != NULL) {
-				dom = &keg->uk_domain[slab->us_domain];
-				/*
-				 * keg_alloc_slab() always returns a slab on the
-				 * partial list.
-				 */
-				LIST_REMOVE(slab, us_link);
-				LIST_INSERT_HEAD(&dom->ud_free_slab, slab,
-				    us_link);
-				dom->ud_free_slabs++;
-				KEG_UNLOCK(keg, slab->us_domain);
+			if (keg_prealloc_slab(keg, zone, domain, M_WAITOK,
+			    aflags))
 				break;
-			}
 			if (vm_domainset_iter_policy(&di, &domain) != 0)
 				vm_wait_doms(&keg->uk_dr.dr_policy->ds_mask, 0);
 		}

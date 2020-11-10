@@ -25,7 +25,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd August 20, 2020
+.Dd November 10, 2020
 .Dt UMA 9
 .Os
 .Sh NAME
@@ -91,9 +91,9 @@ typedef void (*uma_free)(void *item, vm_size_t size, uint8_t pflag);
 .Fn uma_zfree_pcpu_arg "uma_zone_t zone" "void *item" "void *arg"
 .Ft void
 .Fn uma_prealloc "uma_zone_t zone" "int nitems"
-.Ft void
+.Ft int
 .Fn uma_zone_reserve "uma_zone_t zone" "int nitems"
-.Ft void
+.Ft int
 .Fn uma_zone_reserve_kva "uma_zone_t zone" "int nitems"
 .Ft void
 .Fn uma_reclaim "int req"
@@ -407,15 +407,13 @@ may sleep.
 .Pp
 The
 .Fn uma_zone_reserve
-function sets the number of reserved items for the zone.
-.Fn uma_zalloc
-and variants will ensure that the zone contains at least the reserved number
-of free items.
-Reserved items may be allocated by specifying
+function sets the number of reserved items for the zone and pre-allocates
+them, if required.
+Reserved items are returned only when
 .Dv M_USE_RESERVE
-in the allocation request flags.
+is specified in the allocation request flags.
 .Fn uma_zone_reserve
-does not perform any pre-allocation by itself.
+returns 0 if it failed to populate the reservation, otherwise it returns 1.
 .Pp
 The
 .Fn uma_zone_reserve_kva
@@ -429,6 +427,9 @@ Note that unlike
 does not restrict the use of the pre-allocation to
 .Dv M_USE_RESERVE
 requests.
+.Fn uma_zone_reserve_kva
+returns 0 if it was unable to allocate virtual address space to satisfy the
+reservation, otherwise it returns 1.
 .Pp
 The
 .Fn uma_reclaim

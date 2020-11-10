@@ -711,7 +711,7 @@ vmem_startup(void)
 	    UMA_ALIGN_PTR, UMA_ZONE_VM);
 #ifndef UMA_MD_SMALL_ALLOC
 	mtx_init(&vmem_bt_lock, "btag lock", NULL, MTX_DEF);
-	uma_prealloc(vmem_bt_zone, BT_MAXALLOC);
+
 	/*
 	 * Reserve enough tags to allocate new tags.  We allow multiple
 	 * CPUs to attempt to allocate new tags concurrently to limit
@@ -719,7 +719,8 @@ vmem_startup(void)
 	 * arena, which may involve importing a range from the kernel arena,
 	 * so we need to keep at least 2 * BT_MAXALLOC tags reserved.
 	 */
-	uma_zone_reserve(vmem_bt_zone, 2 * BT_MAXALLOC * mp_ncpus);
+	if (!uma_zone_reserve(vmem_bt_zone, 2 * BT_MAXALLOC * mp_ncpus))
+		panic("%s: failed to preallocate boundary tags", __func__);
 	uma_zone_set_allocf(vmem_bt_zone, vmem_bt_alloc);
 #endif
 }

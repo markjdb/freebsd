@@ -467,10 +467,14 @@ void uma_zone_reclaim(uma_zone_t, int req);
 void uma_set_align(int align);
 
 /*
- * Set a reserved number of items to hold for M_USE_RESERVE allocations.  All
- * other requests must allocate new backing pages.
+ * Set a reserved number of items to hold for M_USE_RESERVE allocations and
+ * pre-allocate slabs to satisfy the reservation.
+ *
+ * Returns:
+ * 	0  if slabs could not be allocated to satisfy the reservation
+ * 	1  if successful
  */
-void uma_zone_reserve(uma_zone_t zone, int nitems);
+int uma_zone_reserve(uma_zone_t zone, int nitems);
 
 /*
  * Reserves the maximum KVA space required by the zone and configures the zone
