@@ -168,27 +168,26 @@ struct callout_cpu {
 	sbintime_t		cc_lastscan;
 	void			*cc_cookie;
 	u_int			cc_bucket;
-	u_int			cc_inited;
 #ifdef KTR
 	char			cc_ktr_event_name[20];
 #endif
 };
 
-#define	callout_migrating(c)	((c)->c_iflags & CALLOUT_DFRMIGRATION)
+#define	callout_migrating(c)		((c)->c_iflags & CALLOUT_DFRMIGRATION)
 
-#define	cc_exec_curr(cc, dir)		cc->cc_exec_entity[dir].cc_curr
-#define	cc_exec_last_func(cc, dir)	cc->cc_exec_entity[dir].cc_last_func
-#define	cc_exec_last_arg(cc, dir)	cc->cc_exec_entity[dir].cc_last_arg
-#define	cc_exec_drain(cc, dir)		cc->cc_exec_entity[dir].cc_drain
-#define	cc_exec_next(cc)		cc->cc_next
-#define	cc_exec_cancel(cc, dir)		cc->cc_exec_entity[dir].cc_cancel
-#define	cc_exec_waiting(cc, dir)	cc->cc_exec_entity[dir].cc_waiting
+#define	cc_exec_curr(cc, dir)		(cc)->cc_exec_entity[dir].cc_curr
+#define	cc_exec_last_func(cc, dir)	(cc)->cc_exec_entity[dir].cc_last_func
+#define	cc_exec_last_arg(cc, dir)	(cc)->cc_exec_entity[dir].cc_last_arg
+#define	cc_exec_drain(cc, dir)		(cc)->cc_exec_entity[dir].cc_drain
+#define	cc_exec_next(cc)		(cc)->cc_next
+#define	cc_exec_cancel(cc, dir)		(cc)->cc_exec_entity[dir].cc_cancel
+#define	cc_exec_waiting(cc, dir)	(cc)->cc_exec_entity[dir].cc_waiting
 #ifdef SMP
-#define	cc_migration_func(cc, dir)	cc->cc_exec_entity[dir].ce_migration_func
-#define	cc_migration_arg(cc, dir)	cc->cc_exec_entity[dir].ce_migration_arg
-#define	cc_migration_cpu(cc, dir)	cc->cc_exec_entity[dir].ce_migration_cpu
-#define	cc_migration_time(cc, dir)	cc->cc_exec_entity[dir].ce_migration_time
-#define	cc_migration_prec(cc, dir)	cc->cc_exec_entity[dir].ce_migration_prec
+#define	cc_migration_func(cc, dir)	(cc)->cc_exec_entity[dir].ce_migration_func
+#define	cc_migration_arg(cc, dir)	(cc)->cc_exec_entity[dir].ce_migration_arg
+#define	cc_migration_cpu(cc, dir)	(cc)->cc_exec_entity[dir].ce_migration_cpu
+#define	cc_migration_time(cc, dir)	(cc)->cc_exec_entity[dir].ce_migration_time
+#define	cc_migration_prec(cc, dir)	(cc)->cc_exec_entity[dir].ce_migration_prec
 
 struct callout_cpu cc_cpu[MAXCPU];
 #define	CPUBLOCK	MAXCPU
@@ -196,11 +195,13 @@ struct callout_cpu cc_cpu[MAXCPU];
 #define	CC_SELF()	CC_CPU(PCPU_GET(cpuid))
 #else
 struct callout_cpu cc_cpu;
-#define	CC_CPU(cpu)	&cc_cpu
-#define	CC_SELF()	&cc_cpu
+#define	CC_CPU(cpu)	(&cc_cpu)
+#define	CC_SELF()	(&cc_cpu)
 #endif
-#define	CC_LOCK(cc)	mtx_lock_spin(&(cc)->cc_lock)
-#define	CC_UNLOCK(cc)	mtx_unlock_spin(&(cc)->cc_lock)
+#define	CC_LOCK(cc)		mtx_lock_spin(&(cc)->cc_lock)
+#define	CC_LOCK_FLAGS(cc, f)	mtx_lock_spin_flags(&(cc)->cc_lock, (f))
+#define	CC_UNLOCK(cc)		mtx_unlock_spin(&(cc)->cc_lock)
+#define	CC_UNLOCK_FLAGS(cc, f)	mtx_unlock_spin_flags(&(cc)->cc_lock, (f))
 #define	CC_LOCK_ASSERT(cc)	mtx_assert(&(cc)->cc_lock, MA_OWNED)
 
 static int __read_mostly cc_default_cpu;
@@ -253,14 +254,42 @@ cc_cce_cleanup(struct callout_cpu *cc, int direct)
 /*
  * Checks if migration is requested by a specific callout cpu.
  */
-static int
+static bool
 cc_cce_migrating(struct callout_cpu *cc, int direct)
 {
 
 #ifdef SMP
 	return (cc_migration_cpu(cc, direct) != CPUBLOCK);
 #else
-	return (0);
+	return (false);
+#endif
+}
+
+static void
+cc_cce_migration_setup(struct callout_cpu *cc, int direct, int cpu,
+    sbintime_t to, sbintime_t prec, callout_func_t *fn, void *arg)
+{
+#if SMP
+	cc_migration_cpu(cc, direct) = cpu;
+	cc_migration_time(cc, direct) = to;
+	cc_migration_prec(cc, direct) = prec;
+	cc_migration_func(cc, direct) = fn;
+	cc_migration_arg(cc, direct) = arg;
+#endif
+}
+
+static void
+cc_cce_migration_clear(struct callout_cpu *cc, struct callout *c, int direct)
+{
+	CC_LOCK_ASSERT(cc);
+
+	c->c_iflags &= ~CALLOUT_DFRMIGRATION;
+#ifdef SMP
+	cc_migration_cpu(cc, direct) = CPUBLOCK;
+	cc_migration_time(cc, direct) = 0;
+	cc_migration_prec(cc, direct) = 0;
+	cc_migration_func(cc, direct) = NULL;
+	cc_migration_arg(cc, direct) = NULL;
 #endif
 }
 
@@ -317,7 +346,6 @@ callout_cpu_init(struct callout_cpu *cc, int cpu)
 	int i;
 
 	mtx_init(&cc->cc_lock, "callout", NULL, MTX_SPIN | MTX_RECURSE);
-	cc->cc_inited = 1;
 	cc->cc_callwheel = malloc_domainset(sizeof(struct callout_list) *
 	    callwheelsize, M_CALLOUT,
 	    DOMAINSET_PREF(pcpu_find(cpu)->pc_domain), M_WAITOK);
@@ -426,7 +454,7 @@ callout_process(sbintime_t now)
 #endif
 
 	cc = CC_SELF();
-	mtx_lock_spin_flags(&cc->cc_lock, MTX_QUIET);
+	CC_LOCK_FLAGS(cc, MTX_QUIET);
 
 	/* Compute the buckets of the last scan and present times. */
 	firstb = callout_hash(cc->cc_lastscan);
@@ -523,13 +551,14 @@ next:
 	} while (((int)(firstb - lastb)) <= 0);
 	cc->cc_firstevent = last;
 	cpu_new_callout(curcpu, last, first);
+	CC_UNLOCK_FLAGS(cc, MTX_QUIET);
 
 #ifdef CALLOUT_PROFILING
 	avg_depth_dir += (depth_dir * 1000 - avg_depth_dir) >> 8;
 	avg_mpcalls_dir += (mpcalls_dir * 1000 - avg_mpcalls_dir) >> 8;
 	avg_lockcalls_dir += (lockcalls_dir * 1000 - avg_lockcalls_dir) >> 8;
 #endif
-	mtx_unlock_spin_flags(&cc->cc_lock, MTX_QUIET);
+
 	/*
 	 * swi_sched acquires the thread lock, so we don't want to call it
 	 * with cc_lock held; incorrect locking order.
@@ -545,21 +574,38 @@ callout_lock(struct callout *c)
 	int cpu;
 
 	for (;;) {
-		cpu = c->c_cpu;
 #ifdef SMP
-		if (cpu == CPUBLOCK) {
-			while (c->c_cpu == CPUBLOCK)
-				cpu_spinwait();
-			continue;
-		}
+		while ((cpu = atomic_load_int(&c->c_cpu)) == CPUBLOCK)
+			cpu_spinwait();
+#else
+		cpu = atomic_load_int(&c->c_cpu);
 #endif
 		cc = CC_CPU(cpu);
 		CC_LOCK(cc);
-		if (cpu == c->c_cpu)
+		if (cpu == atomic_load_int(&c->c_cpu))
 			break;
 		CC_UNLOCK(cc);
 	}
 	return (cc);
+}
+
+static void
+callout_remove(struct callout_cpu *cc, struct callout *c)
+{
+	CC_LOCK_ASSERT(cc);
+	KASSERT(CC_CPU(c->c_cpu) == cc,
+	    ("%s: callout %p does not belong to wheel %p", __func__, c, cc));
+	KASSERT((c->c_iflags & CALLOUT_PENDING) != 0,
+	    ("%s: callout %p is not pending", __func__, c));
+
+	if ((c->c_iflags & CALLOUT_PROCESSED) == 0) {
+		if (cc_exec_next(cc) == c)
+			cc_exec_next(cc) = LIST_NEXT(c, c_links.le);
+		LIST_REMOVE(c, c_links.le);
+	} else {
+		TAILQ_REMOVE(&cc->cc_expireq, c, c_links.tqe);
+	}
+	c->c_iflags &= ~CALLOUT_PENDING;
 }
 
 static void
@@ -620,10 +666,10 @@ softclock_call_cc(struct callout *c, struct callout_cpu *cc,
 	struct callout_cpu *new_cc;
 	callout_func_t *new_func;
 	void *new_arg;
-	int flags, new_cpu;
+	int new_cpu;
 	sbintime_t new_prec, new_time;
 #endif
-#if defined(DIAGNOSTIC) || defined(CALLOUT_PROFILING) 
+#if defined(DIAGNOSTIC) || defined(CALLOUT_PROFILING)
 	sbintime_t sbt1, sbt2;
 	struct timespec ts2;
 	static sbintime_t maxdt = 2 * SBT_1MS;	/* 2 msec */
@@ -733,7 +779,7 @@ skip:
 		 * migration just cancel it.
 		 */
 		if (cc_cce_migrating(cc, direct)) {
-			cc_cce_cleanup(cc, direct);
+			cc_cce_migration_clear(cc, direct);
 
 			/*
 			 * It should be assert here that the callout is not
@@ -756,7 +802,7 @@ skip:
 		new_prec = cc_migration_prec(cc, direct);
 		new_func = cc_migration_func(cc, direct);
 		new_arg = cc_migration_arg(cc, direct);
-		cc_cce_cleanup(cc, direct);
+		cc_cce_migration_clear(cc, direct);
 
 		/*
 		 * It should be assert here that the callout is not destroyed
@@ -773,9 +819,8 @@ skip:
 		c->c_iflags &= ~CALLOUT_DFRMIGRATION;
 
 		new_cc = callout_cpu_switch(c, cc, new_cpu);
-		flags = (direct) ? C_DIRECT_EXEC : 0;
 		callout_cc_add(c, new_cc, new_time, new_prec, new_func,
-		    new_arg, new_cpu, flags);
+		    new_arg, new_cpu, direct ? C_DIRECT_EXEC : 0);
 		CC_UNLOCK(new_cc);
 		CC_LOCK(cc);
 #else
@@ -894,40 +939,23 @@ int
 callout_reset_sbt_on(struct callout *c, sbintime_t sbt, sbintime_t prec,
     callout_func_t *ftn, void *arg, int cpu, int flags)
 {
-	sbintime_t to_sbt, precision;
 	struct callout_cpu *cc;
+	sbintime_t to_sbt, precision;
 	int cancelled, direct;
-	int ignore_cpu=0;
+
+	KASSERT(cpu == -1 || cpu >= 0 && cpu < MAXCPU,
+	    ("%s: invalid CPU %d", __func__, cpu));
+	KASSERT((flags & C_DIRECT_EXEC) == 0 || c->c_lock == NULL,
+	    ("%s: direct callout %p has lock", __func__, c));
 
 	cancelled = 0;
-	if (cpu == -1) {
-		ignore_cpu = 1;
-	} else if ((cpu >= MAXCPU) ||
-		   ((CC_CPU(cpu))->cc_inited == 0)) {
-		/* Invalid CPU spec */
-		panic("Invalid CPU in callout %d", cpu);
-	}
+	direct = (flags & C_DIRECT_EXEC) != 0 ? 1 : 0;
 	callout_when(sbt, prec, flags, &to_sbt, &precision);
 
-	/* 
-	 * This flag used to be added by callout_cc_add, but the
-	 * first time you call this we could end up with the
-	 * wrong direct flag if we don't do it before we add.
-	 */
-	if (flags & C_DIRECT_EXEC) {
-		direct = 1;
-	} else {
-		direct = 0;
-	}
-	KASSERT(!direct || c->c_lock == NULL,
-	    ("%s: direct callout %p has lock", __func__, c));
+	/* Use the default callout CPU if none was specified. */
 	cc = callout_lock(c);
-	/*
-	 * Don't allow migration if the user does not care.
-	 */
-	if (ignore_cpu) {
+	if (cpu == -1)
 		cpu = c->c_cpu;
-	}
 
 	if (cc_exec_curr(cc, direct) == c) {
 		/*
@@ -950,35 +978,25 @@ callout_reset_sbt_on(struct callout *c, sbintime_t sbt, sbintime_t prec,
 		}
 #ifdef SMP
 		if (callout_migrating(c)) {
-			/* 
+			/*
 			 * This only occurs when a second callout_reset_sbt_on
 			 * is made after a previous one moved it into
 			 * deferred migration (below). Note we do *not* change
 			 * the prev_cpu even though the previous target may
 			 * be different.
 			 */
-			cc_migration_cpu(cc, direct) = cpu;
-			cc_migration_time(cc, direct) = to_sbt;
-			cc_migration_prec(cc, direct) = precision;
-			cc_migration_func(cc, direct) = ftn;
-			cc_migration_arg(cc, direct) = arg;
+			cc_cce_migration_setup(cc, direct, cpu, to_sbt,
+			    precision, ftn, arg);
 			cancelled = 1;
 			CC_UNLOCK(cc);
 			return (cancelled);
 		}
 #endif
 	}
-	if (c->c_iflags & CALLOUT_PENDING) {
-		if ((c->c_iflags & CALLOUT_PROCESSED) == 0) {
-			if (cc_exec_next(cc) == c)
-				cc_exec_next(cc) = LIST_NEXT(c, c_links.le);
-			LIST_REMOVE(c, c_links.le);
-		} else {
-			TAILQ_REMOVE(&cc->cc_expireq, c, c_links.tqe);
-		}
+	if ((c->c_iflags & CALLOUT_PENDING) != 0) {
+		callout_remove(cc, c);
+		c->c_flags &= ~CALLOUT_ACTIVE;
 		cancelled = 1;
-		c->c_iflags &= ~ CALLOUT_PENDING;
-		c->c_flags &= ~ CALLOUT_ACTIVE;
 	}
 
 #ifdef SMP
@@ -989,7 +1007,7 @@ callout_reset_sbt_on(struct callout *c, sbintime_t sbt, sbintime_t prec,
 	 */
 	if (c->c_cpu != cpu) {
 		if (cc_exec_curr(cc, direct) == c) {
-			/* 
+			/*
 			 * Pending will have been removed since we are
 			 * actually executing the callout on another
 			 * CPU. That callout should be waiting on the
@@ -999,18 +1017,15 @@ callout_reset_sbt_on(struct callout *c, sbintime_t sbt, sbintime_t prec,
 			 * will then see pending is true and return.
 			 * At the return from the actual callout execution
 			 * the migration will occur in softclock_call_cc
-			 * and this new callout will be placed on the 
+			 * and this new callout will be placed on the
 			 * new CPU via a call to callout_cpu_switch() which
 			 * will get the lock on the right CPU followed
 			 * by a call callout_cc_add() which will add it there.
 			 * (see above in softclock_call_cc()).
 			 */
-			cc_migration_cpu(cc, direct) = cpu;
-			cc_migration_time(cc, direct) = to_sbt;
-			cc_migration_prec(cc, direct) = precision;
-			cc_migration_func(cc, direct) = ftn;
-			cc_migration_arg(cc, direct) = arg;
-			c->c_iflags |= (CALLOUT_DFRMIGRATION | CALLOUT_PENDING);
+			cc_cce_migration_setup(cc, direct, cpu, to_sbt,
+			    precision, ftn, arg);
+			c->c_iflags |= CALLOUT_DFRMIGRATION | CALLOUT_PENDING;
 			c->c_flags |= CALLOUT_ACTIVE;
 			CTR6(KTR_CALLOUT,
 		    "migration of %p func %p arg %p in %d.%08x to %u deferred",
@@ -1038,13 +1053,14 @@ callout_reset_sbt_on(struct callout *c, sbintime_t sbt, sbintime_t prec,
 int
 callout_schedule_on(struct callout *c, int to_ticks, int cpu)
 {
-	return callout_reset_on(c, to_ticks, c->c_func, c->c_arg, cpu);
+	return (callout_reset_on(c, to_ticks, c->c_func, c->c_arg, cpu));
 }
 
 int
 callout_schedule(struct callout *c, int to_ticks)
 {
-	return callout_reset_on(c, to_ticks, c->c_func, c->c_arg, c->c_cpu);
+	return (callout_reset_on(c, to_ticks, c->c_func, c->c_arg,
+	    atomic_load_int(&c->c_cpu)));
 }
 
 int
@@ -1052,36 +1068,34 @@ _callout_stop_safe(struct callout *c, int flags, callout_func_t *drain)
 {
 	struct callout_cpu *cc, *old_cc;
 	struct lock_class *class;
-	int direct, sq_locked, use_lock;
-	int cancelled, not_on_a_list;
-
-	if ((flags & CS_DRAIN) != 0)
-		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, c->c_lock,
-		    "calling %s", __func__);
+	int cancelled, direct;
+	bool remove, sq_locked, locked;
 
 	KASSERT((flags & CS_DRAIN) == 0 || drain == NULL,
 	    ("Cannot set drain callback and CS_DRAIN flag at the same time"));
 
-	/*
-	 * Some old subsystems don't hold Giant while running a callout_stop(),
-	 * so just discard this check for the moment.
-	 */
-	if ((flags & CS_DRAIN) == 0 && c->c_lock != NULL) {
-		if (c->c_lock == &Giant.lock_object)
-			use_lock = mtx_owned(&Giant);
-		else {
-			use_lock = 1;
+	if ((flags & CS_DRAIN) != 0) {
+		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, c->c_lock,
+		    "calling %s", __func__);
+		locked = false;
+	} else {
+		/*
+		 * Some old subsystems don't hold Giant while running a
+		 * callout_stop(), so just discard this check for the moment.
+		 */
+		if (c->c_lock == NULL) {
+			locked = false;
+		} else if (c->c_lock == &Giant.lock_object) {
+			locked = mtx_owned(&Giant);
+		} else {
 			class = LOCK_CLASS(c->c_lock);
 			class->lc_assert(c->c_lock, LA_XLOCKED);
+			locked = true;
 		}
-	} else
-		use_lock = 0;
-	if (c->c_iflags & CALLOUT_DIRECT) {
-		direct = 1;
-	} else {
-		direct = 0;
 	}
-	sq_locked = 0;
+
+	direct = (c->c_iflags & CALLOUT_DIRECT) != 0 ? 1 : 0;
+	sq_locked = false;
 	old_cc = NULL;
 again:
 	cc = callout_lock(c);
@@ -1103,9 +1117,9 @@ again:
 		 */
 		c->c_iflags &= ~CALLOUT_PENDING;
 		c->c_flags &= ~CALLOUT_ACTIVE;
-		not_on_a_list = 1;
+		remove = false;
 	} else {
-		not_on_a_list = 0;
+		remove = true;
 	}
 
 	/*
@@ -1113,11 +1127,11 @@ again:
 	 * dropped,  just drop the sleepqueue lock and check the states
 	 * again.
 	 */
-	if (sq_locked != 0 && cc != old_cc) {
+	if (sq_locked && cc != old_cc) {
 #ifdef SMP
 		CC_UNLOCK(cc);
 		sleepq_release(&cc_exec_waiting(old_cc, direct));
-		sq_locked = 0;
+		sq_locked = false;
 		old_cc = NULL;
 		goto again;
 #else
@@ -1167,7 +1181,7 @@ again:
 					CC_UNLOCK(cc);
 					sleepq_lock(
 					    &cc_exec_waiting(cc, direct));
-					sq_locked = 1;
+					sq_locked = true;
 					old_cc = cc;
 					goto again;
 				}
@@ -1181,14 +1195,11 @@ again:
 				cc_exec_waiting(cc, direct) = true;
 				DROP_GIANT();
 				CC_UNLOCK(cc);
-				sleepq_add(
-				    &cc_exec_waiting(cc, direct),
+				sleepq_add(&cc_exec_waiting(cc, direct),
 				    &cc->cc_lock.lock_object, "codrain",
 				    SLEEPQ_SLEEP, 0);
-				sleepq_wait(
-				    &cc_exec_waiting(cc, direct),
-					     0);
-				sq_locked = 0;
+				sleepq_wait(&cc_exec_waiting(cc, direct), 0);
+				sq_locked = false;
 				old_cc = NULL;
 
 				/* Reacquire locks previously released. */
@@ -1196,9 +1207,8 @@ again:
 				goto again;
 			}
 			c->c_flags &= ~CALLOUT_ACTIVE;
-		} else if (use_lock &&
-			   !cc_exec_cancel(cc, direct) && (drain == NULL)) {
-			
+		} else if (locked && !cc_exec_cancel(cc, direct) &&
+		    drain == NULL) {
 			/*
 			 * The current callout is waiting for its
 			 * lock which we hold.  Cancel the callout
@@ -1213,16 +1223,8 @@ again:
 			    c, c->c_func, c->c_arg);
 			KASSERT(!cc_cce_migrating(cc, direct),
 			    ("callout wrongly scheduled for migration"));
-			if (callout_migrating(c)) {
-				c->c_iflags &= ~CALLOUT_DFRMIGRATION;
-#ifdef SMP
-				cc_migration_cpu(cc, direct) = CPUBLOCK;
-				cc_migration_time(cc, direct) = 0;
-				cc_migration_prec(cc, direct) = 0;
-				cc_migration_func(cc, direct) = NULL;
-				cc_migration_arg(cc, direct) = NULL;
-#endif
-			}
+			if (callout_migrating(c))
+				cc_cce_migration_clear(cc, c, direct);
 			CC_UNLOCK(cc);
 			KASSERT(!sq_locked, ("sleepqueue chain locked"));
 			return (1);
@@ -1235,21 +1237,8 @@ again:
 			 * but we can't stop the one thats running so
 			 * we return 0.
 			 */
-			c->c_iflags &= ~CALLOUT_DFRMIGRATION;
-#ifdef SMP
-			/* 
-			 * We can't call cc_cce_cleanup here since
-			 * if we do it will remove .ce_curr and
-			 * its still running. This will prevent a
-			 * reschedule of the callout when the 
-			 * execution completes.
-			 */
-			cc_migration_cpu(cc, direct) = CPUBLOCK;
-			cc_migration_time(cc, direct) = 0;
-			cc_migration_prec(cc, direct) = 0;
-			cc_migration_func(cc, direct) = NULL;
-			cc_migration_arg(cc, direct) = NULL;
-#endif
+			cc_cce_migration_clear(cc, c, direct);
+
 			CTR3(KTR_CALLOUT, "postponing stop %p func %p arg %p",
 			    c, c->c_func, c->c_arg);
  			if (drain) {
@@ -1291,20 +1280,11 @@ again:
 		return (cancelled);
 	}
 
-	c->c_iflags &= ~CALLOUT_PENDING;
-	c->c_flags &= ~CALLOUT_ACTIVE;
-
 	CTR3(KTR_CALLOUT, "cancelled %p func %p arg %p",
 	    c, c->c_func, c->c_arg);
-	if (not_on_a_list == 0) {
-		if ((c->c_iflags & CALLOUT_PROCESSED) == 0) {
-			if (cc_exec_next(cc) == c)
-				cc_exec_next(cc) = LIST_NEXT(c, c_links.le);
-			LIST_REMOVE(c, c_links.le);
-		} else {
-			TAILQ_REMOVE(&cc->cc_expireq, c, c_links.tqe);
-		}
-	}
+	if (remove)
+		callout_remove(cc, c);
+	c->c_flags &= ~CALLOUT_ACTIVE;
 	CC_UNLOCK(cc);
 	return (cancelled);
 }

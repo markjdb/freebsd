@@ -42,7 +42,6 @@
 
 #include <sys/_callout.h>
 
-#define	CALLOUT_LOCAL_ALLOC	0x0001 /* was allocated from callfree */
 #define	CALLOUT_ACTIVE		0x0002 /* callout is currently active */
 #define	CALLOUT_PENDING		0x0004 /* callout is waiting for timeout */
 #define	CALLOUT_MPSAFE		0x0008 /* deprecated */
