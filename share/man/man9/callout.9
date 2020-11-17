@@ -186,12 +186,12 @@ scheduled call is completed.
 .Pp
 Callouts only provide a single-shot mode.
 If a consumer requires a periodic timer,
-it must explicitly reschedule each function call.
+it must explicitly schedule each function call.
 This is normally done by rescheduling the subsequent call within the called
 function.
 .Pp
 Callout functions must not sleep.
-They may not acquire sleepable locks,
+In particular, they may not acquire sleepable locks,
 wait on condition variables,
 perform blocking allocation requests,
 or invoke any other action that might sleep.
@@ -276,6 +276,25 @@ The lock is only acquired in read mode when running the callout handler.
 This flag is ignored by
 .Fn callout_init_mtx .
 .El
+
+.Pp
+The functions
+.Fn callout_stop ,
+.Fn callout_drain ,
+and
+.Fn callout_async_drain
+cancel a pending callout.
+If the callout has an associated lock,
+the
+.Fn callout_stop
+and
+.Fn callout_async_drain
+functions must be called with the lock held,
+and
+.Fn callout_drain
+must be called without the lock held.
+
+.\" -------------------------------------------
 .Pp
 The function
 .Fn callout_stop

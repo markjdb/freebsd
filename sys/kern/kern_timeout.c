@@ -293,6 +293,18 @@ cc_cce_migration_clear(struct callout_cpu *cc, struct callout *c, int direct)
 #endif
 }
 
+static void
+cc_cce_clear_migration(struct callout_cpu *cc, int direct)
+{
+#ifdef SMP
+	cc_migration_cpu(cc, direct) = CPUBLOCK;
+	cc_migration_time(cc, direct) = 0;
+	cc_migration_prec(cc, direct) = 0;
+	cc_migration_func(cc, direct) = NULL;
+	cc_migration_arg(cc, direct) = NULL;
+#endif
+}
+
 /*
  * Kernel low level callwheel initialization
  * called on the BSP during kernel startup.
@@ -785,7 +797,7 @@ skip:
 			 * It should be assert here that the callout is not
 			 * destroyed but that is not easy.
 			 */
-			c->c_iflags &= ~CALLOUT_DFRMIGRATION;
+			c->c_iflags &= ~CALLOUT_MIGRATING;
 		}
 		cc_exec_waiting(cc, direct) = false;
 		CC_UNLOCK(cc);
@@ -816,7 +828,7 @@ skip:
 			     c, new_func, new_arg);
 			return;
 		}
-		c->c_iflags &= ~CALLOUT_DFRMIGRATION;
+		c->c_iflags &= ~CALLOUT_MIGRATING;
 
 		new_cc = callout_cpu_switch(c, cc, new_cpu);
 		callout_cc_add(c, new_cc, new_time, new_prec, new_func,
@@ -1066,10 +1078,10 @@ callout_schedule(struct callout *c, int to_ticks)
 int
 _callout_stop_safe(struct callout *c, int flags, callout_func_t *drain)
 {
-	struct callout_cpu *cc, *old_cc;
+	struct callout_cpu *cc, *occ;
 	struct lock_class *class;
 	int cancelled, direct;
-	bool remove, sq_locked, locked;
+	bool remove, locked;
 
 	KASSERT((flags & CS_DRAIN) == 0 || drain == NULL,
 	    ("Cannot set drain callback and CS_DRAIN flag at the same time"));
@@ -1094,14 +1106,94 @@ _callout_stop_safe(struct callout *c, int flags, callout_func_t *drain)
 		}
 	}
 
+	cancelled = -1;
 	direct = (c->c_iflags & CALLOUT_DIRECT) != 0 ? 1 : 0;
-	sq_locked = false;
-	old_cc = NULL;
-again:
-	cc = callout_lock(c);
 
-	if ((c->c_iflags & (CALLOUT_DFRMIGRATION | CALLOUT_PENDING)) ==
-	    (CALLOUT_DFRMIGRATION | CALLOUT_PENDING) &&
+	if ((flags & CS_DRAIN) != 0) {
+		cc = callout_lock(c);
+		while (cc_exec_curr(cc, direct) == c) {
+			CC_UNLOCK(cc);
+			occ = cc;
+			sleepq_lock(&cc_exec_waiting(cc, direct));
+			cc = callout_lock(c);
+			if (cc != occ) {
+				sleepq_release(&cc_exec_waiting(occ, direct));
+				continue;
+			}
+			if (!cc_exec_curr(cc, direct) != c) {
+				sleepq_release(&cc_exec_waiting(cc, direct));
+				break;
+			}
+
+			DROP_GIANT();
+
+			cc_exec_waiting(cc, direct) = true;
+			CC_UNLOCK(cc);
+			sleepq_add(&cc_exec_waiting(cc, direct),
+			    &cc->cc_lock.lock_object, "codrain",
+			    SLEEPQ_SLEEP, 0);
+			sleepq_wait(&cc_exec_waiting(cc, direct), 0);
+
+			PICKUP_GIANT();
+		}
+	} else if (cc_exec_curr(cc, direct) == c) {
+		if (locked && !cc_exec_cancel(cc, direct) && drain == NULL) {
+			/*
+			 * The current callout is waiting for its
+			 * lock which we hold.  Cancel the callout
+			 * and return.  After our caller drops the
+			 * lock, the callout will be skipped in
+			 * softclock().
+			 */
+			cc_exec_cancel(cc, direct) = true;
+			CTR3(KTR_CALLOUT, "cancelled %p func %p arg %p",
+			    c, c->c_func, c->c_arg);
+			KASSERT(!cc_cce_migrating(cc, direct),
+			    ("callout wrongly scheduled for migration"));
+			if (callout_migrating(c)) {
+				c->c_iflags &= ~CALLOUT_MIGRATING;
+				cc_cce_clear_migration(cc, direct);
+			}
+			CC_UNLOCK(cc);
+			return (1);
+		} else if (callout_migrating(c)) {
+			/*
+			 * The callout is currently being serviced
+			 * and the "next" callout is scheduled at
+			 * its completion with a migration. We remove
+			 * the migration flag so it *won't* get rescheduled,
+			 * but we can't stop the one thats running so
+			 * we return 0.
+			 */
+			c->c_iflags &= ~CALLOUT_MIGRATING;
+			cc_cce_clear_migration(cc, direct);
+
+			CTR3(KTR_CALLOUT, "postponing stop %p func %p arg %p",
+			    c, c->c_func, c->c_arg);
+			if (drain) {
+				KASSERT(cc_exec_drain(cc, direct) == NULL,
+				    ("callout drain function already set to %p",
+				    cc_exec_drain(cc, direct)));
+				cc_exec_drain(cc, direct) = drain;
+			}
+			CC_UNLOCK(cc);
+			return ((flags & CS_EXECUTING) != 0);
+		} else {
+			CTR3(KTR_CALLOUT, "failed to stop %p func %p arg %p",
+			    c, c->c_func, c->c_arg);
+			if (drain) {
+				KASSERT(cc_exec_drain(cc, direct) == NULL,
+				    ("callout drain function already set to %p",
+				    cc_exec_drain(cc, direct)));
+				cc_exec_drain(cc, direct) = drain;
+			}
+			cancelled = ((flags & CS_EXECUTING) != 0);
+		}
+	}
+
+#if 0
+	if ((c->c_iflags & (CALLOUT_MIGRATING | CALLOUT_PENDING)) ==
+	    (CALLOUT_MIGRATING | CALLOUT_PENDING) &&
 	    ((c->c_flags & CALLOUT_ACTIVE) == CALLOUT_ACTIVE)) {
 		/*
 		 * Special case where this slipped in while we
@@ -1121,7 +1213,9 @@ again:
 	} else {
 		remove = true;
 	}
+#endif
 
+#if 0
 	/*
 	 * If the callout was migrating while the callout cpu lock was
 	 * dropped,  just drop the sleepqueue lock and check the states
@@ -1138,6 +1232,7 @@ again:
 		panic("migration should not happen");
 #endif
 	}
+#endif
 
 	/*
 	 * If the callout is running, try to stop it or drain it.
@@ -1264,8 +1359,10 @@ again:
 	} else
 		cancelled = 1;
 
+#if 0
 	if (sq_locked)
 		sleepq_release(&cc_exec_waiting(cc, direct));
+#endif
 
 	if ((c->c_iflags & CALLOUT_PENDING) == 0) {
 		CTR3(KTR_CALLOUT, "failed to stop %p func %p arg %p",
