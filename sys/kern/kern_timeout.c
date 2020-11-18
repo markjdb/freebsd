@@ -1135,6 +1135,7 @@ _callout_stop_safe(struct callout *c, int flags, callout_func_t *drain)
 			sleepq_wait(&cc_exec_waiting(cc, direct), 0);
 
 			PICKUP_GIANT();
+			cc = callout_lock(c);
 		}
 	} else if (cc_exec_curr(cc, direct) == c) {
 		if (locked && !cc_exec_cancel(cc, direct) && drain == NULL) {
