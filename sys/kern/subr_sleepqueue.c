@@ -835,7 +835,7 @@ sleepq_remove_thread(struct sleepqueue *sq, struct thread *td)
 		td->td_sleepqueue = LIST_FIRST(&sq->sq_free);
 	LIST_REMOVE(td->td_sleepqueue, sq_hash);
 
-	if ((td->td_flags & TDF_TIMEOUT) == 0 && td->td_sleeptimo != 0)
+	if ((td->td_flags & TDF_TIMEOUT) == 0 && td->td_sleeptimo != 0) {
 		/*
 		 * We ignore the situation where timeout subsystem was
 		 * unable to stop our callout.  The struct thread is
@@ -846,7 +846,8 @@ sleepq_remove_thread(struct sleepqueue *sq, struct thread *td)
 		 * get spurious wakeups, even if the callout was reset
 		 * or thread reused.
 		 */
-		callout_stop(&td->td_slpcallout);
+		(void)callout_stop(&td->td_slpcallout);
+	}
 
 	td->td_wmesg = NULL;
 	td->td_wchan = NULL;

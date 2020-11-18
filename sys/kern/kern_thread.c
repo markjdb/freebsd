@@ -648,7 +648,9 @@ thread_free_batched(struct thread *td)
 	cpu_thread_free(td);
 	if (td->td_kstack != 0)
 		vm_thread_dispose(td);
-	callout_drain(&td->td_slpcallout);
+	if (callout_active(&td->td_slpcallout))
+		callout_drain(&td->td_slpcallout);
+
 	/*
 	 * Freeing handled by the caller.
 	 */
@@ -862,7 +864,8 @@ thread_wait(struct proc *p)
 	td->td_cpuset = NULL;
 	cpu_thread_clean(td);
 	thread_cow_free(td);
-	callout_drain(&td->td_slpcallout);
+	if (callout_active(&td->td_slpcallout))
+		callout_drain(&td->td_slpcallout);
 	thread_reap();	/* check for zombie threads etc. */
 }
 
