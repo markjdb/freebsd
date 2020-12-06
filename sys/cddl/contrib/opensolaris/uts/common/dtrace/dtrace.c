@@ -116,7 +116,6 @@
 #ifndef illumos
 #include <sys/callout.h>
 #include <sys/ctype.h>
-#include <sys/domainset.h>
 #include <sys/eventhandler.h>
 #include <sys/limits.h>
 #include <sys/linker.h>
@@ -12217,8 +12216,8 @@ err:
 
 		ASSERT(buf->dtb_xamot == NULL);
 
-		if ((buf->dtb_tomax = malloc_domainset(size, M_SOLARIS,
-		    DOMAINSET_PREF(cpu), M_NOWAIT | M_ZERO)) == NULL)
+		if ((buf->dtb_tomax = kmem_zalloc(size,
+		    KM_NOSLEEP | KM_NORMALPRI)) == NULL)
 			goto err;
 
 		buf->dtb_size = size;
@@ -12229,8 +12228,8 @@ err:
 		if (flags & DTRACEBUF_NOSWITCH)
 			continue;
 
-		if ((buf->dtb_xamot = malloc_domainset(size, M_SOLARIS,
-		    DOMAINSET_PREF(cpu), M_NOWAIT | M_ZERO)) == NULL)
+		if ((buf->dtb_xamot = kmem_zalloc(size,
+		    KM_NOSLEEP | KM_NORMALPRI)) == NULL)
 			goto err;
 	}
 
