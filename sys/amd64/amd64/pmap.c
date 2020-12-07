@@ -7089,6 +7089,7 @@ void
 pmap_enter_object(pmap_t pmap, vm_offset_t start, vm_offset_t end,
     vm_page_t m_start, vm_prot_t prot)
 {
+	struct vm_page_iter iter;
 	struct rwlock *lock;
 	vm_offset_t va;
 	vm_page_t m, mpte;
@@ -7100,8 +7101,11 @@ pmap_enter_object(pmap_t pmap, vm_offset_t start, vm_offset_t end,
 	mpte = NULL;
 	m = m_start;
 	lock = NULL;
+	vm_page_iter_init(m_start->object, m_start->pindex, &iter);
 	PMAP_LOCK(pmap);
-	while (m != NULL && (diff = m->pindex - m_start->pindex) < psize) {
+	for (m = m_start;
+	    m != NULL && (diff = m->pindex - m_start->pindex) < psize;
+	    m = vm_page_iter_next(&iter)) {
 		va = start + ptoa(diff);
 		if ((va & PDRMASK) == 0 && va + NBPDR <= end &&
 		    m->psind == 1 && pmap_ps_enabled(pmap) &&
@@ -7111,7 +7115,6 @@ pmap_enter_object(pmap_t pmap, vm_offset_t start, vm_offset_t end,
 		else
 			mpte = pmap_enter_quick_locked(pmap, va, m, prot,
 			    mpte, &lock);
-		m = TAILQ_NEXT(m, listq);
 	}
 	if (lock != NULL)
 		rw_wunlock(lock);
@@ -7257,6 +7260,7 @@ void
 pmap_object_init_pt(pmap_t pmap, vm_offset_t addr, vm_object_t object,
     vm_pindex_t pindex, vm_size_t size)
 {
+	struct vm_page_iter iter;
 	pd_entry_t *pde;
 	pt_entry_t PG_A, PG_M, PG_RW, PG_V;
 	vm_paddr_t pa, ptepa;
@@ -7294,7 +7298,8 @@ pmap_object_init_pt(pmap_t pmap, vm_offset_t addr, vm_object_t object,
 		 * the pages are not physically contiguous or have differing
 		 * memory attributes.
 		 */
-		p = TAILQ_NEXT(p, listq);
+		vm_page_iter_init_after(object, p, &iter);
+		p = vm_page_iter_next(&iter);
 		for (pa = ptepa + PAGE_SIZE; pa < ptepa + size;
 		    pa += PAGE_SIZE) {
 			KASSERT(p->valid == VM_PAGE_BITS_ALL,
@@ -7302,7 +7307,7 @@ pmap_object_init_pt(pmap_t pmap, vm_offset_t addr, vm_object_t object,
 			if (pa != VM_PAGE_TO_PHYS(p) ||
 			    pat_mode != p->md.pat_mode)
 				return;
-			p = TAILQ_NEXT(p, listq);
+			p = vm_page_iter_next(&iter);
 		}
 
 		/*

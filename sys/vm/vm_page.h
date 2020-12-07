@@ -71,6 +71,7 @@
 
 #include <vm/pmap.h>
 #include <vm/_vm_phys.h>
+#include <vm/vm_radix.h> /* XXXMJ */
 
 /*
  *	Management of resident (logical) pages.
@@ -594,6 +595,19 @@ void vm_page_busy_sleep_unlocked(vm_object_t obj, vm_page_t m,
     vm_pindex_t pindex, const char *wmesg, bool nonshared);
 void vm_page_free(vm_page_t m);
 void vm_page_free_zero(vm_page_t m);
+
+struct vm_page_iter {
+	struct vm_radix_iter	i;
+};
+
+void vm_page_iter_init(vm_object_t, vm_pindex_t, struct vm_page_iter *);
+void vm_page_iter_init_all(vm_object_t, struct vm_page_iter *);
+void vm_page_iter_init_after(vm_object_t, vm_page_t, struct vm_page_iter *);
+void vm_page_iter_init_before(vm_object_t, vm_page_t, struct vm_page_iter *);
+vm_page_t vm_page_iter_next(struct vm_page_iter *);
+vm_page_t vm_page_iter_prev(struct vm_page_iter *);
+vm_page_t vm_page_iter_succ(struct vm_page_iter *);
+vm_page_t vm_page_iter_pred(struct vm_page_iter *);
 
 void vm_page_activate (vm_page_t);
 void vm_page_advise(vm_page_t m, int advice);

@@ -2648,6 +2648,7 @@ static void
 vm_map_pmap_enter(vm_map_t map, vm_offset_t addr, vm_prot_t prot,
     vm_object_t object, vm_pindex_t pindex, vm_size_t size, int flags)
 {
+	struct vm_page_iter iter;
 	vm_offset_t start;
 	vm_page_t p, p_start;
 	vm_pindex_t mask, psize, threshold, tmpidx;
@@ -2679,15 +2680,15 @@ vm_map_pmap_enter(vm_map_t map, vm_offset_t addr, vm_prot_t prot,
 	p_start = NULL;
 	threshold = MAX_INIT_PT;
 
-	p = vm_page_find_least(object, pindex);
+	vm_page_iter_init(object, pindex, &iter);
 	/*
 	 * Assert: the variable p is either (1) the page with the
 	 * least pindex greater than or equal to the parameter pindex
 	 * or (2) NULL.
 	 */
-	for (;
+	for (p = vm_page_iter_next(&iter);
 	     p != NULL && (tmpidx = p->pindex - pindex) < psize;
-	     p = TAILQ_NEXT(p, listq)) {
+	     p = vm_page_iter_next(&iter)) {
 		/*
 		 * don't allow an madvise to blow away our really
 		 * free pages allocating pv entries.

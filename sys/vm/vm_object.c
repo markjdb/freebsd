@@ -879,7 +879,8 @@ vm_object_backing_collapse_wait(vm_object_t object)
 static void
 vm_object_terminate_pages(vm_object_t object)
 {
-	vm_page_t p, p_next;
+	struct vm_page_iter iter;
+	vm_page_t p;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 
@@ -889,7 +890,8 @@ vm_object_terminate_pages(vm_object_t object)
 	 * from the object.  Rather than incrementally removing each page from
 	 * the object, the page and object are reset to any empty state. 
 	 */
-	TAILQ_FOREACH_SAFE(p, &object->memq, listq, p_next) {
+	vm_page_iter_init_all(object, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL) {
 		vm_page_assert_unbusied(p);
 		KASSERT(p->object == object &&
 		    (p->ref_count & VPRC_OBJREF) != 0,
@@ -1021,7 +1023,8 @@ boolean_t
 vm_object_page_clean(vm_object_t object, vm_ooffset_t start, vm_ooffset_t end,
     int flags)
 {
-	vm_page_t np, p;
+	struct vm_page_iter iter;
+	vm_page_t p;
 	vm_pindex_t pi, tend, tstart;
 	int curgeneration, n, pagerflags;
 	boolean_t eio, res, allclean;
@@ -1043,18 +1046,18 @@ vm_object_page_clean(vm_object_t object, vm_ooffset_t start, vm_ooffset_t end,
 rescan:
 	curgeneration = object->generation;
 
-	for (p = vm_page_find_least(object, tstart); p != NULL; p = np) {
+	vm_page_iter_init(object, tstart, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL) {
 		pi = p->pindex;
 		if (pi >= tend)
 			break;
-		np = TAILQ_NEXT(p, listq);
 		if (vm_page_none_valid(p))
 			continue;
-		if (vm_page_busy_acquire(p, VM_ALLOC_WAITFAIL) == 0) {
+		if (!vm_page_busy_acquire(p, VM_ALLOC_WAITFAIL)) {
 			if (object->generation != curgeneration &&
 			    (flags & OBJPC_SYNC) != 0)
 				goto rescan;
-			np = vm_page_find_least(object, pi);
+			vm_page_iter_init(object, pi, &iter);
 			continue;
 		}
 		if (!vm_object_page_remove_write(p, flags, &allclean)) {
@@ -1092,7 +1095,7 @@ rescan:
 			n = 1;
 			vm_page_xunbusy(p);
 		}
-		np = vm_page_find_least(object, pi + n);
+		vm_page_iter_init(object, pi + n, &iter);
 	}
 #if 0
 	VOP_FSYNC(vp, (pagerflags & VM_PAGER_PUT_SYNC) ? MNT_WAIT : 0);
@@ -1112,6 +1115,7 @@ static int
 vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags,
     int flags, boolean_t *allclean, boolean_t *eio)
 {
+	struct vm_page_iter iter;
 	vm_page_t ma[vm_pageout_page_count], p_first, tp;
 	int count, i, mreq, runlen;
 
@@ -1122,8 +1126,9 @@ vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags,
 	count = 1;
 	mreq = 0;
 
-	for (tp = p; count < vm_pageout_page_count; count++) {
-		tp = vm_page_next(tp);
+	vm_page_iter_init_after(object, p, &iter);
+	for (; count < vm_pageout_page_count; count++) {
+		tp = vm_page_iter_succ(&iter);
 		if (tp == NULL || vm_page_tryxbusy(tp) == 0)
 			break;
 		if (!vm_object_page_remove_write(tp, flags, allclean)) {
@@ -1132,8 +1137,10 @@ vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags,
 		}
 	}
 
-	for (p_first = p; count < vm_pageout_page_count; count++) {
-		tp = vm_page_prev(p_first);
+	p_first = p;
+	vm_page_iter_init_before(object, p, &iter);
+	for (; count < vm_pageout_page_count; count++) {
+		tp = vm_page_iter_pred(&iter);
 		if (tp == NULL || vm_page_tryxbusy(tp) == 0)
 			break;
 		if (!vm_object_page_remove_write(tp, flags, allclean)) {
@@ -1144,8 +1151,9 @@ vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags,
 		mreq++;
 	}
 
-	for (tp = p_first, i = 0; i < count; tp = TAILQ_NEXT(tp, listq), i++)
-		ma[i] = tp;
+	vm_page_iter_init(object, p_first->pindex, &iter);
+	for (i = 0; i < count; i++)
+		ma[i] = vm_page_iter_next(&iter);
 
 	vm_pageout_flush(ma, count, pagerflags, mreq, &runlen, eio);
 	return (runlen);
@@ -1305,6 +1313,7 @@ void
 vm_object_madvise(vm_object_t object, vm_pindex_t pindex, vm_pindex_t end,
     int advice)
 {
+	struct vm_page_iter iter;
 	vm_pindex_t tpindex;
 	vm_object_t backing_object, tobject;
 	vm_page_t m, tm;
@@ -1318,7 +1327,8 @@ relookup:
 		VM_OBJECT_WUNLOCK(object);
 		return;
 	}
-	for (m = vm_page_find_least(object, pindex); pindex < end; pindex++) {
+	vm_page_iter_init(object, pindex, &iter);
+	for (m = vm_page_iter_next(&iter); pindex < end; pindex++) {
 		tobject = object;
 
 		/*
@@ -1367,7 +1377,7 @@ relookup:
 		} else {
 next_page:
 			tm = m;
-			m = TAILQ_NEXT(m, listq);
+			m = vm_page_iter_next(&iter);
 		}
 
 		/*
@@ -1497,7 +1507,8 @@ vm_object_shadow(vm_object_t *object, vm_ooffset_t *offset, vm_size_t length,
 void
 vm_object_split(vm_map_entry_t entry)
 {
-	vm_page_t m, m_busy, m_next;
+	struct vm_page_iter iter;
+	vm_page_t m, m_busy;
 	vm_object_t orig_object, new_object, backing_object;
 	vm_pindex_t idx, offidxstart;
 	vm_size_t size;
@@ -1559,13 +1570,13 @@ vm_object_split(vm_map_entry_t entry)
 	idx = 0;
 #endif
 retry:
-	m = vm_page_find_least(orig_object, offidxstart);
+	vm_page_iter_init(orig_object, offidxstart, &iter);
+#if 0 /* XXXMJ */
 	KASSERT(m == NULL || idx <= m->pindex - offidxstart,
 	    ("%s: object %p was repopulated", __func__, orig_object));
-	for (; m != NULL && (idx = m->pindex - offidxstart) < size;
-	    m = m_next) {
-		m_next = TAILQ_NEXT(m, listq);
-
+#endif
+	while ((m = vm_page_iter_next(&iter)) != NULL &&
+	    (idx = m->pindex - offidxstart) < size) {
 		/*
 		 * We must wait for pending I/O to complete before we can
 		 * rename the page.
@@ -1632,9 +1643,11 @@ retry:
 		 * and new_object's locks are released and reacquired. 
 		 */
 		swap_pager_copy(orig_object, new_object, offidxstart, 0);
-		if (m_busy != NULL)
-			TAILQ_FOREACH_FROM(m_busy, &new_object->memq, listq)
+		if (m_busy != NULL) {
+			vm_page_iter_init(new_object, m_busy->pindex, &iter);
+			while ((m = vm_page_iter_next(&iter)) != NULL)
 				vm_page_xunbusy(m_busy);
+		}
 	}
 	vm_object_clear_flag(orig_object, OBJ_SPLIT);
 	VM_OBJECT_WUNLOCK(orig_object);
@@ -1645,7 +1658,7 @@ retry:
 	VM_OBJECT_WLOCK(new_object);
 }
 
-static vm_page_t
+static void
 vm_object_collapse_scan_wait(vm_object_t object, vm_page_t p)
 {
 	vm_object_t backing_object;
@@ -1670,12 +1683,12 @@ vm_object_collapse_scan_wait(vm_object_t object, vm_page_t p)
 	}
 	VM_OBJECT_WLOCK(object);
 	VM_OBJECT_WLOCK(backing_object);
-	return (TAILQ_FIRST(&backing_object->memq));
 }
 
 static bool
 vm_object_scan_all_shadowed(vm_object_t object)
 {
+	struct vm_page_iter iter;
 	vm_object_t backing_object;
 	vm_page_t p, pp;
 	vm_pindex_t backing_offset_index, new_pindex, pi, ps;
@@ -1689,16 +1702,16 @@ vm_object_scan_all_shadowed(vm_object_t object)
 		return (false);
 
 	pi = backing_offset_index = OFF_TO_IDX(object->backing_object_offset);
-	p = vm_page_find_least(backing_object, pi);
 	ps = swap_pager_find_least(backing_object, pi);
 
 	/*
 	 * Only check pages inside the parent object's range and
 	 * inside the parent object's mapping of the backing object.
 	 */
-	for (;; pi++) {
+	vm_page_iter_init(backing_object, pi, &iter);
+	for (p = vm_page_iter_next(&iter);; pi++) {
 		if (p != NULL && p->pindex < pi)
-			p = TAILQ_NEXT(p, listq);
+			p = vm_page_iter_next(&iter);
 		if (ps < pi)
 			ps = swap_pager_find_least(backing_object, pi);
 		if (p == NULL && ps >= backing_object->size)
@@ -1763,8 +1776,9 @@ unbusy_ret:
 static void
 vm_object_collapse_scan(vm_object_t object)
 {
+	struct vm_page_iter iter;
 	vm_object_t backing_object;
-	vm_page_t next, p, pp;
+	vm_page_t p, pp;
 	vm_pindex_t backing_offset_index, new_pindex;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
@@ -1773,19 +1787,17 @@ vm_object_collapse_scan(vm_object_t object)
 	backing_object = object->backing_object;
 	backing_offset_index = OFF_TO_IDX(object->backing_object_offset);
 
-	/*
-	 * Our scan
-	 */
-	for (p = TAILQ_FIRST(&backing_object->memq); p != NULL; p = next) {
-		next = TAILQ_NEXT(p, listq);
+scan:
+	vm_page_iter_init(backing_object, 0, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL) {
 		new_pindex = p->pindex - backing_offset_index;
 
 		/*
 		 * Check for busy page
 		 */
-		if (vm_page_tryxbusy(p) == 0) {
-			next = vm_object_collapse_scan_wait(object, p);
-			continue;
+		if (!vm_page_tryxbusy(p)) {
+			vm_object_collapse_scan_wait(object, p);
+			goto scan;
 		}
 
 		KASSERT(object->backing_object == backing_object,
@@ -1825,8 +1837,8 @@ vm_object_collapse_scan(vm_object_t object)
 			 * busy bit owner, we can't tell whether it shadows the
 			 * original page.
 			 */
-			next = vm_object_collapse_scan_wait(object, pp);
-			continue;
+			vm_object_collapse_scan_wait(object, pp);
+			goto scan;
 		}
 
 		if (pp != NULL && vm_page_none_valid(pp)) {
@@ -1869,8 +1881,8 @@ vm_object_collapse_scan(vm_object_t object)
 		 */
 		if (vm_page_rename(p, object, new_pindex)) {
 			vm_page_xunbusy(p);
-			next = vm_object_collapse_scan_wait(object, NULL);
-			continue;
+			vm_object_collapse_scan_wait(object, NULL);
+			goto scan;
 		}
 
 		/* Use the old pindex to free the right page. */
@@ -1887,7 +1899,6 @@ vm_object_collapse_scan(vm_object_t object)
 #endif
 		vm_page_xunbusy(p);
 	}
-	return;
 }
 
 /*
@@ -2074,7 +2085,8 @@ void
 vm_object_page_remove(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
     int options)
 {
-	vm_page_t p, next;
+	struct vm_page_iter iter;
+	vm_page_t p;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT((object->flags & OBJ_UNMANAGED) == 0 ||
@@ -2084,15 +2096,13 @@ vm_object_page_remove(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
 		return;
 	vm_object_pip_add(object, 1);
 again:
-	p = vm_page_find_least(object, start);
-
 	/*
 	 * Here, the variable "p" is either (1) the page with the least pindex
 	 * greater than or equal to the parameter "start" or (2) NULL. 
 	 */
-	for (; p != NULL && (p->pindex < end || end == 0); p = next) {
-		next = TAILQ_NEXT(p, listq);
-
+	vm_page_iter_init(object, start, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL &&
+	    (p->pindex < end || end == 0)) {
 		/*
 		 * If the page is wired for any reason besides the existence
 		 * of managed, wired mappings, then it cannot be freed.  For
@@ -2163,23 +2173,23 @@ wired:
 void
 vm_object_page_noreuse(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 {
-	vm_page_t p, next;
+	struct vm_page_iter iter;
+	vm_page_t p;
 
 	VM_OBJECT_ASSERT_LOCKED(object);
 	KASSERT((object->flags & (OBJ_FICTITIOUS | OBJ_UNMANAGED)) == 0,
 	    ("vm_object_page_noreuse: illegal object %p", object));
 	if (object->resident_page_count == 0)
 		return;
-	p = vm_page_find_least(object, start);
 
 	/*
 	 * Here, the variable "p" is either (1) the page with the least pindex
 	 * greater than or equal to the parameter "start" or (2) NULL. 
 	 */
-	for (; p != NULL && (p->pindex < end || end == 0); p = next) {
-		next = TAILQ_NEXT(p, listq);
+	vm_page_iter_init(object, start, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL &&
+	    (p->pindex < end || end == 0))
 		vm_page_deactivate_noreuse(p);
-	}
 }
 
 /*
@@ -2195,6 +2205,7 @@ vm_object_page_noreuse(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 boolean_t
 vm_object_populate(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 {
+	struct vm_page_iter iter;
 	vm_page_t m;
 	vm_pindex_t pindex;
 	int rv;
@@ -2211,11 +2222,10 @@ vm_object_populate(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 		 */
 	}
 	if (pindex > start) {
-		m = vm_page_lookup(object, start);
-		while (m != NULL && m->pindex < pindex) {
+		vm_page_iter_init(object, start, &iter);
+		while ((m = vm_page_iter_next(&iter)) != NULL &&
+		    m->pindex < pindex)
 			vm_page_xunbusy(m);
-			m = TAILQ_NEXT(m, listq);
-		}
 	}
 	return (pindex == end);
 }
@@ -2353,6 +2363,7 @@ void
 vm_object_unwire(vm_object_t object, vm_ooffset_t offset, vm_size_t length,
     uint8_t queue)
 {
+	struct vm_page_iter iter;
 	vm_object_t tobject, t1object;
 	vm_page_t m, tm;
 	vm_pindex_t end_pindex, pindex, tpindex;
@@ -2370,7 +2381,8 @@ vm_object_unwire(vm_object_t object, vm_ooffset_t offset, vm_size_t length,
 again:
 	locked_depth = 1;
 	VM_OBJECT_RLOCK(object);
-	m = vm_page_find_least(object, pindex);
+	vm_page_iter_init(object, pindex, &iter);
+	m = vm_page_iter_next(&iter);
 	while (pindex < end_pindex) {
 		if (m == NULL || pindex < m->pindex) {
 			/*
@@ -2398,7 +2410,7 @@ again:
 			    NULL);
 		} else {
 			tm = m;
-			m = TAILQ_NEXT(m, listq);
+			m = vm_page_iter_next(&iter);
 		}
 		if (vm_page_trysbusy(tm) == 0) {
 			for (tobject = object; locked_depth >= 1;
@@ -2518,6 +2530,7 @@ vm_object_kvme_type(vm_object_t object, struct vnode **vpp)
 static int
 sysctl_vm_object_list(SYSCTL_HANDLER_ARGS)
 {
+	struct vm_page_iter iter;
 	struct kinfo_vmobject *kvo;
 	char *fullpath, *freepath;
 	struct vnode *vp;
@@ -2568,7 +2581,8 @@ sysctl_vm_object_list(SYSCTL_HANDLER_ARGS)
 		kvo->kvo_memattr = obj->memattr;
 		kvo->kvo_active = 0;
 		kvo->kvo_inactive = 0;
-		TAILQ_FOREACH(m, &obj->memq, listq) {
+		vm_page_iter_init_all(obj, &iter);
+		while ((m = vm_page_iter_next(&iter)) != NULL) {
 			/*
 			 * A page may belong to the object but be
 			 * dequeued and set to PQ_NONE while the
@@ -2720,6 +2734,7 @@ DB_SHOW_COMMAND(vmochk, vm_object_check)
  */
 DB_SHOW_COMMAND(object, vm_object_print_static)
 {
+	struct vm_page_iter iter;
 	/* XXX convert args. */
 	vm_object_t object = (vm_object_t)addr;
 	boolean_t full = have_addr;
@@ -2749,7 +2764,8 @@ DB_SHOW_COMMAND(object, vm_object_print_static)
 
 	db_indent += 2;
 	count = 0;
-	TAILQ_FOREACH(p, &object->memq, listq) {
+	vm_page_iter_init_all(object, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL) {
 		if (count == 0)
 			db_iprintf("memory:=");
 		else if (count == 6) {
@@ -2787,6 +2803,7 @@ vm_object_print(
 
 DB_SHOW_COMMAND(vmopag, vm_object_print_pages)
 {
+	struct vm_page_iter iter;
 	vm_object_t object;
 	vm_pindex_t fidx;
 	vm_paddr_t pa;
@@ -2806,10 +2823,12 @@ DB_SHOW_COMMAND(vmopag, vm_object_print_pages)
 		rcount = 0;
 		fidx = 0;
 		pa = -1;
-		TAILQ_FOREACH(m, &object->memq, listq) {
+		vm_page_iter_init_all(object, &iter);
+		for (prev_m = NULL; (m = vm_page_iter_next(&iter)) != NULL;
+		    prev_m = m) {
 			if (m->pindex > 128)
 				break;
-			if ((prev_m = TAILQ_PREV(m, pglist, listq)) != NULL &&
+			if (prev_m != NULL &&
 			    prev_m->pindex + 1 != m->pindex) {
 				if (rcount) {
 					db_printf(" index(%ld)run(%d)pa(0x%lx)\n",

@@ -165,6 +165,7 @@ domain_idmap_nextlvl(struct idpgtbl *tbl, int lvl, vm_pindex_t idx,
 vm_object_t
 domain_get_idmap_pgtbl(struct dmar_domain *domain, iommu_gaddr_t maxaddr)
 {
+	struct vm_page_iter iter;
 	struct dmar_unit *unit;
 	struct idpgtbl *tbl;
 	vm_object_t res;
@@ -257,8 +258,8 @@ end:
 	unit = domain->dmar;
 	if (!DMAR_IS_COHERENT(unit)) {
 		VM_OBJECT_WLOCK(res);
-		for (m = vm_page_lookup(res, 0); m != NULL;
-		     m = vm_page_next(m))
+		vm_page_iter_init_all(res, &iter);
+		while ((m = vm_page_iter_succ(&iter)) != NULL)
 			pmap_invalidate_cache_pages(&m, 1);
 		VM_OBJECT_WUNLOCK(res);
 	}
@@ -724,6 +725,7 @@ domain_alloc_pgtbl(struct dmar_domain *domain)
 void
 domain_free_pgtbl(struct dmar_domain *domain)
 {
+	struct vm_page_iter iter;
 	vm_object_t obj;
 	vm_page_t m;
 
@@ -745,7 +747,8 @@ domain_free_pgtbl(struct dmar_domain *domain)
 
 	/* Obliterate ref_counts */
 	VM_OBJECT_ASSERT_WLOCKED(obj);
-	for (m = vm_page_lookup(obj, 0); m != NULL; m = vm_page_next(m))
+	vm_page_iter_init_all(obj, &iter);
+	while ((m = vm_page_iter_succ(&iter)) != NULL)
 		m->ref_count = 0;
 	VM_OBJECT_WUNLOCK(obj);
 	vm_object_deallocate(obj);

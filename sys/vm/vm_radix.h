@@ -37,6 +37,14 @@
 
 #ifdef _KERNEL
 
+struct vm_radix_node;
+
+struct vm_radix_iter {
+	struct vm_radix		*vri_tree;
+	vm_pindex_t		vri_index;
+	bool			vri_done;
+};
+
 int		vm_radix_insert(struct vm_radix *rtree, vm_page_t page);
 void		vm_radix_wait(void);
 boolean_t	vm_radix_is_singleton(struct vm_radix *rtree);
@@ -47,6 +55,14 @@ vm_page_t	vm_radix_lookup_unlocked(struct vm_radix *rtree, vm_pindex_t index);
 void		vm_radix_reclaim_allnodes(struct vm_radix *rtree);
 vm_page_t	vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index);
 vm_page_t	vm_radix_replace(struct vm_radix *rtree, vm_page_t newpage);
+
+void		vm_radix_iter_init(struct vm_radix *rtree, vm_pindex_t index,
+		    struct vm_radix_iter *iter);
+vm_page_t	vm_radix_iter_next(struct vm_radix_iter *iter);
+vm_page_t	vm_radix_iter_prev(struct vm_radix_iter *iter);
+vm_page_t	vm_radix_iter_succ(struct vm_radix_iter *iter);
+vm_page_t	vm_radix_iter_pred(struct vm_radix_iter *iter);
+
 void		vm_radix_zinit(void);
 
 static __inline void

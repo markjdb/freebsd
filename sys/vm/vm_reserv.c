@@ -532,7 +532,7 @@ vm_reserv_from_object(vm_object_t object, vm_pindex_t pindex,
 		rv = vm_reserv_from_page(mpred);
 		if (rv->object == object && vm_reserv_has_pindex(rv, pindex))
 			goto found;
-		msucc = TAILQ_NEXT(mpred, listq);
+		msucc = vm_page_find_least(object, pindex);
 	} else
 		msucc = TAILQ_FIRST(&object->memq);
 	if (msucc != NULL) {

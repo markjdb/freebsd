@@ -207,6 +207,7 @@ static void
 vm_swapout_object_deactivate(pmap_t pmap, vm_object_t first_object,
     long desired)
 {
+	struct vm_page_iter iter;
 	vm_object_t backing_object, object;
 	vm_page_t m;
 	bool unmap;
@@ -229,13 +230,16 @@ vm_swapout_object_deactivate(pmap_t pmap, vm_object_t first_object,
 		/*
 		 * Scan the object's entire memory queue.
 		 */
-		TAILQ_FOREACH(m, &object->memq, listq) {
+		vm_page_iter_init_all(object, &iter);
+		while ((m = vm_page_iter_next(&iter)) != NULL) {
 			if (pmap_resident_count(pmap) <= desired)
-				goto unlock_return;
+				break;
 			if (should_yield())
-				goto unlock_return;
+				break;
 			vm_swapout_object_deactivate_page(pmap, m, unmap);
 		}
+		if (m != NULL)
+			goto unlock_return;
 		if ((backing_object = object->backing_object) == NULL)
 			goto unlock_return;
 		VM_OBJECT_RLOCK(backing_object);

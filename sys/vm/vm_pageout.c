@@ -350,6 +350,7 @@ vm_pageout_defer(vm_page_t m, const uint8_t queue, const bool enqueued)
 static int
 vm_pageout_cluster(vm_page_t m)
 {
+	struct vm_page_iter iter;
 	vm_object_t object;
 	vm_page_t mc[2 * vm_pageout_page_count], p, pb, ps;
 	vm_pindex_t pindex;
@@ -380,13 +381,14 @@ vm_pageout_cluster(vm_page_t m)
 	 * forward scan if room remains.
 	 */
 more:
+	vm_page_iter_init_before(object, m, &iter);
 	while (ib != 0 && pageout_count < vm_pageout_page_count) {
 		if (ib > pindex) {
 			ib = 0;
 			break;
 		}
-		if ((p = vm_page_prev(pb)) == NULL ||
-		    vm_page_tryxbusy(p) == 0) {
+		if ((p = vm_page_iter_pred(&iter)) == NULL ||
+		    !vm_page_tryxbusy(p)) {
 			ib = 0;
 			break;
 		}
@@ -417,10 +419,12 @@ more:
 		if ((pindex - (ib - 1)) % vm_pageout_page_count == 0)
 			break;
 	}
+
+	vm_page_iter_init_after(object, m, &iter);
 	while (pageout_count < vm_pageout_page_count && 
 	    pindex + is < object->size) {
-		if ((p = vm_page_next(ps)) == NULL ||
-		    vm_page_tryxbusy(p) == 0)
+		if ((p = vm_page_iter_succ(&iter)) == NULL ||
+		    !vm_page_tryxbusy(p))
 			break;
 		if (vm_page_wired(p)) {
 			vm_page_xunbusy(p);

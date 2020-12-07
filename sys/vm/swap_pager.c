@@ -1224,6 +1224,7 @@ static int
 swap_pager_getpages_locked(vm_object_t object, vm_page_t *ma, int count,
     int *rbehind, int *rahead)
 {
+	struct vm_page_iter iter;
 	struct buf *bp;
 	vm_page_t bm, mpred, msucc, p;
 	vm_pindex_t pindex;
@@ -1260,8 +1261,10 @@ swap_pager_getpages_locked(vm_object_t object, vm_page_t *ma, int count,
 	if (rahead != NULL) {
 		*rahead = imin(*rahead, maxahead - (reqcount - 1));
 		pindex = ma[reqcount - 1]->pindex;
-		msucc = TAILQ_NEXT(ma[reqcount - 1], listq);
-		if (msucc != NULL && msucc->pindex - pindex - 1 < *rahead)
+		if (ma[reqcount - 1]->pindex + 1 != 0 &&
+		    (msucc = vm_page_find_least(object,
+		    ma[reqcount - 1]->pindex + 1)) != NULL &&
+		    msucc->pindex - pindex - 1 < *rahead)
 			*rahead = msucc->pindex - pindex - 1;
 	}
 	if (rbehind != NULL) {
@@ -1316,7 +1319,11 @@ swap_pager_getpages_locked(vm_object_t object, vm_page_t *ma, int count,
 	bp = uma_zalloc(swrbuf_zone, M_WAITOK);
 	MPASS((bp->b_flags & B_MAXPHYS) != 0);
 	/* Pages cannot leave the object while busy. */
-	for (i = 0, p = bm; i < count; i++, p = TAILQ_NEXT(p, listq)) {
+	vm_page_iter_init(object, pindex, &iter);
+	for (i = 0; i < count; i++) {
+		p = vm_page_iter_succ(&iter);
+		KASSERT(p != NULL,
+		    ("%s: missing page at %#lx", __func__, pindex + i));
 		MPASS(p->pindex == bm->pindex + i);
 		bp->b_pages[i] = p;
 	}
@@ -1772,6 +1779,7 @@ swp_pager_force_dirty(vm_page_t m)
 static void
 swap_pager_swapoff_object(struct swdevt *sp, vm_object_t object)
 {
+	struct vm_page_iter iter;
 	struct swblk *sb;
 	vm_page_t m;
 	vm_pindex_t pi;
@@ -1815,7 +1823,8 @@ swap_pager_swapoff_object(struct swdevt *sp, vm_object_t object)
 			 * valid pages since we may block forever on kernel
 			 * stack pages.
 			 */
-			m = vm_page_lookup(object, sb->p + i);
+			vm_page_iter_init(object, sb->p + i, &iter);
+			m = vm_page_iter_succ(&iter);
 			if (m == NULL) {
 				m = vm_page_alloc(object, sb->p + i,
 				    VM_ALLOC_NORMAL | VM_ALLOC_WAITFAIL);
@@ -1832,7 +1841,7 @@ swap_pager_swapoff_object(struct swdevt *sp, vm_object_t object)
 					do {
 						swp_pager_force_dirty(m);
 					} while (--nv > 0 &&
-					    (m = vm_page_next(m)) != NULL &&
+					    (m = vm_page_iter_succ(&iter)) &&
 					    vm_page_all_valid(m) &&
 					    (m->oflags & VPO_SWAPINPROG) == 0);
 					break;

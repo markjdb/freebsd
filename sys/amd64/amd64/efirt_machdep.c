@@ -70,11 +70,13 @@ static vm_pindex_t efi_1t1_idx;
 void
 efi_destroy_1t1_map(void)
 {
+	struct vm_page_iter iter;
 	vm_page_t m;
 
 	if (obj_1t1_pt != NULL) {
 		VM_OBJECT_RLOCK(obj_1t1_pt);
-		TAILQ_FOREACH(m, &obj_1t1_pt->memq, listq)
+		vm_page_iter_init(obj_1t1_pt, 0, &iter);
+		while ((m = vm_page_iter_next(&iter)) != NULL)
 			m->ref_count = VPRC_OBJREF;
 		vm_wire_sub(obj_1t1_pt->resident_page_count);
 		VM_OBJECT_RUNLOCK(obj_1t1_pt);

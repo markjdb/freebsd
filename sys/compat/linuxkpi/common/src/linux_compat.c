@@ -674,6 +674,7 @@ int
 zap_vma_ptes(struct vm_area_struct *vma, unsigned long address,
     unsigned long size)
 {
+	struct vm_page_iter iter;
 	vm_object_t obj;
 	vm_page_t m;
 
@@ -681,9 +682,9 @@ zap_vma_ptes(struct vm_area_struct *vma, unsigned long address,
 	if (obj == NULL || (obj->flags & OBJ_UNMANAGED) != 0)
 		return (-ENOTSUP);
 	VM_OBJECT_RLOCK(obj);
-	for (m = vm_page_find_least(obj, OFF_TO_IDX(address));
-	    m != NULL && m->pindex < OFF_TO_IDX(address + size);
-	    m = TAILQ_NEXT(m, listq))
+	for (vm_page_iter_init(obj, OFF_TO_IDX(address), &iter);
+	    (m = vm_page_iter_next(&iter)) != NULL &&
+	    m->pindex < OFF_TO_IDX(address + size);)
 		pmap_remove_all(m);
 	VM_OBJECT_RUNLOCK(obj);
 	return (0);

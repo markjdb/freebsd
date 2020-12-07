@@ -400,13 +400,13 @@ static void
 vm_fault_populate_cleanup(vm_object_t object, vm_pindex_t first,
     vm_pindex_t last)
 {
+	struct vm_page_iter iter;
 	vm_page_t m;
-	vm_pindex_t pidx;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	MPASS(first <= last);
-	for (pidx = first, m = vm_page_lookup(object, pidx);
-	    pidx <= last; pidx++, m = vm_page_next(m)) {
+	vm_page_iter_init(object, first, &iter);
+	while ((m = vm_page_iter_succ(&iter)) != NULL && m->pindex <= last) {
 		vm_fault_populate_check_page(m);
 		vm_page_deactivate(m);
 		vm_page_xunbusy(m);
@@ -538,7 +538,8 @@ vm_fault_populate(struct faultstate *fs)
 	}
 	for (pidx = pager_first, m = vm_page_lookup(fs->first_object, pidx);
 	    pidx <= pager_last;
-	    pidx += npages, m = vm_page_next(&m[npages - 1])) {
+	    pidx += npages,
+	    m = vm_page_lookup(fs->first_object, m[npages - 1].pindex + 1)) {
 		vaddr = fs->entry->start + IDX_TO_OFF(pidx) - fs->entry->offset;
 #if defined(__aarch64__) || defined(__amd64__) || (defined(__arm__) && \
     __ARM_ARCH >= 6) || defined(__i386__) || defined(__riscv) || \
@@ -1627,10 +1628,11 @@ RetryFault:
 static void
 vm_fault_dontneed(const struct faultstate *fs, vm_offset_t vaddr, int ahead)
 {
+	struct vm_page_iter iter;
 	vm_map_entry_t entry;
 	vm_object_t first_object, object;
 	vm_offset_t end, start;
-	vm_page_t m, m_next;
+	vm_page_t m;
 	vm_pindex_t pend, pstart;
 	vm_size_t size;
 
@@ -1653,13 +1655,12 @@ vm_fault_dontneed(const struct faultstate *fs, vm_offset_t vaddr, int ahead)
 			pmap_advise(fs->map->pmap, start, end, MADV_DONTNEED);
 			pstart = OFF_TO_IDX(entry->offset) + atop(start -
 			    entry->start);
-			m_next = vm_page_find_least(first_object, pstart);
 			pend = OFF_TO_IDX(entry->offset) + atop(end -
 			    entry->start);
-			while ((m = m_next) != NULL && m->pindex < pend) {
-				m_next = TAILQ_NEXT(m, listq);
-				if (!vm_page_all_valid(m) ||
-				    vm_page_busied(m))
+			vm_page_iter_init(first_object, pstart, &iter);
+			while ((m = vm_page_iter_next(&iter)) != NULL &&
+			    m->pindex < pend) {
+				if (!vm_page_all_valid(m) || vm_page_busied(m))
 					continue;
 
 				/*

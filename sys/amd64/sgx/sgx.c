@@ -374,8 +374,9 @@ static void
 sgx_enclave_remove(struct sgx_softc *sc,
     struct sgx_enclave *enclave)
 {
+	struct vm_page_iter iter;
 	vm_object_t object;
-	vm_page_t p, p_secs, p_next;
+	vm_page_t p, p_secs;
 
 	mtx_lock(&sc->mtx);
 	TAILQ_REMOVE(&sc->enclaves, enclave, next);
@@ -390,13 +391,15 @@ sgx_enclave_remove(struct sgx_softc *sc,
 	 * then remove SECS page.
 	 */
 restart:
-	TAILQ_FOREACH_SAFE(p, &object->memq, listq, p_next) {
+	vm_page_iter_init_all(object, &iter);
+	while ((p = vm_page_iter_next(&iter)) != NULL) {
 		if (p->pindex == SGX_SECS_VM_OBJECT_INDEX)
 			continue;
-		if (vm_page_busy_acquire(p, VM_ALLOC_WAITFAIL) == 0)
+		if (!vm_page_busy_acquire(p, VM_ALLOC_WAITFAIL))
 			goto restart;
 		sgx_page_remove(sc, p);
 	}
+
 	p_secs = vm_page_grab(object, SGX_SECS_VM_OBJECT_INDEX,
 	    VM_ALLOC_NOCREAT);
 	/* Now remove SECS page */

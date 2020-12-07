@@ -558,8 +558,9 @@ kmem_back(vm_object_t object, vm_offset_t addr, vm_size_t size, int flags)
 static struct vmem *
 _kmem_unback(vm_object_t object, vm_offset_t addr, vm_size_t size)
 {
+	struct vm_page_iter iter;
 	struct vmem *arena;
-	vm_page_t m, next;
+	vm_page_t m;
 	vm_offset_t end, offset;
 	int domain;
 
@@ -572,14 +573,14 @@ _kmem_unback(vm_object_t object, vm_offset_t addr, vm_size_t size)
 	offset = addr - VM_MIN_KERNEL_ADDRESS;
 	end = offset + size;
 	VM_OBJECT_WLOCK(object);
-	m = vm_page_lookup(object, atop(offset)); 
+	vm_page_iter_init(object, atop(offset), &iter);
+	m = vm_page_iter_succ(&iter);
 	domain = vm_page_domain(m);
 	if (__predict_true((m->oflags & VPO_KMEM_EXEC) == 0))
 		arena = vm_dom[domain].vmd_kernel_arena;
 	else
 		arena = vm_dom[domain].vmd_kernel_rwx_arena;
-	for (; offset < end; offset += PAGE_SIZE, m = next) {
-		next = vm_page_next(m);
+	for (; offset < end; offset += PAGE_SIZE, m = vm_page_iter_succ(&iter)) {
 		vm_page_xbusy_claim(m);
 		vm_page_unwire_noq(m);
 		vm_page_free(m);

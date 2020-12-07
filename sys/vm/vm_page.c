@@ -340,7 +340,7 @@ vm_page_blacklist_add(vm_paddr_t pa, bool verbose)
 	vm_domain_free_unlock(vmd);
 	if (ret != 0) {
 		vm_domain_freecnt_inc(vmd, -1);
-		TAILQ_INSERT_TAIL(&blacklist_head, m, listq);
+		TAILQ_INSERT_TAIL(&blacklist_head, m, plinks.q);
 		if (verbose)
 			printf("Skipping page with pa 0x%jx\n", (uintmax_t)pa);
 	}
@@ -410,7 +410,7 @@ sysctl_vm_page_blacklist(SYSCTL_HANDLER_ARGS)
 	if (error != 0)
 		return (error);
 	sbuf_new_for_sysctl(&sbuf, NULL, 128, req);
-	TAILQ_FOREACH(m, &blacklist_head, listq) {
+	TAILQ_FOREACH(m, &blacklist_head, plinks.q) {
 		sbuf_printf(&sbuf, "%s%#jx", first ? "" : ",",
 		    (uintmax_t)m->phys_addr);
 		first = 0;
@@ -1526,9 +1526,9 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 		    ("vm_page_insert_after: object doesn't contain mpred"));
 		KASSERT(mpred->pindex < pindex,
 		    ("vm_page_insert_after: mpred doesn't precede pindex"));
-		msucc = TAILQ_NEXT(mpred, listq);
+		msucc = vm_page_find_least(object, mpred->pindex + 1);
 	} else
-		msucc = TAILQ_FIRST(&object->memq);
+		msucc = vm_page_find_least(object, 0);
 	if (msucc != NULL)
 		KASSERT(msucc->pindex > pindex,
 		    ("vm_page_insert_after: msucc doesn't succeed pindex"));
@@ -1774,12 +1774,8 @@ vm_page_busy_release(vm_page_t m)
 vm_page_t
 vm_page_find_least(vm_object_t object, vm_pindex_t pindex)
 {
-	vm_page_t m;
-
 	VM_OBJECT_ASSERT_LOCKED(object);
-	if ((m = TAILQ_FIRST(&object->memq)) != NULL && m->pindex < pindex)
-		m = vm_radix_lookup_ge(&object->rtree, pindex);
-	return (m);
+	return (vm_radix_lookup_ge(&object->rtree, pindex));
 }
 
 /*
@@ -1820,6 +1816,64 @@ vm_page_prev(vm_page_t m)
 			prev = NULL;
 	}
 	return (prev);
+}
+
+void
+vm_page_iter_init(vm_object_t obj, vm_pindex_t index,
+    struct vm_page_iter *iter)
+{
+	vm_radix_iter_init(&obj->rtree, index, &iter->i);
+}
+
+void
+vm_page_iter_init_all(vm_object_t obj, struct vm_page_iter *iter)
+{
+	vm_radix_iter_init(&obj->rtree, 0, &iter->i);
+}
+
+void
+vm_page_iter_init_after(vm_object_t obj, vm_page_t m, struct vm_page_iter *iter)
+{
+	if (m->pindex + 1 == 0)
+		/* XXXMJ hacky */
+		iter->i.vri_done = true;
+	else
+		vm_radix_iter_init(&obj->rtree, m->pindex + 1, &iter->i);
+}
+
+void
+vm_page_iter_init_before(vm_object_t obj, vm_page_t m,
+    struct vm_page_iter *iter)
+{
+	if (m->pindex == 0)
+		/* XXXMJ hacky */
+		iter->i.vri_done = true;
+	else
+		vm_radix_iter_init(&obj->rtree, m->pindex - 1, &iter->i);
+}
+
+vm_page_t
+vm_page_iter_next(struct vm_page_iter *iter)
+{
+	return (vm_radix_iter_next(&iter->i));
+}
+
+vm_page_t
+vm_page_iter_prev(struct vm_page_iter *iter)
+{
+	return (vm_radix_iter_prev(&iter->i));
+}
+
+vm_page_t
+vm_page_iter_succ(struct vm_page_iter *iter)
+{
+	return (vm_radix_iter_succ(&iter->i));
+}
+
+vm_page_t
+vm_page_iter_pred(struct vm_page_iter *iter)
+{
+	return (vm_radix_iter_pred(&iter->i));
 }
 
 /*
@@ -2085,7 +2139,7 @@ vm_page_alloc_domain_after(vm_object_t object, vm_pindex_t pindex, int domain,
 	KASSERT(object == NULL || (req & VM_ALLOC_WAITOK) == 0,
 	    ("Can't sleep and retry object insertion."));
 	KASSERT(mpred == NULL || mpred->pindex < pindex,
-	    ("mpred %p doesn't precede pindex 0x%jx", mpred,
+	    ("mpred %p at %#lx doesn't precede pindex 0x%jx", mpred, mpred->pindex,
 	    (uintmax_t)pindex));
 	if (object != NULL)
 		VM_OBJECT_ASSERT_WLOCKED(object);
@@ -4509,6 +4563,8 @@ vm_page_acquire_unlocked(vm_object_t object, vm_pindex_t pindex,
 		 * has been removed or just inserted and the list is loaded
 		 * without barriers.  Switch to radix to verify.
 		 */
+		/* XXXMJ */
+#if 0
 		if (prev == NULL || (m = TAILQ_NEXT(prev, listq)) == NULL ||
 		    QMD_IS_TRASHED(m) || m->pindex != pindex ||
 		    atomic_load_ptr(&m->object) != object) {
@@ -4519,6 +4575,8 @@ vm_page_acquire_unlocked(vm_object_t object, vm_pindex_t pindex,
 			 */
 			m = vm_radix_lookup_unlocked(&object->rtree, pindex);
 		}
+#endif
+		m = vm_radix_lookup_unlocked(&object->rtree, pindex);
 		if (m == NULL)
 			return (true);
 		if (vm_page_trybusy(m, allocflags)) {
@@ -4635,7 +4693,8 @@ retrylookup:
 		after = MAX(after, 1);
 		ma[0] = m;
 		for (i = 1; i < after; i++) {
-			if ((ma[i] = vm_page_next(ma[i - 1])) != NULL) {
+			if ((ma[i] = vm_page_lookup(object,
+			    ma[i - 1]->pindex + 1 /* XXXMJ overflow */)) != NULL) {
 				if (ma[i]->valid || !vm_page_tryxbusy(ma[i]))
 					break;
 			} else {
@@ -4757,7 +4816,8 @@ int
 vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
     vm_page_t *ma, int count)
 {
-	vm_page_t m, mpred;
+	struct vm_page_iter iter;
+	vm_page_t m;
 	int pflags;
 	int i;
 
@@ -4771,13 +4831,9 @@ vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
 	pflags = vm_page_grab_pflags(allocflags);
 	i = 0;
 retrylookup:
-	m = vm_radix_lookup_le(&object->rtree, pindex + i);
-	if (m == NULL || m->pindex != pindex + i) {
-		mpred = m;
-		m = NULL;
-	} else
-		mpred = TAILQ_PREV(m, pglist, listq);
-	for (; i < count; i++) {
+	vm_page_iter_init(object, pindex + i, &iter);
+	for (m = vm_page_iter_succ(&iter); i < count;
+	    i++, m = vm_page_iter_succ(&iter)) {
 		if (m != NULL) {
 			if (!vm_page_tryacquire(m, allocflags)) {
 				if (vm_page_grab_sleep(object, m, pindex,
@@ -4788,8 +4844,8 @@ retrylookup:
 		} else {
 			if ((allocflags & VM_ALLOC_NOCREAT) != 0)
 				break;
-			m = vm_page_alloc_after(object, pindex + i,
-			    pflags | VM_ALLOC_COUNT(count - i), mpred);
+			m = vm_page_alloc(object, pindex + i,
+			    pflags | VM_ALLOC_COUNT(count - i));
 			if (m == NULL) {
 				if ((allocflags & (VM_ALLOC_NOWAIT |
 				    VM_ALLOC_WAITFAIL)) != 0)
@@ -4804,8 +4860,7 @@ retrylookup:
 			vm_page_valid(m);
 		}
 		vm_page_grab_release(m, allocflags);
-		ma[i] = mpred = m;
-		m = vm_page_next(m);
+		ma[i] = m;
 	}
 	return (i);
 }

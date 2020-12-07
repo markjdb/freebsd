@@ -878,6 +878,91 @@ vm_radix_replace(struct vm_radix *rtree, vm_page_t newpage)
 }
 
 void
+vm_radix_iter_init(struct vm_radix *rtree, vm_pindex_t index,
+    struct vm_radix_iter *iter)
+{
+	iter->vri_tree = rtree;
+	iter->vri_index = index;
+	iter->vri_done = false;
+}
+
+vm_page_t
+vm_radix_iter_next(struct vm_radix_iter *iter)
+{
+	vm_page_t m;
+	vm_pindex_t index;
+
+	if (iter->vri_done)
+		return (NULL);
+	m = vm_radix_lookup_ge(iter->vri_tree, iter->vri_index);
+	if (m != NULL) {
+		index = m->pindex + 1;
+		if (index == 0)
+			iter->vri_done = true;
+		else
+			iter->vri_index = index;
+	}
+	return (m);
+}
+
+vm_page_t
+vm_radix_iter_prev(struct vm_radix_iter *iter)
+{
+	vm_page_t m;
+	vm_pindex_t index;
+
+	if (iter->vri_done)
+		return (NULL);
+	m = vm_radix_lookup_le(iter->vri_tree, iter->vri_index);
+	if (m != NULL) {
+		index = m->pindex - 1;
+		if (index == 0xffffffffffffffffull)
+			iter->vri_done = true;
+		else
+			iter->vri_index = index;
+	}
+	return (m);
+}
+
+vm_page_t
+vm_radix_iter_succ(struct vm_radix_iter *iter)
+{
+	vm_page_t m;
+	vm_pindex_t index;
+
+	if (iter->vri_done)
+		return (NULL);
+	m = vm_radix_lookup(iter->vri_tree, iter->vri_index);
+
+	index = iter->vri_index + 1;
+	if (index == 0)
+		iter->vri_done = true;
+	else
+		iter->vri_index = index;
+
+	return (m);
+}
+
+vm_page_t
+vm_radix_iter_pred(struct vm_radix_iter *iter)
+{
+	vm_page_t m;
+	vm_pindex_t index;
+
+	if (iter->vri_done)
+		return (NULL);
+	m = vm_radix_lookup(iter->vri_tree, iter->vri_index);
+
+	index = iter->vri_index - 1;
+	if (index == 0xffffffffffffffffull)
+		iter->vri_done = true;
+	else
+		iter->vri_index = index;
+
+	return (m);
+}
+
+void
 vm_radix_wait(void)
 {
 	uma_zwait(vm_radix_node_zone);
