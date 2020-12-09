@@ -174,8 +174,8 @@ static void vm_page_enqueue(vm_page_t m, uint8_t queue);
 static bool vm_page_free_prep(vm_page_t m);
 static void vm_page_free_toq(vm_page_t m);
 static void vm_page_init(void *dummy);
-static int vm_page_insert_after(vm_page_t m, vm_object_t object,
-    vm_pindex_t pindex, vm_page_t mpred);
+static int vm_page_insert_at(vm_page_t m, vm_object_t object,
+    vm_pindex_t pindex, struct vm_radix_cursor *cursor);
 static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object);
 static void vm_page_mvqueue(vm_page_t m, const uint8_t queue,
     const uint16_t nflag);
@@ -1484,55 +1484,59 @@ vm_page_dirty_KBI(vm_page_t m)
 	m->dirty = VM_PAGE_BITS_ALL;
 }
 
+static void
+vm_page_insert_prepare(vm_page_t m, vm_object_t object, vm_pindex_t pindex)
+{
+	m->object = object;
+	m->pindex = pindex;
+	m->ref_count |= VPRC_OBJREF;
+}
+
+static void
+vm_page_insert_rollback(vm_page_t m)
+{
+	m->object = NULL;
+	m->pindex = 0;
+	m->ref_count &= ~VPRC_OBJREF;
+}
+
 /*
  *	vm_page_insert:		[ internal use only ]
  *
- *	Inserts the given mem entry into the object and object list.
+ *	Inserts the page "m" into the specified object at offset "pindex".
  *
  *	The object must be locked.
  */
 int
 vm_page_insert(vm_page_t m, vm_object_t object, vm_pindex_t pindex)
 {
-	vm_page_t mpred;
-
 	VM_OBJECT_ASSERT_WLOCKED(object);
-	mpred = vm_radix_lookup_le(&object->rtree, pindex);
-	return (vm_page_insert_after(m, object, pindex, mpred));
+	KASSERT(m->object == NULL,
+	    ("vm_page_insert: page already inserted"));
+
+	vm_page_insert_prepare(m, object, pindex);
+	if (vm_radix_insert(&object->rtree, m)) {
+		vm_page_insert_rollback(m);
+		return (1);
+	}
+	vm_page_insert_radixdone(m, object);
+	return (0);
 }
 
-/*
- *	vm_page_insert_after:
- *
- *	Inserts the page "m" into the specified object at offset "pindex".
- *
- *	The page "mpred" must immediately precede the offset "pindex" within
- *	the specified object.
- *
- *	The object must be locked.
- */
 static int
-vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
-    vm_page_t mpred __unused)
+vm_page_insert_at(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
+    struct vm_radix_cursor *cursor)
 {
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(m->object == NULL,
-	    ("vm_page_insert_after: page already inserted"));
+	    ("vm_page_insert_at: page already inserted"));
 
-	/*
-	 * Record the object/offset pair in this page.
-	 */
-	m->object = object;
-	m->pindex = pindex;
-	m->ref_count |= VPRC_OBJREF;
+	if (cursor == NULL)
+		return (vm_page_insert(m, object, pindex));
 
-	/*
-	 * Now link into the object's ordered list of backed pages.
-	 */
-	if (vm_radix_insert(&object->rtree, m)) {
-		m->object = NULL;
-		m->pindex = 0;
-		m->ref_count &= ~VPRC_OBJREF;
+	vm_page_insert_prepare(m, object, pindex);
+	if (vm_radix_insert_at(cursor, m)) {
+		vm_page_insert_rollback(m);
 		return (1);
 	}
 	vm_page_insert_radixdone(m, object);
@@ -1947,19 +1951,14 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
-
-	return (vm_page_alloc_after(object, pindex, req, object != NULL ?
-	    vm_radix_lookup_le(&object->rtree, pindex) : NULL));
+	return (vm_page_alloc_at(object, pindex, req, NULL));
 }
 
 vm_page_t
 vm_page_alloc_domain(vm_object_t object, vm_pindex_t pindex, int domain,
     int req)
 {
-
-	return (vm_page_alloc_domain_after(object, pindex, domain, req,
-	    object != NULL ? vm_radix_lookup_le(&object->rtree, pindex) :
-	    NULL));
+	return (vm_page_alloc_domain_at(object, pindex, domain, req, NULL));
 }
 
 /*
@@ -1969,8 +1968,8 @@ vm_page_alloc_domain(vm_object_t object, vm_pindex_t pindex, int domain,
  * page index, or NULL if no such page exists.
  */
 vm_page_t
-vm_page_alloc_after(vm_object_t object, vm_pindex_t pindex,
-    int req, vm_page_t mpred)
+vm_page_alloc_at(vm_object_t object, vm_pindex_t pindex, int req,
+    struct vm_radix_cursor *cursor)
 {
 	struct vm_domainset_iter di;
 	vm_page_t m;
@@ -1978,8 +1977,8 @@ vm_page_alloc_after(vm_object_t object, vm_pindex_t pindex,
 
 	vm_domainset_iter_page_init(&di, object, pindex, &domain, &req);
 	do {
-		m = vm_page_alloc_domain_after(object, pindex, domain, req,
-		    mpred);
+		m = vm_page_alloc_domain_at(object, pindex, domain, req,
+		    cursor);
 		if (m != NULL)
 			break;
 	} while (vm_domainset_iter_page(&di, object, &domain) == 0);
@@ -2041,8 +2040,8 @@ vm_domain_allocate(struct vm_domain *vmd, int req, int npages)
 }
 
 vm_page_t
-vm_page_alloc_domain_after(vm_object_t object, vm_pindex_t pindex, int domain,
-    int req, vm_page_t mpred)
+vm_page_alloc_domain_at(vm_object_t object, vm_pindex_t pindex, int domain,
+    int req, struct vm_radix_cursor *cursor)
 {
 	struct vm_domain *vmd;
 	vm_page_t m;
@@ -2055,9 +2054,6 @@ vm_page_alloc_domain_after(vm_object_t object, vm_pindex_t pindex, int domain,
 	    ("inconsistent object(%p)/req(%x)", object, req));
 	KASSERT(object == NULL || (req & VM_ALLOC_WAITOK) == 0,
 	    ("Can't sleep and retry object insertion."));
-	KASSERT(mpred == NULL || mpred->pindex < pindex,
-	    ("mpred %p at %#lx doesn't precede pindex 0x%jx", mpred, mpred->pindex,
-	    (uintmax_t)pindex));
 	if (object != NULL)
 		VM_OBJECT_ASSERT_WLOCKED(object);
 
@@ -2070,8 +2066,7 @@ again:
 	 * Can we allocate the page from a reservation?
 	 */
 	if (vm_object_reserv(object) &&
-	    (m = vm_reserv_alloc_page(object, pindex, domain, req, mpred)) !=
-	    NULL) {
+	    (m = vm_reserv_alloc_page(object, pindex, domain, req)) != NULL) {
 		goto found;
 	}
 #endif
@@ -2138,7 +2133,7 @@ found:
 	m->a.act_count = 0;
 
 	if (object != NULL) {
-		if (vm_page_insert_after(m, object, pindex, mpred)) {
+		if (vm_page_insert_at(m, object, pindex, cursor)) {
 			if (req & VM_ALLOC_WIRED) {
 				vm_wire_sub(1);
 				m->ref_count = 0;
@@ -2336,7 +2331,7 @@ found:
 		m->a.act_count = 0;
 		m->oflags = oflags;
 		if (object != NULL) {
-			if (vm_page_insert_after(m, object, pindex, mpred)) {
+			if (vm_page_insert(m, object, pindex)) {
 				if ((req & VM_ALLOC_WIRED) != 0)
 					vm_wire_sub(npages);
 				KASSERT(m->object == NULL,
@@ -4734,6 +4729,7 @@ vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
     vm_page_t *ma, int count)
 {
 	struct vm_page_iter iter;
+	struct vm_radix_cursor cursor;
 	vm_page_t m;
 	int pflags;
 	int i;
@@ -4748,6 +4744,7 @@ vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
 	pflags = vm_page_grab_pflags(allocflags);
 	i = 0;
 retrylookup:
+	vm_radix_start(&object->rtree, pindex + i, &cursor);
 	vm_page_iter_init(object, pindex + i, &iter);
 	for (m = vm_page_iter_succ(&iter); i < count;
 	    i++, m = vm_page_iter_succ(&iter)) {
@@ -4761,8 +4758,8 @@ retrylookup:
 		} else {
 			if ((allocflags & VM_ALLOC_NOCREAT) != 0)
 				break;
-			m = vm_page_alloc(object, pindex + i,
-			    pflags | VM_ALLOC_COUNT(count - i));
+			m = vm_page_alloc_at(object, pindex + i,
+			    pflags | VM_ALLOC_COUNT(count - i), &cursor);
 			if (m == NULL) {
 				if ((allocflags & (VM_ALLOC_NOWAIT |
 				    VM_ALLOC_WAITFAIL)) != 0)

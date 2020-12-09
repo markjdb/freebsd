@@ -817,17 +817,14 @@ out:
 /*
  * Allocate a physical page from an existing or newly created reservation.
  *
- * The page "mpred" must immediately precede the offset "pindex" within the
- * specified object.
- *
  * The object must be locked.
  */
 vm_page_t
 vm_reserv_alloc_page(vm_object_t object, vm_pindex_t pindex, int domain,
-    int req, vm_page_t mpred)
+    int req)
 {
 	struct vm_domain *vmd;
-	vm_page_t m, msucc;
+	vm_page_t m, mpred, msucc;
 	vm_pindex_t first, leftcap, rightcap;
 	vm_reserv_t rv;
 	int index;
@@ -844,6 +841,10 @@ vm_reserv_alloc_page(vm_object_t object, vm_pindex_t pindex, int domain,
 	/*
 	 * Look for an existing reservation.
 	 */
+	if (pindex > 0)
+		mpred = vm_radix_lookup_le(&object->rtree, pindex - 1);
+	else
+		mpred = NULL;
 	rv = vm_reserv_from_object(object, pindex, mpred, &msucc);
 	if (rv != NULL) {
 		KASSERT(object != kernel_object || rv->domain == domain,

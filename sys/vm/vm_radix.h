@@ -33,11 +33,10 @@
 #ifndef _VM_RADIX_H_
 #define _VM_RADIX_H_
 
+#include <sys/_smr.h>
 #include <vm/_vm_radix.h>
 
 #ifdef _KERNEL
-
-struct vm_radix_node;
 
 struct vm_radix_iter {
 	struct vm_radix		*vri_tree;
@@ -45,8 +44,15 @@ struct vm_radix_iter {
 	bool			vri_done;
 };
 
+struct vm_radix_cursor {
+	struct vm_radix		*tree;
+	vm_pindex_t		index;
+	void			*root;
+};
+
 int		vm_radix_insert(struct vm_radix *rtree, vm_page_t page);
-void		vm_radix_wait(void);
+int		vm_radix_insert_at(struct vm_radix_cursor *cursor,
+		    vm_page_t page);
 vm_page_t	vm_radix_lookup(struct vm_radix *rtree, vm_pindex_t index);
 vm_page_t	vm_radix_lookup_ge(struct vm_radix *rtree, vm_pindex_t index);
 vm_page_t	vm_radix_lookup_le(struct vm_radix *rtree, vm_pindex_t index);
@@ -54,6 +60,7 @@ vm_page_t	vm_radix_lookup_unlocked(struct vm_radix *rtree, vm_pindex_t index);
 void		vm_radix_reclaim_allnodes(struct vm_radix *rtree);
 vm_page_t	vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index);
 vm_page_t	vm_radix_replace(struct vm_radix *rtree, vm_page_t newpage);
+void		vm_radix_wait(void);
 
 void		vm_radix_iter_init(struct vm_radix *rtree, vm_pindex_t index,
 		    struct vm_radix_iter *iter);
@@ -76,6 +83,15 @@ vm_radix_is_empty(struct vm_radix *rtree)
 {
 
 	return (rtree->rt_root == 0);
+}
+
+static __inline void
+vm_radix_start(struct vm_radix *rtree, vm_pindex_t index,
+    struct vm_radix_cursor *cursor)
+{
+	cursor->tree = rtree;
+	cursor->index = index;
+	cursor->root = NULL;
 }
 
 #endif /* _KERNEL */

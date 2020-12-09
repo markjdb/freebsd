@@ -944,6 +944,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 	 */
 	i = bp->b_npages = 0;
 	if (rbehind) {
+		struct vm_radix_cursor cursor;
 		vm_pindex_t startpindex, tpindex;
 		vm_page_t p;
 
@@ -954,10 +955,12 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 			startpindex = p->pindex + 1;
 
 		/* tpindex is unsigned; beware of numeric underflow. */
-		for (tpindex = m[0]->pindex - 1;
-		    tpindex >= startpindex && tpindex < m[0]->pindex;
+		tpindex = m[0]->pindex - 1;
+		vm_radix_start(&object->rtree, tpindex, &cursor);
+		for (; tpindex >= startpindex && tpindex < m[0]->pindex;
 		    tpindex--, i++) {
-			p = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL);
+			p = vm_page_alloc_at(object, tpindex, VM_ALLOC_NORMAL,
+			    &cursor);
 			if (p == NULL) {
 				/* Shift the array. */
 				for (int j = 0; j < i; j++)
@@ -980,6 +983,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 	bp->b_npages += count;
 
 	if (rahead) {
+		struct vm_radix_cursor cursor;
 		vm_pindex_t endpindex, tpindex;
 		vm_page_t p;
 
@@ -994,9 +998,11 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 		if (endpindex > object->size)
 			endpindex = object->size;
 
-		for (tpindex = m[count - 1]->pindex + 1;
-		    tpindex < endpindex; i++, tpindex++) {
-			p = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL);
+		tpindex = m[count - 1]->pindex + 1;
+		vm_radix_start(&object->rtree, tpindex, &cursor);
+		for (; tpindex < endpindex; i++, tpindex++) {
+			p = vm_page_alloc_at(object, tpindex, VM_ALLOC_NORMAL,
+			    &cursor);
 			if (p == NULL)
 				break;
 			bp->b_pages[i] = p;

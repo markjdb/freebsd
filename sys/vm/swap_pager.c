@@ -1286,9 +1286,12 @@ swap_pager_getpages_locked(vm_object_t object, vm_page_t *ma, int count,
 	 * Allocate readahead and readbehind pages.
 	 */
 	if (rbehind != NULL) {
+		struct vm_radix_cursor cursor;
+
+		vm_radix_start(&object->rtree, ma[0]->pindex, &cursor);
 		for (i = 1; i <= *rbehind; i++) {
-			p = vm_page_alloc(object, ma[0]->pindex - i,
-			    VM_ALLOC_NORMAL);
+			p = vm_page_alloc_at(object, ma[0]->pindex - i,
+			    VM_ALLOC_NORMAL, &cursor);
 			if (p == NULL)
 				break;
 			p->oflags |= VPO_SWAPINPROG;
@@ -1297,9 +1300,13 @@ swap_pager_getpages_locked(vm_object_t object, vm_page_t *ma, int count,
 		*rbehind = i - 1;
 	}
 	if (rahead != NULL) {
+		struct vm_radix_cursor cursor;
+
+		vm_radix_start(&object->rtree, ma[reqcount - 1]->pindex, &cursor);
 		for (i = 0; i < *rahead; i++) {
-			p = vm_page_alloc(object,
-			    ma[reqcount - 1]->pindex + i + 1, VM_ALLOC_NORMAL);
+			p = vm_page_alloc_at(object,
+			    ma[reqcount - 1]->pindex + i + 1, VM_ALLOC_NORMAL,
+			    &cursor);
 			if (p == NULL)
 				break;
 			p->oflags |= VPO_SWAPINPROG;

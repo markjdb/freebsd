@@ -454,8 +454,9 @@ int
 kmem_back_domain(int domain, vm_object_t object, vm_offset_t addr,
     vm_size_t size, int flags)
 {
+	struct vm_radix_cursor cursor;
 	vm_offset_t offset, i;
-	vm_page_t m, mpred;
+	vm_page_t m;
 	vm_prot_t prot;
 	int pflags;
 
@@ -472,10 +473,10 @@ kmem_back_domain(int domain, vm_object_t object, vm_offset_t addr,
 	i = 0;
 	VM_OBJECT_WLOCK(object);
 retry:
-	mpred = vm_radix_lookup_le(&object->rtree, atop(offset + i));
-	for (; i < size; i += PAGE_SIZE, mpred = m) {
-		m = vm_page_alloc_domain_after(object, atop(offset + i),
-		    domain, pflags, mpred);
+	vm_radix_start(&object->rtree, atop(offset + i), &cursor);
+	for (; i < size; i += PAGE_SIZE) {
+		m = vm_page_alloc_domain_at(object, atop(offset + i), domain,
+		    pflags, &cursor);
 
 		/*
 		 * Ran out of space, free everything up and return. Don't need
