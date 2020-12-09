@@ -1,0 +1,29 @@
+vm_radix_cursor goals:
+- cache a subtree of the radix tree
+- permit lookups from a cursor before falling back to full lookup
+- permit insertions using a cursor
+- define a notion of the "current" pindex
+  - forward one index
+  - forward to the next resident index
+  - backward one index
+  - backward to the previous resident index
+  - optionally return these without updating the current pindex ("peek")
+- handle node invalidation during iteration
+
+struct vm_radix_cursor *
+vm_radix_start(struct vm_radix *rtree, vm_pindex_t index,
+    struct vm_radix_cursor *cursor)
+{
+	...
+}
+
+int
+vm_radix_insert_at(struct vm_radix_cursor *cursor, vm_page_t page)
+{
+	if (page->pindex belongs to cursor subtree) {
+		insert using cursor
+		return
+	}
+	vm_radix_insert(cursor->tree, page, cursor);
+	<updates cursor for future operations>
+}
