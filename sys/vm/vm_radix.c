@@ -456,21 +456,6 @@ vm_radix_insert(struct vm_radix *rtree, vm_page_t page)
 }
 
 /*
- * Returns TRUE if the specified radix tree contains a single leaf and FALSE
- * otherwise.
- */
-boolean_t
-vm_radix_is_singleton(struct vm_radix *rtree)
-{
-	struct vm_radix_node *rnode;
-
-	rnode = vm_radix_root_load(rtree, LOCKED);
-	if (rnode == NULL)
-		return (FALSE);
-	return (vm_radix_isleaf(rnode));
-}
-
-/*
  * Returns the value stored at the index.  If the index is not present,
  * NULL is returned.
  */
