@@ -406,7 +406,7 @@ restart:
 	if (p_secs != NULL)
 		sgx_page_remove(sc, p_secs);
 
-	KASSERT(TAILQ_EMPTY(&object->memq) == 1, ("not empty"));
+	KASSERT(vm_radix_is_empty(&object->rtree), ("not empty"));
 	KASSERT(object->resident_page_count == 0, ("count"));
 
 	VM_OBJECT_WUNLOCK(object);
