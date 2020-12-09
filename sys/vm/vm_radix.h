@@ -71,7 +71,7 @@ vm_radix_init(struct vm_radix *rtree)
 	rtree->rt_root = 0;
 }
 
-static __inline boolean_t
+static __inline bool
 vm_radix_is_empty(struct vm_radix *rtree)
 {
 

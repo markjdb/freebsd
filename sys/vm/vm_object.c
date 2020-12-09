@@ -334,11 +334,8 @@ vm_object_set_memattr(vm_object_t object, vm_memattr_t memattr)
 	case OBJT_SG:
 	case OBJT_SWAP:
 	case OBJT_VNODE:
-		/* XXXMJ radix */
-#if 0
-		if (!TAILQ_EMPTY(&object->memq))
+		if (!vm_radix_is_empty(&object->rtree))
 			return (KERN_FAILURE);
-#endif
 		break;
 	case OBJT_DEAD:
 		return (KERN_INVALID_ARGUMENT);
