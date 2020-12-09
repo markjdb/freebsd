@@ -176,8 +176,7 @@ static void vm_page_free_toq(vm_page_t m);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mpred);
-static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
-    vm_page_t mpred);
+static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object);
 static void vm_page_mvqueue(vm_page_t m, const uint8_t queue,
     const uint16_t nflag);
 static int vm_page_reclaim_run(int req_class, int domain, u_long npages,
@@ -1549,7 +1548,7 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 		m->ref_count &= ~VPRC_OBJREF;
 		return (1);
 	}
-	vm_page_insert_radixdone(m, object, mpred);
+	vm_page_insert_radixdone(m, object);
 	return (0);
 }
 
@@ -1559,13 +1558,10 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
  *	Complete page "m" insertion into the specified object after the
  *	radix trie hooking.
  *
- *	The page "mpred" must precede the offset "m->pindex" within the
- *	specified object.
- *
  *	The object must be locked.
  */
 static void
-vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
+vm_page_insert_radixdone(vm_page_t m, vm_object_t object)
 {
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
@@ -1573,17 +1569,6 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 	    ("vm_page_insert_radixdone: page %p has inconsistent object", m));
 	KASSERT((m->ref_count & VPRC_OBJREF) != 0,
 	    ("vm_page_insert_radixdone: page %p is missing object ref", m));
-	if (mpred != NULL) {
-		KASSERT(mpred->object == object,
-		    ("vm_page_insert_radixdone: object doesn't contain mpred"));
-		KASSERT(mpred->pindex < m->pindex,
-		    ("vm_page_insert_radixdone: mpred doesn't precede pindex"));
-	}
-
-	if (mpred != NULL)
-		TAILQ_INSERT_AFTER(&object->memq, mpred, m, listq);
-	else
-		TAILQ_INSERT_HEAD(&object->memq, m, listq);
 
 	/*
 	 * Show that the object has one more resident page.
@@ -1628,14 +1613,6 @@ vm_page_object_remove(vm_page_t m)
 	mrem = vm_radix_remove(&object->rtree, m->pindex);
 	KASSERT(mrem == m, ("removed page %p, expected page %p", mrem, m));
 
-	/*
-	 * Now remove from the object's list of backed pages.
-	 */
-	TAILQ_REMOVE(&object->memq, m, listq);
-
-	/*
-	 * And show that the object has one fewer resident page.
-	 */
 	object->resident_page_count--;
 
 	/*
@@ -1778,46 +1755,6 @@ vm_page_find_least(vm_object_t object, vm_pindex_t pindex)
 	return (vm_radix_lookup_ge(&object->rtree, pindex));
 }
 
-/*
- * Returns the given page's successor (by pindex) within the object if it is
- * resident; if none is found, NULL is returned.
- *
- * The object must be locked.
- */
-vm_page_t
-vm_page_next(vm_page_t m)
-{
-	vm_page_t next;
-
-	VM_OBJECT_ASSERT_LOCKED(m->object);
-	if ((next = TAILQ_NEXT(m, listq)) != NULL) {
-		MPASS(next->object == m->object);
-		if (next->pindex != m->pindex + 1)
-			next = NULL;
-	}
-	return (next);
-}
-
-/*
- * Returns the given page's predecessor (by pindex) within the object if it is
- * resident; if none is found, NULL is returned.
- *
- * The object must be locked.
- */
-vm_page_t
-vm_page_prev(vm_page_t m)
-{
-	vm_page_t prev;
-
-	VM_OBJECT_ASSERT_LOCKED(m->object);
-	if ((prev = TAILQ_PREV(m, pglist, listq)) != NULL) {
-		MPASS(prev->object == m->object);
-		if (prev->pindex != m->pindex - 1)
-			prev = NULL;
-	}
-	return (prev);
-}
-
 void
 vm_page_iter_init(vm_object_t obj, vm_pindex_t index,
     struct vm_page_iter *iter)
@@ -1914,10 +1851,6 @@ vm_page_replace_hold(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
 	KASSERT((mold->oflags & VPO_UNMANAGED) ==
 	    (mnew->oflags & VPO_UNMANAGED),
 	    ("vm_page_replace: mismatched VPO_UNMANAGED"));
-
-	/* Keep the resident page list in sorted order. */
-	TAILQ_INSERT_AFTER(&object->memq, mold, mnew, listq);
-	TAILQ_REMOVE(&object->memq, mold, listq);
 	mold->object = NULL;
 
 	/*
@@ -1965,14 +1898,12 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
 int
 vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 {
-	vm_page_t mpred;
 	vm_pindex_t opidx;
 
 	VM_OBJECT_ASSERT_WLOCKED(new_object);
 
 	KASSERT(m->ref_count != 0, ("vm_page_rename: page %p has no refs", m));
-	mpred = vm_radix_lookup_le(&new_object->rtree, new_pindex);
-	KASSERT(mpred == NULL || mpred->pindex != new_pindex,
+	KASSERT(vm_page_lookup(new_object, new_pindex) == NULL,
 	    ("vm_page_rename: pindex already renamed"));
 
 	/*
@@ -1988,8 +1919,7 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 	}
 
 	/*
-	 * The operation cannot fail anymore.  The removal must happen before
-	 * the listq iterator is tainted.
+	 * The operation cannot fail anymore.
 	 */
 	m->pindex = opidx;
 	vm_page_object_remove(m);
@@ -1998,7 +1928,7 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 	m->pindex = new_pindex;
 	m->object = new_object;
 
-	vm_page_insert_radixdone(m, new_object, mpred);
+	vm_page_insert_radixdone(m, new_object);
 	vm_page_dirty(m);
 	return (0);
 }
