@@ -949,8 +949,8 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 
 		VM_OBJECT_WLOCK(object);
 		startpindex = m[0]->pindex - rbehind;
-		if ((p = TAILQ_PREV(m[0], pglist, listq)) != NULL &&
-		    p->pindex >= startpindex)
+		if ((p = vm_radix_lookup_le(&object->rtree,
+		    m[0]->pindex - 1)) != NULL && p->pindex >= startpindex)
 			startpindex = p->pindex + 1;
 
 		/* tpindex is unsigned; beware of numeric underflow. */
@@ -985,9 +985,11 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 
 		if (!VM_OBJECT_WOWNED(object))
 			VM_OBJECT_WLOCK(object);
+		KASSERT(m[count - 1]->pindex < UINT64_MAX - (rahead + 1),
+		    ("%s: invalid readahead %d", __func__, rahead));
 		endpindex = m[count - 1]->pindex + rahead + 1;
-		if ((p = TAILQ_NEXT(m[count - 1], listq)) != NULL &&
-		    p->pindex < endpindex)
+		if ((p = vm_page_find_least(object,
+		    m[count - 1]->pindex + 1)) != NULL && p->pindex < endpindex)
 			endpindex = p->pindex;
 		if (endpindex > object->size)
 			endpindex = object->size;

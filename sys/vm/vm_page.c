@@ -1513,24 +1513,11 @@ vm_page_insert(vm_page_t m, vm_object_t object, vm_pindex_t pindex)
  */
 static int
 vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
-    vm_page_t mpred)
+    vm_page_t mpred __unused)
 {
-	vm_page_t msucc;
-
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(m->object == NULL,
 	    ("vm_page_insert_after: page already inserted"));
-	if (mpred != NULL) {
-		KASSERT(mpred->object == object,
-		    ("vm_page_insert_after: object doesn't contain mpred"));
-		KASSERT(mpred->pindex < pindex,
-		    ("vm_page_insert_after: mpred doesn't precede pindex"));
-		msucc = vm_page_find_least(object, mpred->pindex + 1);
-	} else
-		msucc = vm_page_find_least(object, 0);
-	if (msucc != NULL)
-		KASSERT(msucc->pindex > pindex,
-		    ("vm_page_insert_after: msucc doesn't succeed pindex"));
 
 	/*
 	 * Record the object/offset pair in this page.

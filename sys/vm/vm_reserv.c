@@ -534,7 +534,7 @@ vm_reserv_from_object(vm_object_t object, vm_pindex_t pindex,
 			goto found;
 		msucc = vm_page_find_least(object, pindex);
 	} else
-		msucc = TAILQ_FIRST(&object->memq);
+		msucc = vm_page_find_least(object, 0);
 	if (msucc != NULL) {
 		KASSERT(msucc->pindex > pindex,
 		    ("vm_reserv_from_object: msucc doesn't succeed pindex"));

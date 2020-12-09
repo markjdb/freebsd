@@ -1270,9 +1270,12 @@ swap_pager_getpages_locked(vm_object_t object, vm_page_t *ma, int count,
 	if (rbehind != NULL) {
 		*rbehind = imin(*rbehind, maxbehind);
 		pindex = ma[0]->pindex;
-		mpred = TAILQ_PREV(ma[0], pglist, listq);
-		if (mpred != NULL && pindex - mpred->pindex - 1 < *rbehind)
-			*rbehind = pindex - mpred->pindex - 1;
+		if (pindex > 0) {
+			mpred = vm_radix_lookup_le(&object->rtree, pindex - 1);
+			if (mpred != NULL &&
+			    pindex - mpred->pindex - 1 < *rbehind)
+				*rbehind = pindex - mpred->pindex - 1;
+		}
 	}
 
 	bm = ma[0];

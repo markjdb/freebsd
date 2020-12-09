@@ -183,8 +183,6 @@ vm_object_zdtor(void *mem, int size, void *arg)
 	object = (vm_object_t)mem;
 	KASSERT(object->ref_count == 0,
 	    ("object %p ref_count = %d", object, object->ref_count));
-	KASSERT(TAILQ_EMPTY(&object->memq),
-	    ("object %p has resident pages in its memq", object));
 	KASSERT(vm_radix_is_empty(&object->rtree),
 	    ("object %p has resident pages in its trie", object));
 #if VM_NRESERVLEVEL > 0
@@ -235,7 +233,6 @@ _vm_object_allocate(objtype_t type, vm_pindex_t size, u_short flags,
     vm_object_t object, void *handle)
 {
 
-	TAILQ_INIT(&object->memq);
 	LIST_INIT(&object->shadow_head);
 
 	object->type = type;
@@ -337,8 +334,11 @@ vm_object_set_memattr(vm_object_t object, vm_memattr_t memattr)
 	case OBJT_SG:
 	case OBJT_SWAP:
 	case OBJT_VNODE:
+		/* XXXMJ radix */
+#if 0
 		if (!TAILQ_EMPTY(&object->memq))
 			return (KERN_FAILURE);
+#endif
 		break;
 	case OBJT_DEAD:
 		return (KERN_INVALID_ARGUMENT);
@@ -911,7 +911,6 @@ vm_object_terminate_pages(vm_object_t object)
 	 */
 	if (object->resident_page_count != 0) {
 		vm_radix_reclaim_allnodes(&object->rtree);
-		TAILQ_INIT(&object->memq);
 		object->resident_page_count = 0;
 		if (object->type == OBJT_VNODE)
 			vdrop(object->handle);
