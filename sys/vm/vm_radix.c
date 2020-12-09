@@ -253,7 +253,7 @@ vm_radix_root_store(struct vm_radix *rtree, struct vm_radix_node *rnode,
 /*
  * Returns TRUE if the specified radix node is a leaf and FALSE otherwise.
  */
-static __inline boolean_t
+static __inline bool
 vm_radix_isleaf(struct vm_radix_node *rnode)
 {
 
@@ -306,7 +306,7 @@ vm_radix_keydiff(vm_pindex_t index1, vm_pindex_t index2)
  * Returns TRUE if it can be determined that key does not belong to the
  * specified rnode.  Otherwise, returns FALSE.
  */
-static __inline boolean_t
+static __inline bool
 vm_radix_keybarr(struct vm_radix_node *rnode, vm_pindex_t idx)
 {
 
@@ -314,7 +314,7 @@ vm_radix_keybarr(struct vm_radix_node *rnode, vm_pindex_t idx)
 		idx = vm_radix_trimkey(idx, rnode->rn_clev + 1);
 		return (idx != rnode->rn_owner);
 	}
-	return (FALSE);
+	return (false);
 }
 
 /*
