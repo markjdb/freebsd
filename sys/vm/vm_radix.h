@@ -60,8 +60,12 @@ vm_page_t	vm_radix_lookup_ge(struct vm_radix *rtree, vm_pindex_t index);
 vm_page_t	vm_radix_lookup_le(struct vm_radix *rtree, vm_pindex_t index);
 vm_page_t	vm_radix_lookup_unlocked(struct vm_radix *rtree,
 		    vm_pindex_t index);
+vm_page_t	vm_radix_lookup_at_unlocked(struct vm_radix_cursor *cursor,
+		    vm_pindex_t index);
 void		vm_radix_reclaim_allnodes(struct vm_radix *rtree);
 vm_page_t	vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index);
+vm_page_t	vm_radix_remove_at(struct vm_radix_cursor *cursor,
+		    vm_pindex_t index);
 vm_page_t	vm_radix_replace(struct vm_radix *rtree, vm_page_t newpage);
 void		vm_radix_wait(void);
 
@@ -96,6 +100,10 @@ vm_radix_start(struct vm_radix *rtree, vm_pindex_t index,
 	cursor->index = index;
 	cursor->root = &rtree->rt_root;
 }
+
+void		vm_radix_start_unlocked(struct vm_radix *rtree, vm_pindex_t index,
+		    struct vm_radix_cursor *cursor);
+void		vm_radix_finish_unlocked(struct vm_radix_cursor *cursor);
 
 #endif /* _KERNEL */
 #endif /* !_VM_RADIX_H_ */

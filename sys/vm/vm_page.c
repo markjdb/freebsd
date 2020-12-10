@@ -4459,36 +4459,20 @@ out:
  * (true, *mp == NULL) - The page was not found in tree.
  * (false, *mp == NULL) - WAITFAIL or NOWAIT prevented acquisition.
  */
-static bool
+static __always_inline bool
 vm_page_acquire_unlocked(vm_object_t object, vm_pindex_t pindex,
-    vm_page_t prev, vm_page_t *mp, int allocflags)
+    struct vm_radix_cursor *cursor, vm_page_t *mp, int allocflags)
 {
 	vm_page_t m;
 
 	vm_page_grab_check(allocflags);
-	MPASS(prev == NULL || vm_page_busied(prev) || vm_page_wired(prev));
 
 	*mp = NULL;
 	for (;;) {
-		/*
-		 * We may see a false NULL here because the previous page
-		 * has been removed or just inserted and the list is loaded
-		 * without barriers.  Switch to radix to verify.
-		 */
-		/* XXXMJ */
-#if 0
-		if (prev == NULL || (m = TAILQ_NEXT(prev, listq)) == NULL ||
-		    QMD_IS_TRASHED(m) || m->pindex != pindex ||
-		    atomic_load_ptr(&m->object) != object) {
-			prev = NULL;
-			/*
-			 * This guarantees the result is instantaneously
-			 * correct.
-			 */
+		if (cursor != NULL)
+			m = vm_radix_lookup_at_unlocked(cursor, pindex);
+		else
 			m = vm_radix_lookup_unlocked(&object->rtree, pindex);
-		}
-#endif
-		m = vm_radix_lookup_unlocked(&object->rtree, pindex);
 		if (m == NULL)
 			return (true);
 		if (vm_page_trybusy(m, allocflags)) {
@@ -4499,9 +4483,13 @@ vm_page_acquire_unlocked(vm_object_t object, vm_pindex_t pindex,
 			cpu_spinwait();
 			continue;
 		}
+		if (cursor != NULL)
+			vm_radix_finish_unlocked(cursor);
 		if (!vm_page_grab_sleep(object, m, pindex, "pgnslp",
 		    allocflags, false))
 			return (false);
+		if (cursor != NULL)
+			vm_radix_start_unlocked(&object->rtree, pindex, cursor);
 	}
 	if ((allocflags & VM_ALLOC_WIRED) != 0)
 		vm_page_wire(m);
@@ -4787,7 +4775,8 @@ int
 vm_page_grab_pages_unlocked(vm_object_t object, vm_pindex_t pindex,
     int allocflags, vm_page_t *ma, int count)
 {
-	vm_page_t m, pred;
+	struct vm_radix_cursor cursor;
+	vm_page_t m;
 	int flags;
 	int i;
 
@@ -4800,10 +4789,13 @@ vm_page_grab_pages_unlocked(vm_object_t object, vm_pindex_t pindex,
 	 * set it valid if necessary.
 	 */
 	flags = allocflags & ~VM_ALLOC_NOBUSY;
-	pred = NULL;
+	vm_radix_start_unlocked(&object->rtree, pindex, &cursor);
 	for (i = 0; i < count; i++, pindex++) {
-		if (!vm_page_acquire_unlocked(object, pindex, pred, &m, flags))
+		if (!vm_page_acquire_unlocked(object, pindex, &cursor, &m,
+		    flags)) {
+			/* Cursor is released. */
 			return (i);
+		}
 		if (m == NULL)
 			break;
 		if ((flags & VM_ALLOC_ZERO) != 0 && vm_page_none_valid(m)) {
@@ -4813,12 +4805,15 @@ vm_page_grab_pages_unlocked(vm_object_t object, vm_pindex_t pindex,
 		}
 		/* m will still be wired or busy according to flags. */
 		vm_page_grab_release(m, allocflags);
-		pred = ma[i] = m;
+		ma[i] = m;
 	}
+	vm_radix_finish_unlocked(&cursor);
 	if (i == count || (allocflags & VM_ALLOC_NOCREAT) != 0)
 		return (i);
 	count -= i;
 	VM_OBJECT_WLOCK(object);
+	if (vm_radix_lookup(&object->rtree, pindex) != NULL)
+		printf("lockless lookup missed it!\n");
 	i += vm_page_grab_pages(object, pindex, allocflags, &ma[i], count);
 	VM_OBJECT_WUNLOCK(object);
 

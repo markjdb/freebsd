@@ -79,22 +79,17 @@ __FBSDID("$FreeBSD$");
 static SYSCTL_NODE(_vm, OID_AUTO, radix, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "");
 
-static COUNTER_U64_DEFINE_EARLY(cursor_empty);
-SYSCTL_COUNTER_U64(_vm_radix, OID_AUTO, cursor_empty, CTLFLAG_RD,
-    &cursor_empty,
-    "");
-static COUNTER_U64_DEFINE_EARLY(cursor_none);
-SYSCTL_COUNTER_U64(_vm_radix, OID_AUTO, cursor_none, CTLFLAG_RD,
-    &cursor_none,
-    "");
-static COUNTER_U64_DEFINE_EARLY(cursor_restart);
-SYSCTL_COUNTER_U64(_vm_radix, OID_AUTO, cursor_restart, CTLFLAG_RD,
-    &cursor_restart,
-    "");
-static COUNTER_U64_DEFINE_EARLY(cursor_advance);
-SYSCTL_COUNTER_U64(_vm_radix, OID_AUTO, cursor_advance, CTLFLAG_RD,
-    &cursor_advance,
-    "");
+#define	RADIX_COUNTER_DEFINE(n)			\
+static COUNTER_U64_DEFINE_EARLY(n);		\
+SYSCTL_COUNTER_U64(_vm_radix, OID_AUTO, n, CTLFLAG_RD, &n, "")
+
+RADIX_COUNTER_DEFINE(cursor_insert_empty);
+RADIX_COUNTER_DEFINE(cursor_insert_none);
+RADIX_COUNTER_DEFINE(cursor_insert_restart);
+RADIX_COUNTER_DEFINE(cursor_insert_advance);
+RADIX_COUNTER_DEFINE(cursor_lookup_advance);
+RADIX_COUNTER_DEFINE(cursor_lookup_restart);
+RADIX_COUNTER_DEFINE(cursor_lookup_empty);
 
 /*
  * These widths should allow the pointers to a node's children to fit within
@@ -424,7 +419,7 @@ _vm_radix_insert_at(smrnode_t *parentp, vm_page_t page, smrnode_t **parentpp)
 	rnode = vm_radix_node_load(parentp, LOCKED);
 	if (rnode == NULL) {
 		vm_radix_node_store(parentp, VM_RADIX_LEAF(page), LOCKED);
-		return (0);
+		goto out;
 	}
 
 	for (index = page->pindex;;) {
@@ -443,8 +438,7 @@ _vm_radix_insert_at(smrnode_t *parentp, vm_page_t page, smrnode_t **parentpp)
 			vm_radix_addpage(tmp, m->pindex, clev, m, UNSERIALIZED);
 			/* Synchronize to make leaf visible. */
 			vm_radix_node_store(parentp, tmp, LOCKED);
-			*parentpp = parentp;
-			return (0);
+			goto out;
 		} else if (vm_radix_keybarr(rnode, index))
 			break;
 		slot = vm_radix_slot(index, rnode->rn_clev);
@@ -454,8 +448,7 @@ _vm_radix_insert_at(smrnode_t *parentp, vm_page_t page, smrnode_t **parentpp)
 			rnode->rn_count++;
 			vm_radix_addpage(rnode, index, rnode->rn_clev, page,
 			    LOCKED);
-			*parentpp = parentp;
-			return (0);
+			goto out;
 		}
 		rnode = tmp;
 		parentp = tmpparent;
@@ -477,8 +470,8 @@ _vm_radix_insert_at(smrnode_t *parentp, vm_page_t page, smrnode_t **parentpp)
 	vm_radix_node_store(&tmp->rn_child[slot], rnode, UNSERIALIZED);
 	/* Serializing write to make the above visible. */
 	vm_radix_node_store(parentp, tmp, LOCKED);
+out:
 	*parentpp = parentp;
-
 	return (0);
 }
 
@@ -494,7 +487,7 @@ _vm_radix_insert(struct vm_radix *rtree, vm_page_t page)
 int
 vm_radix_insert(struct vm_radix *rtree, vm_page_t page)
 {
-	counter_u64_add(cursor_none, 1);
+	counter_u64_add(cursor_insert_none, 1);
 	return (_vm_radix_insert(rtree, page));
 }
 
@@ -507,12 +500,12 @@ vm_radix_insert_at(struct vm_radix_cursor *cursor, vm_page_t page)
 	parentp = cursor->root;
 	rnode = vm_radix_node_load(parentp, LOCKED);
 	if (rnode == NULL || vm_radix_isleaf(rnode)) {
-		counter_u64_add(cursor_empty, 1);
+		counter_u64_add(cursor_insert_empty, 1);
 	} else if (vm_radix_keybarr(rnode, page->pindex)) {
-		counter_u64_add(cursor_restart, 1);
+		counter_u64_add(cursor_insert_restart, 1);
 		parentp = (smrnode_t *)&cursor->tree->rt_root;
 	} else {
-		counter_u64_add(cursor_advance, 1);
+		counter_u64_add(cursor_insert_advance, 1);
 	}
 	return (_vm_radix_insert_at(parentp, page,
 	    (smrnode_t **)&cursor->root));
@@ -523,18 +516,17 @@ vm_radix_insert_at(struct vm_radix_cursor *cursor, vm_page_t page)
  * NULL is returned.
  */
 static __always_inline vm_page_t
-_vm_radix_lookup_at(struct vm_radix_node *rnode, vm_pindex_t index,
+_vm_radix_lookup_at(smrnode_t *parentp, vm_pindex_t index,
     smrnode_t **parentpp, enum vm_radix_access access)
 {
-	smrnode_t *parentp;
+	struct vm_radix_node *rnode;
 	vm_page_t m;
 	int slot;
 
-	while (rnode != NULL) {
+	while ((rnode = vm_radix_node_load(parentp, access)) != NULL) {
 		if (vm_radix_isleaf(rnode)) {
 			m = vm_radix_topage(rnode);
 			if (m->pindex == index) {
-				*parentpp = parentp;
 				return (m);
 			}
 			break;
@@ -542,18 +534,10 @@ _vm_radix_lookup_at(struct vm_radix_node *rnode, vm_pindex_t index,
 		if (vm_radix_keybarr(rnode, index))
 			break;
 		slot = vm_radix_slot(index, rnode->rn_clev);
+		*parentpp = parentp;
 		parentp = (smrnode_t *)&rnode->rn_child[slot];
-		rnode = vm_radix_node_load(parentp, access);
 	}
 	return (NULL);
-}
-
-static __always_inline vm_page_t
-_vm_radix_lookup(struct vm_radix *rtree, vm_pindex_t index,
-    smrnode_t **parentpp, enum vm_radix_access access)
-{
-	return (_vm_radix_lookup_at(vm_radix_root_load(rtree, access), index,
-	    parentpp, access));
 }
 
 /*
@@ -566,7 +550,8 @@ vm_radix_lookup(struct vm_radix *rtree, vm_pindex_t index)
 {
 	smrnode_t *parentp;
 
-	return (_vm_radix_lookup(rtree, index, &parentp, LOCKED));
+	parentp = (smrnode_t *)&rtree->rt_root;
+	return (_vm_radix_lookup_at(parentp, index, &parentp, LOCKED));
 }
 
 vm_page_t
@@ -579,9 +564,9 @@ vm_radix_lookup_at(struct vm_radix_cursor *cursor, vm_pindex_t index)
 	rnode = vm_radix_node_load(parentp, LOCKED);
 	if (rnode == NULL || vm_radix_isleaf(rnode) ||
 	    vm_radix_keybarr(rnode, index)) {
-		rnode = vm_radix_root_load(cursor->tree, LOCKED);
+		parentp = (smrnode_t *)&cursor->tree->rt_root;
 	}
-	return (_vm_radix_lookup_at(rnode, index, (smrnode_t **)&cursor->root,
+	return (_vm_radix_lookup_at(parentp, index, (smrnode_t **)&cursor->root,
 	    LOCKED));
 }
 
@@ -596,11 +581,49 @@ vm_radix_lookup_unlocked(struct vm_radix *rtree, vm_pindex_t index)
 	smrnode_t *parentp;
 	vm_page_t m;
 
+	parentp = (smrnode_t *)&rtree->rt_root;
+
 	smr_enter(vm_radix_smr);
-	m = _vm_radix_lookup(rtree, index, &parentp, SMR);
+	m = _vm_radix_lookup_at(parentp, index, &parentp, SMR);
 	smr_exit(vm_radix_smr);
 
 	return (m);
+}
+
+void
+vm_radix_start_unlocked(struct vm_radix *rtree, vm_pindex_t index,
+    struct vm_radix_cursor *cursor)
+{
+	vm_radix_start(rtree, index, cursor);
+	smr_enter(vm_radix_smr);
+}
+
+void
+vm_radix_finish_unlocked(struct vm_radix_cursor *cursor __unused)
+{
+	smr_exit(vm_radix_smr);
+}
+
+vm_page_t
+vm_radix_lookup_at_unlocked(struct vm_radix_cursor *cursor, vm_pindex_t index)
+{
+	struct vm_radix_node *rnode;
+	smrnode_t *parentp;
+
+	SMR_ASSERT_ENTERED(vm_radix_smr);
+
+	parentp = cursor->root;
+	rnode = vm_radix_node_load(parentp, SMR);
+	if (rnode == NULL || vm_radix_isleaf(rnode)) {
+		counter_u64_add(cursor_lookup_empty, 1);
+		parentp = (smrnode_t *)&cursor->tree->rt_root;
+	} else if (vm_radix_keybarr(rnode, index)) {
+		counter_u64_add(cursor_lookup_restart, 1);
+		parentp = (smrnode_t *)&cursor->tree->rt_root;
+	} else
+		counter_u64_add(cursor_lookup_advance, 1);
+	return (_vm_radix_lookup_at(parentp, index, (smrnode_t **)&cursor->root,
+	    SMR));
 }
 
 /*
@@ -833,21 +856,22 @@ descend:
  * Remove the specified index from the trie, and return the value stored at
  * that index.  If the index is not present, return NULL.
  */
-vm_page_t
-vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index)
+static __always_inline vm_page_t
+_vm_radix_remove_at(smrnode_t *parentp, vm_pindex_t index, smrnode_t **parentpp)
 {
 	struct vm_radix_node *rnode, *parent, *tmp;
 	vm_page_t m;
 	int i, slot;
 
-	rnode = vm_radix_root_load(rtree, LOCKED);
+	rnode = vm_radix_node_load(parentp, LOCKED);
 	if (vm_radix_isleaf(rnode)) {
 		m = vm_radix_topage(rnode);
 		if (m->pindex != index)
 			return (NULL);
-		vm_radix_root_store(rtree, NULL, LOCKED);
+		vm_radix_node_store(parentp, NULL, LOCKED);
 		return (m);
 	}
+
 	parent = NULL;
 	for (;;) {
 		if (rnode == NULL)
@@ -870,7 +894,7 @@ vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index)
 			    ("%s: invalid node configuration", __func__));
 			tmp = vm_radix_node_load(&rnode->rn_child[i], LOCKED);
 			if (parent == NULL)
-				vm_radix_root_store(rtree, tmp, LOCKED);
+				vm_radix_node_store(parentp, tmp, LOCKED);
 			else {
 				slot = vm_radix_slot(index, parent->rn_clev);
 				KASSERT(vm_radix_node_load(
@@ -890,6 +914,41 @@ vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index)
 		parent = rnode;
 		rnode = tmp;
 	}
+}
+
+vm_page_t
+vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index)
+{
+	smrnode_t *parentp;
+
+	parentp = (smrnode_t *)&rtree->rt_root;
+	return (_vm_radix_remove_at(parentp, index, &parentp));
+}
+
+vm_page_t
+vm_radix_remove_at(struct vm_radix_cursor *cursor, vm_pindex_t index)
+{
+	smrnode_t *parentp;
+	struct vm_radix_node *rnode;
+	vm_page_t m;
+
+	parentp = cursor->root;
+	rnode = vm_radix_node_load(parentp, LOCKED);
+	if (vm_radix_isleaf(rnode)) {
+		KASSERT(parentp == (smrnode_t *)cursor->root,
+		    ("%s: cursor %p points to non-root leaf",
+		    __func__, cursor));
+		/* XXXMJ code dup */
+		m = vm_radix_topage(rnode);
+		if (m->pindex != index)
+			return (NULL);
+		vm_radix_node_store(parentp, NULL, LOCKED);
+		return (m);
+	}
+	if (rnode != NULL && vm_radix_keybarr(rnode, index))
+		parentp = (smrnode_t *)&cursor->tree->rt_root;
+	return (_vm_radix_remove_at(parentp, index,
+	    (smrnode_t **)&cursor->root));
 }
 
 /*
