@@ -109,9 +109,9 @@ db_trace_thread(struct thread *thr, int count)
 	if (thr != curthread) {
 		ctx = kdb_thr_ctx(thr);
 
-		frame.sp = (uint64_t)ctx->pcb_sp;
-		frame.fp = (uint64_t)ctx->pcb_x[29];
-		frame.pc = (uint64_t)ctx->pcb_x[30];
+		frame.sp = (uintptr_t)ctx->pcb_sp;
+		frame.fp = (uintptr_t)ctx->pcb_x[29];
+		frame.pc = (uintptr_t)ctx->pcb_lr;
 		db_stack_trace_cmd(&frame);
 	} else
 		db_trace_self();
