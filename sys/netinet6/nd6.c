@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/protosw.h>
 #include <sys/errno.h>
 #include <sys/syslog.h>
+#include <sys/rmlock.h>
 #include <sys/rwlock.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
@@ -1759,31 +1760,43 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 	case SIOCSPFXFLUSH_IN6:
 	{
 		/* flush all the prefix advertised by routers */
+		struct rm_priotracker in6_ifa_tracker;
 		struct in6_ifaddr *ia, *ia_next;
 		struct nd_prefix *pr, *next;
 		struct nd_prhead prl;
+		int skipped;
 
 		LIST_INIT(&prl);
 
+restart:
 		ND6_WLOCK();
+		IN6_IFADDR_RLOCK(&in6_ifa_tracker);
 		LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, next) {
 			if (IN6_IS_ADDR_LINKLOCAL(&pr->ndpr_prefix.sin6_addr))
-				continue; /* XXX */
-			nd6_prefix_unlink(pr, &prl);
+				continue;
+			skipped = 0;
+			CK_STAILQ_FOREACH_SAFE(ia, &V_in6_ifaddrhead, ia_link,
+			    ia_next) {
+				if (ia->ia6_ndpr != pr)
+					continue;
+				if ((ia->ia6_flags & IN6_IFF_AUTOCONF) == 0) {
+					skipped++;
+					continue;
+				}
+				ifa_ref(&ia->ia_ifa);
+				IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
+				ND6_WUNLOCK();
+				ifa_free(&ia->ia_ifa);
+				goto restart;
+			}
+			if (skipped == 0)
+				nd6_prefix_unlink(pr, &prl);
 		}
+		IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
 		ND6_WUNLOCK();
 
 		while ((pr = LIST_FIRST(&prl)) != NULL) {
 			LIST_REMOVE(pr, ndpr_entry);
-			/* XXXRW: in6_ifaddrhead locking. */
-			CK_STAILQ_FOREACH_SAFE(ia, &V_in6_ifaddrhead, ia_link,
-			    ia_next) {
-				if ((ia->ia6_flags & IN6_IFF_AUTOCONF) == 0)
-					continue;
-
-				if (ia->ia6_ndpr == pr)
-					in6_purgeaddr(&ia->ia_ifa);
-			}
 			nd6_prefix_del(pr);
 		}
 		break;
