@@ -159,7 +159,7 @@ virtdone:
 .Lbss:
 	.quad	__bss_start
 .Lend:
-	.quad	_end
+	.quad	__bss_end
 
 #ifdef SMP
 /*
@@ -648,8 +648,12 @@ sctlr_clear:
 abort:
 	b abort
 
-	//.section .init_pagetable
-	.align 12 /* 4KiB aligned */
+	.align 3
+init_pt_va:
+	.quad pagetable		/* XXX: Keep page tables VA */
+
+	.section .init_pagetable, "aw", %nobits
+	.align PAGE_SHIFT
 	/*
 	 * 3 initial tables (in the following order):
 	 *           L2 for kernel (High addresses)
@@ -676,8 +680,6 @@ el2_pagetable:
 	.space	PAGE_SIZE
 
 	.globl init_pt_va
-init_pt_va:
-	.quad pagetable		/* XXX: Keep page tables VA */
 
 	.align	4
 initstack:
