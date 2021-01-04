@@ -1350,7 +1350,7 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 		nd6log((LOG_NOTICE,
 		    "in6_unlink_ifa: autoconf'ed address "
 		    "%s has no prefix\n", ip6_sprintf(ip6buf, IA6_IN6(ia))));
-	} else if (nd6_prefix_ifa_detach(ia6->ia6_ndpr, ia)) {
+	} else if (nd6_prefix_ifa_detach(ia->ia6_ndpr, ia)) {
 		remove_lle = 1;
 	}
 	nd6_rem_ifa_lle(ia, remove_lle);
