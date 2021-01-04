@@ -645,21 +645,22 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 
 		/* relate the address to the prefix */
 		if (ia->ia6_ndpr == NULL) {
-			ia->ia6_ndpr = pr;
-			pr->ndpr_addrcnt++;
-
-			/*
-			 * If this is the first autoconf address from the
-			 * prefix, create a temporary address as well
-			 * (when required).
-			 */
-			if ((ia->ia6_flags & IN6_IFF_AUTOCONF) &&
-			    V_ip6_use_tempaddr && pr->ndpr_addrcnt == 1) {
-				int e;
-				if ((e = in6_tmpifadd(ia, 1, 0)) != 0) {
-					log(LOG_NOTICE, "in6_control: failed "
-					    "to create a temporary address, "
-					    "errno=%d\n", e);
+			nd6_prefix_ifa_attach(pr, ia);
+			if ((ia->ia6_flags & IN6_IFF_AUTOCONF) != 0) {
+				/*
+				 * If this is the first autoconf address from
+				 * the prefix, create a temporary address as
+				 * well.
+				 */
+				if (V_ip6_use_tempaddr &&
+				    pr->ndpr_auto_addrcnt == 1) {
+					int e;
+					if ((e = in6_tmpifadd(ia, 1, 0)) != 0) {
+						log(LOG_NOTICE,
+						    "in6_control: failed to "
+						    "create a temporary "
+						    "address, errno=%d\n", e);
+					}
 				}
 			}
 		}
@@ -710,7 +711,7 @@ aifaddr_out:
 		 */
 		pr = ia->ia6_ndpr;
 		in6_purgeaddr(&ia->ia_ifa);
-		if (pr != NULL && pr->ndpr_addrcnt == 0) {
+		if (pr != NULL && refcount_load(&pr->ndpr_addrcnt) == 0) {
 			ND6_WLOCK();
 			nd6_prefix_unlink(pr, NULL);
 			ND6_WUNLOCK();
@@ -1349,14 +1350,9 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 		nd6log((LOG_NOTICE,
 		    "in6_unlink_ifa: autoconf'ed address "
 		    "%s has no prefix\n", ip6_sprintf(ip6buf, IA6_IN6(ia))));
-	} else {
-		ia->ia6_ndpr->ndpr_addrcnt--;
-		/* Do not delete lles within prefix if refcont != 0 */
-		if (ia->ia6_ndpr->ndpr_addrcnt == 0)
-			remove_lle = 1;
-		ia->ia6_ndpr = NULL;
+	} else if (nd6_prefix_ifa_detach(ia6->ia6_ndpr, ia)) {
+		remove_lle = 1;
 	}
-
 	nd6_rem_ifa_lle(ia, remove_lle);
 
 	/*

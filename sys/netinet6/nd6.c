@@ -1047,7 +1047,7 @@ restart:
 		    time_uptime - pr->ndpr_lastupdate <= pr->ndpr_vltime)
 			continue;
 
-		if (pr->ndpr_addrcnt == 0) {
+		if (refcount_load(&pr->ndpr_addrcnt) == 0) {
 			nd6_prefix_unlink(pr, &prl);
 			continue;
 		}
@@ -1786,6 +1786,7 @@ restart:
 				ifa_ref(&ia->ia_ifa);
 				IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
 				ND6_WUNLOCK();
+				in6_purgeaddr(ia);
 				ifa_free(&ia->ia_ifa);
 				goto restart;
 			}

@@ -211,8 +211,8 @@ struct nd_prefixctl {
 	struct sockaddr_in6 ndpr_prefix;
 	u_char	ndpr_plen;
 
-	u_int32_t ndpr_vltime;	/* advertised valid lifetime */
-	u_int32_t ndpr_pltime;	/* advertised preferred lifetime */
+	uint32_t ndpr_vltime;	/* advertised valid lifetime */
+	uint32_t ndpr_pltime;	/* advertised preferred lifetime */
 
 	struct prf_ra ndpr_flags;
 };
@@ -224,20 +224,21 @@ struct nd_prefix {
 	struct sockaddr_in6 ndpr_prefix;	/* prefix */
 	struct in6_addr ndpr_mask; /* netmask derived from the prefix */
 
-	u_int32_t ndpr_vltime;	/* advertised valid lifetime */
-	u_int32_t ndpr_pltime;	/* advertised preferred lifetime */
+	uint32_t ndpr_vltime;	/* advertised valid lifetime */
+	uint32_t ndpr_pltime;	/* advertised preferred lifetime */
 
 	time_t ndpr_expire;	/* expiration time of the prefix */
 	time_t ndpr_preferred;	/* preferred time of the prefix */
 	time_t ndpr_lastupdate; /* reception time of last advertisement */
 
 	struct prf_ra ndpr_flags;
-	u_int32_t ndpr_stateflags; /* actual state flags */
+	uint32_t ndpr_stateflags; /* actual state flags */
 	/* list of routers that advertise the prefix: */
 	LIST_HEAD(pr_rtrhead, nd_pfxrouter) ndpr_advrtrs;
 	u_char	ndpr_plen;
-	int	ndpr_addrcnt;	/* count of derived addresses */
-	volatile u_int ndpr_refcnt;
+	u_int	ndpr_addrcnt;	/* count of derived addresses */
+	u_int	ndpr_auto_addrcnt; /* count of autoconfigured addresses */
+	u_int	ndpr_refcnt;
 };
 
 #define ndpr_raf		ndpr_flags
@@ -425,6 +426,8 @@ void nd6_prefix_del(struct nd_prefix *);
 void nd6_prefix_ref(struct nd_prefix *);
 void nd6_prefix_rele(struct nd_prefix *);
 int nd6_prefix_offlink(struct nd_prefix *);
+void nd6_prefix_ifa_attach(struct nd_prefix *, struct in6_ifaddr *);
+bool nd6_prefix_ifa_detach(struct nd_prefix *, struct in6_ifaddr *);
 void pfxlist_onlink_check(void);
 struct nd_prefix *nd6_prefix_lookup(struct nd_prefixctl *);
 void rt6_flush(struct in6_addr *, struct ifnet *);

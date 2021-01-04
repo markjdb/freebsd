@@ -1348,6 +1348,36 @@ nd6_prefix_rele(struct nd_prefix *pr)
 	}
 }
 
+void
+nd6_prefix_ifa_attach(struct nd_prefix *pr, struct in6_ifaddr *ia)
+{
+	KASSERT(refcount_load(&pr->ndpr_addrcnt) >=
+	    refcount_load(&pr->ndpr_auto_addrcnt),
+	    ("%s: bogus address counts for prefix %p", __func__, pr));
+	KASSERT(ia->ia6_ndpr == NULL,
+	    ("%s: ifaddr %p has a prefix attached", __func__, ia));
+
+	ia->ia6_ndpr = pr;
+	refcount_acquire(&pr->ndpr_addrcnt);
+	if ((ia->ia6_flags & IN6_IFF_AUTOCONF) != 0)
+		refcount_acquire(&pr->ndpr_auto_addrcnt);
+}
+
+bool
+nd6_prefix_ifa_detach(struct nd_prefix *pr, struct in6_ifaddr *ia)
+{
+	KASSERT(refcount_load(&pr->ndpr_addrcnt) >=
+	    refcount_load(&pr->ndpr_auto_addrcnt),
+	    ("%s: bogus address counts for prefix %p", __func__, pr));
+	KASSERT(ia->ia6_ndpr == pr,
+	    ("%s: ifaddr %p does not reference %p", __func__, ia, pr));
+
+	ia->ia6_ndpr = NULL;
+	if ((ia->ia6_flags & IN6_IFF_AUTOCONF) != 0)
+		(void)refcount_release(&pr->ndpr_auto_addrcnt);
+	return (refcount_release(&pr->ndpr_addrcnt));
+}
+
 int
 nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
     struct nd_prefix **newp)
@@ -1435,7 +1465,8 @@ nd6_prefix_del(struct nd_prefix *pr)
 	int e;
 	char ip6buf[INET6_ADDRSTRLEN];
 
-	KASSERT(pr->ndpr_addrcnt == 0,
+	KASSERT(refcount_load(&pr->ndpr_addrcnt) == 0 &&
+	    refcount_load(&pr->ndpr_auto_addrcnt) == 0,
 	    ("prefix %p has referencing addresses", pr));
 	ND6_UNLOCK_ASSERT();
 
@@ -1751,8 +1782,7 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			/*
 			 * note that we should use pr (not new) for reference.
 			 */
-			pr->ndpr_addrcnt++;
-			ia6->ia6_ndpr = pr;
+			nd6_prefix_ifa_attach(pr, ia6);
 
 			/*
 			 * RFC 3041 3.3 (2).
@@ -2395,8 +2425,7 @@ in6_tmpifadd(const struct in6_ifaddr *ia0, int forcegen, int delay)
 		    __func__));
 		return (EINVAL); /* XXX */
 	}
-	newia->ia6_ndpr = ia0->ia6_ndpr;
-	newia->ia6_ndpr->ndpr_addrcnt++;
+	nd6_prefix_ifa_attach(ia0->ia6_ndpr, newia);
 	ifa_free(&newia->ia_ifa);
 
 	/*
