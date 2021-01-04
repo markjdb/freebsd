@@ -5,22 +5,21 @@ PACKAGE=	tests
 TESTSDIR=	${TESTSBASE}/sys/netinet6
 FILESDIR=	${TESTSDIR}
 
-ATF_TESTS_SH=			\
-				exthdr \
-				mld \
-				scapyi386 \
-				redirect \
-				divert \
-				forward6 \
-				output6 \
-				lpm6 \
-				fibs6
+ATF_TESTS_SH=	divert \
+		exthdr \
+		fibs6 \
+		forward6 \
+		lpm6 \
+		mld \
+		output6 \
+		redirect \
+		scapyi386
 TEST_METADATA.output6+=	required_programs="python"
 
-${PACKAGE}FILES+=		exthdr.py
-${PACKAGE}FILES+=		mld.py
-${PACKAGE}FILES+=		scapyi386.py
-${PACKAGE}FILES+=		redirect.py
+${PACKAGE}FILES+=	exthdr.py
+${PACKAGE}FILES+=	mld.py
+${PACKAGE}FILES+=	scapyi386.py
+${PACKAGE}FILES+=	redirect.py
 
 ${PACKAGE}FILESMODE_exthdr.py=	0555
 ${PACKAGE}FILESMODE_mld.py=	0555
