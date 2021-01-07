@@ -425,7 +425,7 @@ ipsec4_common_input_cb(struct mbuf *m, struct secasvar *sav, int skip,
 		error = ipsec_if_input(m, sav, af);
 	if (error == 0) {
 		NET_EPOCH_ENTER(et);
-		error = netisr_queue_src(isr_prot, (uintptr_t)sav->spi, m);
+		error = netisr_dispatch_src(isr_prot, (uintptr_t)sav->spi, m);
 		NET_EPOCH_EXIT(et);
 		if (error) {
 			IPSEC_ISTAT(sproto, qfull);
@@ -624,7 +624,7 @@ ipsec6_common_input_cb(struct mbuf *m, struct secasvar *sav, int skip,
 			error = ipsec_if_input(m, sav, af);
 		if (error == 0) {
 			NET_EPOCH_ENTER(et);
-			error = netisr_queue_src(isr_prot,
+			error = netisr_dispatch_src(isr_prot,
 			    (uintptr_t)sav->spi, m);
 			NET_EPOCH_EXIT(et);
 			if (error) {
