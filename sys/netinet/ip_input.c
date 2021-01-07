@@ -987,6 +987,7 @@ ip_forward(struct mbuf *m, int srcrt)
 		ia = ifatoia(ro.ro_nh->nh_ifa);
 	} else
 		ia = NULL;
+#if 0
 	/*
 	 * Save the IP header and at most 8 bytes of the payload,
 	 * in case we need to generate an ICMP message to the src.
@@ -1018,7 +1019,10 @@ ip_forward(struct mbuf *m, int srcrt)
 		mcopy->m_len = min(ntohs(ip->ip_len), M_TRAILINGSPACE(mcopy));
 		mcopy->m_pkthdr.len = mcopy->m_len;
 		m_copydata(m, 0, mcopy->m_len, mtod(mcopy, caddr_t));
+	
 	}
+#endif
+	mcopy = NULL;
 #ifdef IPSTEALTH
 	if (V_ipstealth == 0)
 #endif
