@@ -589,103 +589,46 @@ static int iflib_timer_default = 1000;
 SYSCTL_INT(_net_iflib, OID_AUTO, timer_default, CTLFLAG_RW,
 		   &iflib_timer_default, 0, "number of ticks between iflib_timer calls");
 
+#ifdef INVARIANTS
+static int iflib_verbose_debug;
+SYSCTL_INT(_net_iflib, OID_AUTO, verbose_debug, CTLFLAG_RW,
+    &iflib_verbose_debug, 0, 
+    "enable verbose debugging");
+#endif
 
 #if IFLIB_DEBUG_COUNTERS
+#define	IFLIB_DEBUG_COUNTER_DEFINE(name, descr)				\
+	static COUNTER_U64_DEFINE_EARLY(name);				\
+	SYSCTL_COUNTER_U64(_net_iflib, OID_AUTO, name, CTLFLAG_RW,	\
+	    &name, descr)
 
-static int iflib_tx_seen;
-static int iflib_tx_sent;
-static int iflib_tx_encap;
-static int iflib_rx_allocs;
-static int iflib_fl_refills;
-static int iflib_fl_refills_large;
-static int iflib_tx_frees;
+IFLIB_DEBUG_COUNTER_DEFINE(tx_seen, "# TX mbufs seen");
+IFLIB_DEBUG_COUNTER_DEFINE(tx_sent, "# TX mbufs sent");
+IFLIB_DEBUG_COUNTER_DEFINE(tx_encap, "# TX mbufs encapped");
+IFLIB_DEBUG_COUNTER_DEFINE(tx_frees, "# TX frees");
+IFLIB_DEBUG_COUNTER_DEFINE(rx_allocs, "# RX allocations");
+IFLIB_DEBUG_COUNTER_DEFINE(fl_refills, "# refills");
+IFLIB_DEBUG_COUNTER_DEFINE(fl_refills_large, "# large refills");
+IFLIB_DEBUG_COUNTER_DEFINE(txq_drain_flushing, "# drain flushes");
+IFLIB_DEBUG_COUNTER_DEFINE(txq_drain_oactive, "# drain oactives");
+IFLIB_DEBUG_COUNTER_DEFINE(txq_drain_notready, "# drain notready");
+IFLIB_DEBUG_COUNTER_DEFINE(encap_load_mbuf_fail, "# busdma load failures");
+IFLIB_DEBUG_COUNTER_DEFINE(encap_pad_mbuf_fail, "# runt frame pad failures");
+IFLIB_DEBUG_COUNTER_DEFINE(encap_txq_avail_fail, "# txq avail failures");
+IFLIB_DEBUG_COUNTER_DEFINE(encap_txd_encap_fail, "# driver encap failures");
+IFLIB_DEBUG_COUNTER_DEFINE(task_fn_rxs, "# fask_fn_rx calls");
+IFLIB_DEBUG_COUNTER_DEFINE(rx_intr_enables, "# RX intr enables");
+IFLIB_DEBUG_COUNTER_DEFINE(fast_intrs, "# fast_intr calls");
+IFLIB_DEBUG_COUNTER_DEFINE(rx_unavail,
+    "# times rxeof called with no available data");
+IFLIB_DEBUG_COUNTER_DEFINE(rx_ctx_inactive,
+    "# times rxeof called with inactive context");
+IFLIB_DEBUG_COUNTER_DEFINE(rx_if_input, "# times rxeof called if_input");
+IFLIB_DEBUG_COUNTER_DEFINE(rxd_flush, "# times rxd_flush called");
 
-SYSCTL_INT(_net_iflib, OID_AUTO, tx_seen, CTLFLAG_RD,
-		   &iflib_tx_seen, 0, "# TX mbufs seen");
-SYSCTL_INT(_net_iflib, OID_AUTO, tx_sent, CTLFLAG_RD,
-		   &iflib_tx_sent, 0, "# TX mbufs sent");
-SYSCTL_INT(_net_iflib, OID_AUTO, tx_encap, CTLFLAG_RD,
-		   &iflib_tx_encap, 0, "# TX mbufs encapped");
-SYSCTL_INT(_net_iflib, OID_AUTO, tx_frees, CTLFLAG_RD,
-		   &iflib_tx_frees, 0, "# TX frees");
-SYSCTL_INT(_net_iflib, OID_AUTO, rx_allocs, CTLFLAG_RD,
-		   &iflib_rx_allocs, 0, "# RX allocations");
-SYSCTL_INT(_net_iflib, OID_AUTO, fl_refills, CTLFLAG_RD,
-		   &iflib_fl_refills, 0, "# refills");
-SYSCTL_INT(_net_iflib, OID_AUTO, fl_refills_large, CTLFLAG_RD,
-		   &iflib_fl_refills_large, 0, "# large refills");
-
-static int iflib_txq_drain_flushing;
-static int iflib_txq_drain_oactive;
-static int iflib_txq_drain_notready;
-
-SYSCTL_INT(_net_iflib, OID_AUTO, txq_drain_flushing, CTLFLAG_RD,
-		   &iflib_txq_drain_flushing, 0, "# drain flushes");
-SYSCTL_INT(_net_iflib, OID_AUTO, txq_drain_oactive, CTLFLAG_RD,
-		   &iflib_txq_drain_oactive, 0, "# drain oactives");
-SYSCTL_INT(_net_iflib, OID_AUTO, txq_drain_notready, CTLFLAG_RD,
-		   &iflib_txq_drain_notready, 0, "# drain notready");
-
-static int iflib_encap_load_mbuf_fail;
-static int iflib_encap_pad_mbuf_fail;
-static int iflib_encap_txq_avail_fail;
-static int iflib_encap_txd_encap_fail;
-
-SYSCTL_INT(_net_iflib, OID_AUTO, encap_load_mbuf_fail, CTLFLAG_RD,
-		   &iflib_encap_load_mbuf_fail, 0, "# busdma load failures");
-SYSCTL_INT(_net_iflib, OID_AUTO, encap_pad_mbuf_fail, CTLFLAG_RD,
-		   &iflib_encap_pad_mbuf_fail, 0, "# runt frame pad failures");
-SYSCTL_INT(_net_iflib, OID_AUTO, encap_txq_avail_fail, CTLFLAG_RD,
-		   &iflib_encap_txq_avail_fail, 0, "# txq avail failures");
-SYSCTL_INT(_net_iflib, OID_AUTO, encap_txd_encap_fail, CTLFLAG_RD,
-		   &iflib_encap_txd_encap_fail, 0, "# driver encap failures");
-
-static int iflib_task_fn_rxs;
-static int iflib_rx_intr_enables;
-static int iflib_fast_intrs;
-static int iflib_rx_unavail;
-static int iflib_rx_ctx_inactive;
-static int iflib_rx_if_input;
-static int iflib_rxd_flush;
-
-static int iflib_verbose_debug;
-
-SYSCTL_INT(_net_iflib, OID_AUTO, task_fn_rx, CTLFLAG_RD,
-		   &iflib_task_fn_rxs, 0, "# task_fn_rx calls");
-SYSCTL_INT(_net_iflib, OID_AUTO, rx_intr_enables, CTLFLAG_RD,
-		   &iflib_rx_intr_enables, 0, "# RX intr enables");
-SYSCTL_INT(_net_iflib, OID_AUTO, fast_intrs, CTLFLAG_RD,
-		   &iflib_fast_intrs, 0, "# fast_intr calls");
-SYSCTL_INT(_net_iflib, OID_AUTO, rx_unavail, CTLFLAG_RD,
-		   &iflib_rx_unavail, 0, "# times rxeof called with no available data");
-SYSCTL_INT(_net_iflib, OID_AUTO, rx_ctx_inactive, CTLFLAG_RD,
-		   &iflib_rx_ctx_inactive, 0, "# times rxeof called with inactive context");
-SYSCTL_INT(_net_iflib, OID_AUTO, rx_if_input, CTLFLAG_RD,
-		   &iflib_rx_if_input, 0, "# times rxeof called if_input");
-SYSCTL_INT(_net_iflib, OID_AUTO, rxd_flush, CTLFLAG_RD,
-	         &iflib_rxd_flush, 0, "# times rxd_flush called");
-SYSCTL_INT(_net_iflib, OID_AUTO, verbose_debug, CTLFLAG_RW,
-		   &iflib_verbose_debug, 0, "enable verbose debugging");
-
-#define DBG_COUNTER_INC(name) atomic_add_int(&(iflib_ ## name), 1)
-static void
-iflib_debug_reset(void)
-{
-	iflib_tx_seen = iflib_tx_sent = iflib_tx_encap = iflib_rx_allocs =
-		iflib_fl_refills = iflib_fl_refills_large = iflib_tx_frees =
-		iflib_txq_drain_flushing = iflib_txq_drain_oactive =
-		iflib_txq_drain_notready =
-		iflib_encap_load_mbuf_fail = iflib_encap_pad_mbuf_fail =
-		iflib_encap_txq_avail_fail = iflib_encap_txd_encap_fail =
-		iflib_task_fn_rxs = iflib_rx_intr_enables = iflib_fast_intrs =
-		iflib_rx_unavail =
-		iflib_rx_ctx_inactive = iflib_rx_if_input =
-		iflib_rxd_flush = 0;
-}
-
+#define	DBG_COUNTER_INC(name)	counter_u64_add(name, 1)
 #else
 #define DBG_COUNTER_INC(name)
-static void iflib_debug_reset(void) {}
 #endif
 
 #define IFLIB_DEBUG 0
@@ -2510,7 +2453,6 @@ iflib_stop(if_ctx_t ctx)
 	 */
 	netmap_disable_all_rings(ctx->ifc_ifp);
 
-	iflib_debug_reset();
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_ntxqsets; i++, txq++) {
 		/* make sure all transmitters have completed before proceeding XXX */
