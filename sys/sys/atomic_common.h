@@ -114,4 +114,12 @@
 #define	atomic_load_ptr(p)	(*(volatile __typeof(*p) *)(p))
 #define	atomic_store_ptr(p, v)	(*(volatile __typeof(*p) *)(p) = (v))
 
+/*
+ * Currently all architectures provide acquire and release fences on their own,
+ * but they don't provide consume. Kludge below allows relevant code to stop
+ * openly resorting to the stronger acquire fence, to be sorted out.
+ */
+#define	atomic_load_consume_ptr(p)	\
+    ((__typeof(*p)) atomic_load_acq_ptr((uintptr_t *)p))
+
 #endif
