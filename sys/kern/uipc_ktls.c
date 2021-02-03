@@ -95,6 +95,7 @@ static struct proc *ktls_proc;
 LIST_HEAD(, ktls_crypto_backend) ktls_backends;
 static struct rmlock ktls_backends_lock;
 static uma_zone_t ktls_session_zone;
+static uma_zone_t ktls_buffer_zone;
 static uint16_t ktls_cpuid_lookup[MAXCPU];
 
 SYSCTL_NODE(_kern_ipc, OID_AUTO, tls, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
@@ -116,7 +117,7 @@ SYSCTL_INT(_kern_ipc_tls, OID_AUTO, bind_threads, CTLFLAG_RDTUN,
     "Bind crypto threads to cores (1) or cores and domains (2) at boot");
 
 static u_int ktls_maxlen = 16384;
-SYSCTL_UINT(_kern_ipc_tls, OID_AUTO, maxlen, CTLFLAG_RWTUN,
+SYSCTL_UINT(_kern_ipc_tls, OID_AUTO, maxlen, CTLFLAG_RDTUN,
     &ktls_maxlen, 0, "Maximum TLS record size");
 
 static int ktls_number_threads;
@@ -366,6 +367,51 @@ ktls_get_cpu(struct socket *so)
 }
 #endif
 
+static int
+ktls_buffer_import(void *arg, void **store, int count, int domain, int flags)
+{
+	vm_page_t m;
+	int i;
+
+	KASSERT((ktls_maxlen & PAGE_MASK) == 0,
+	    ("%s: ktls max length %d is not page size-aligned",
+	    __func__, ktls_maxlen));
+
+	for (i = 0; i < count; i++) {
+		m = vm_page_alloc_contig_domain(NULL, 0, domain,
+		    VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ | VM_ALLOC_WIRED |
+		    VM_ALLOC_NODUMP | VM_ALLOC_NORECLAIM,
+		    atop(ktls_maxlen), 0, ~0ul, PAGE_SIZE, 0,
+		    VM_MEMATTR_DEFAULT);
+		if (m == NULL)
+			break;
+		store[i] = (void *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m));
+	}
+	return (i);
+}
+
+static void
+ktls_buffer_release(void *arg __unused, void **store, int count)
+{
+	vm_page_t m;
+	int i, j;
+
+	for (i = 0; i < count; i++) {
+		m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
+		for (j = 0; j < atop(ktls_maxlen); j++) {
+			(void)vm_page_unwire_noq(m + j);
+			vm_page_free(m + j);
+		}
+	}
+}
+
+static void
+ktls_free_mext_contig(struct mbuf *m)
+{
+	M_ASSERTEXTPG(m);
+	uma_zfree(ktls_buffer_zone, (void *)PHYS_TO_DMAP(m->m_epg_pa[0]));
+}
+
 static void
 ktls_init(void *dummy __unused)
 {
@@ -384,6 +430,10 @@ ktls_init(void *dummy __unused)
 	    sizeof(struct ktls_session),
 	    NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_CACHE, 0);
+
+	ktls_buffer_zone = uma_zcache_create("ktls_buffers",
+	    roundup2(ktls_maxlen, PAGE_SIZE), NULL, NULL, NULL, NULL,
+	    ktls_buffer_import, ktls_buffer_release, NULL, UMA_ZONE_FIRSTTOUCH);
 
 	/*
 	 * Initialize the workqueues to run the TLS work.  We create a
@@ -2015,6 +2065,7 @@ ktls_encrypt(struct mbuf *top)
 	struct iovec src_iov[1 + btoc(TLS_MAX_MSG_SIZE_V10_2)];
 	struct iovec dst_iov[1 + btoc(TLS_MAX_MSG_SIZE_V10_2)];
 	vm_page_t pg;
+	void *cbuf;
 	int error, i, len, npages, off, total_pages;
 	bool is_anon;
 
@@ -2056,6 +2107,9 @@ ktls_encrypt(struct mbuf *top)
 		KASSERT(npages + m->m_epg_npgs <= total_pages,
 		    ("page count mismatch: top %p, total_pages %d, m %p", top,
 		    total_pages, m));
+		KASSERT(ptoa(m->m_epg_npgs) <= ktls_maxlen,
+		    ("page count %d larger than maximum frame length %d",
+		    m->m_epg_npgs, ktls_maxlen));
 
 		/*
 		 * Generate source and destination ivoecs to pass to
@@ -2072,37 +2126,51 @@ ktls_encrypt(struct mbuf *top)
 			len = m_epg_pagelen(m, i, off);
 			src_iov[i].iov_len = len;
 			src_iov[i].iov_base =
-			    (char *)(void *)PHYS_TO_DMAP(m->m_epg_pa[i]) +
-				off;
+			    (char *)(void *)PHYS_TO_DMAP(m->m_epg_pa[i]) + off;
+		}
 
-			if (is_anon) {
-				dst_iov[i].iov_base = src_iov[i].iov_base;
-				dst_iov[i].iov_len = src_iov[i].iov_len;
-				continue;
+		if (is_anon) {
+			memcpy(dst_iov, src_iov, i * sizeof(struct iovec));
+		} else if (m->m_epg_npgs > 0 &&
+		    (cbuf = uma_zalloc(ktls_buffer_zone, M_NOWAIT)) != NULL) {
+			dst_iov[0].iov_base = (char *)cbuf + m->m_epg_1st_off;
+			len = ptoa(m->m_epg_npgs - 1) + m->m_epg_last_len;
+			if (m->m_epg_npgs > 1)
+				len -= m->m_epg_1st_off;
+			dst_iov[0].iov_len = len;
+			i = 1;
+		} else {
+			cbuf = NULL;
+			off = m->m_epg_1st_off;
+			for (i = 0; i < m->m_epg_npgs; i++, off = 0) {
+				do {
+					pg = vm_page_alloc(NULL, 0,
+					    VM_ALLOC_NORMAL |
+					    VM_ALLOC_NOOBJ |
+					    VM_ALLOC_NODUMP |
+					    VM_ALLOC_WIRED |
+					    VM_ALLOC_WAITFAIL);
+				} while (pg == NULL);
+
+				len = m_epg_pagelen(m, i, off);
+				parray[i] = VM_PAGE_TO_PHYS(pg);
+				dst_iov[i].iov_base =
+				    (char *)(void *)PHYS_TO_DMAP(
+				    parray[i]) + off;
+				dst_iov[i].iov_len = len;
 			}
-retry_page:
-			pg = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL |
-			    VM_ALLOC_NOOBJ | VM_ALLOC_NODUMP | VM_ALLOC_WIRED);
-			if (pg == NULL) {
-				vm_wait(NULL);
-				goto retry_page;
-			}
-			parray[i] = VM_PAGE_TO_PHYS(pg);
-			dst_iov[i].iov_base =
-			    (char *)(void *)PHYS_TO_DMAP(parray[i]) + off;
-			dst_iov[i].iov_len = len;
 		}
 
 		if (__predict_false(m->m_epg_npgs == 0)) {
 			/* TLS 1.0 empty fragment. */
 			npages++;
 		} else
-			npages += i;
+			npages += m->m_epg_npgs;
 
 		error = (*tls->sw_encrypt)(tls,
 		    (const struct tls_record_layer *)m->m_epg_hdr,
-		    m->m_epg_trail, src_iov, dst_iov, i, m->m_epg_seqno,
-		    m->m_epg_record_type);
+		    m->m_epg_trail, src_iov, dst_iov, m->m_epg_npgs, i,
+		    m->m_epg_seqno, m->m_epg_record_type);
 		if (error) {
 			counter_u64_add(ktls_offload_failed_crypto, 1);
 			break;
@@ -2118,11 +2186,22 @@ retry_page:
 			m->m_ext.ext_free(m);
 
 			/* Replace them with the new pages. */
-			for (i = 0; i < m->m_epg_npgs; i++)
-				m->m_epg_pa[i] = parray[i];
+			if (cbuf != NULL) {
+				for (i = 0; i < m->m_epg_npgs; i++) {
+					m->m_epg_pa[i] =
+					    DMAP_TO_PHYS((vm_offset_t)cbuf) +
+					    ptoa(i);
+				}
 
-			/* Use the basic free routine. */
-			m->m_ext.ext_free = mb_free_mext_pgs;
+				/* Contig pages should go back to the cache. */
+				m->m_ext.ext_free = ktls_free_mext_contig;
+			} else {
+				for (i = 0; i < m->m_epg_npgs; i++)
+					m->m_epg_pa[i] = parray[i];
+
+				/* Use the basic free routine. */
+				m->m_ext.ext_free = mb_free_mext_pgs;
+			}
 
 			/* Pages are now writable. */
 			m->m_epg_flags |= EPG_FLAG_ANON;
