@@ -289,6 +289,17 @@ armv8_aes_gmac_finish(struct armv8_gcm_state *s, size_t len,
 	s->Xi.u[1] ^= s->EK0.u[1];
 }
 
+static void
+armv8_aes_encrypt_gcm_block(struct armv8_gcm_state *s, AES_key_t *aes_key,
+    const uint64_t *from, uint64_t *to, const __uint128_val_t *Htable)
+{
+	aes_v8_encrypt(s->aes_counter, s->EKi.c, aes_key);
+	AES_INC_COUNTER(s->aes_counter);
+	to[0] = from[0] ^ s->EKi.u[0];
+	to[1] = from[1] ^ s->EKi.u[1];
+	gcm_ghash_v8(s->Xi.u, Htable, (uint8_t *)to, AES_BLOCK_LEN);
+}
+
 void
 armv8_aes_encrypt_gcm(AES_key_t *aes_key, size_t len,
     const uint8_t *from, uint8_t *to,
@@ -309,12 +320,8 @@ armv8_aes_encrypt_gcm(AES_key_t *aes_key, size_t len,
 	to64 = (uint64_t *)to;
 	trailer = len % AES_BLOCK_LEN;
 
-	for (i = 0; i < (len - trailer); i += AES_BLOCK_LEN) {
-		aes_v8_encrypt(s.aes_counter, s.EKi.c, aes_key);
-		AES_INC_COUNTER(s.aes_counter);
-		to64[0] = from64[0] ^ s.EKi.u[0];
-		to64[1] = from64[1] ^ s.EKi.u[1];
-		gcm_ghash_v8(s.Xi.u, Htable, (uint8_t*)to64, AES_BLOCK_LEN);
+	for (i = 0; i < len - trailer; i += AES_BLOCK_LEN) {
+		armv8_aes_encrypt_gcm_block(&s, aes_key, from64, to64, Htable);
 
 		to64 += 2;
 		from64 += 2;
@@ -335,6 +342,69 @@ armv8_aes_encrypt_gcm(AES_key_t *aes_key, size_t len,
 	}
 
 	armv8_aes_gmac_finish(&s, len, authdatalen, Htable);
+	memcpy(tag, s.Xi.c, GMAC_DIGEST_LEN);
+
+	explicit_bzero(&s, sizeof(s));
+}
+
+void
+armv8_aes_encrypt_gcm_cursor(AES_key_t *aes_key, size_t len,
+    struct crypto_buffer_cursor *fromc, struct crypto_buffer_cursor *toc,
+    size_t authdatalen, const uint8_t *authdata,
+    uint8_t tag[static GMAC_DIGEST_LEN],
+    const uint8_t iv[static AES_GCM_IV_LEN],
+    const __uint128_val_t *Htable)
+{
+	struct armv8_gcm_state s;
+	uint8_t block[AES_BLOCK_LEN] __aligned(16);
+	uint64_t *from64, *to64;
+	size_t fromseglen, i, olen, seglen, toseglen;
+
+	armv8_aes_gmac_setup(&s, aes_key, authdata, authdatalen, iv, Htable);
+
+	for (olen = len; len >= AES_BLOCK_LEN; len -= seglen) {
+		from64 = (uint64_t *)crypto_cursor_segbase(fromc);
+		fromseglen = crypto_cursor_seglen(fromc);
+		to64 = (uint64_t *)crypto_cursor_segbase(toc);
+		toseglen = crypto_cursor_seglen(toc);
+
+		seglen = ulmin(len, ulmin(fromseglen, toseglen));
+		if (seglen < AES_BLOCK_LEN) {
+			crypto_cursor_copydata(fromc, AES_BLOCK_LEN, block);
+			armv8_aes_encrypt_gcm_block(&s, aes_key,
+			    (uint64_t *)block, (uint64_t *)block, Htable);
+			crypto_cursor_copyback(toc, AES_BLOCK_LEN, block);
+			seglen = AES_BLOCK_LEN;
+		} else {
+			seglen = seglen - (seglen % AES_BLOCK_LEN);
+			for (i = 0; i < seglen; i += AES_BLOCK_LEN) {
+				armv8_aes_encrypt_gcm_block(&s, aes_key, from64,
+				    to64, Htable);
+
+				to64 += 2;
+				from64 += 2;
+			}
+
+			crypto_cursor_advance(fromc, seglen);
+			crypto_cursor_advance(toc, seglen);
+		}
+	}
+
+	if (len > 0) {
+		memset(block, 0, sizeof(block));
+		crypto_cursor_copydata(fromc, len, block);
+
+		aes_v8_encrypt(s.aes_counter, s.EKi.c, aes_key);
+		AES_INC_COUNTER(s.aes_counter);
+		for (i = 0; i < len; i++) {
+			block[i] ^= s.EKi.c[i];
+		}
+		gcm_ghash_v8(s.Xi.u, Htable, block, AES_BLOCK_LEN);
+
+		crypto_cursor_copyback(toc, (int)len, block);
+	}
+
+	armv8_aes_gmac_finish(&s, olen, authdatalen, Htable);
 	memcpy(tag, s.Xi.c, GMAC_DIGEST_LEN);
 
 	explicit_bzero(&s, sizeof(s));
