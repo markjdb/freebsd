@@ -792,9 +792,9 @@ enum {
 };
 
 struct mlx5e_sq {
-	/* persistant fields */
-	struct	mtx lock;
-	struct	mtx comp_lock;
+	/* persistent fields */
+	struct	mtx_padalign lock;
+	struct	mtx_padalign comp_lock;
 	struct	mlx5e_sq_stats stats;
 	struct	callout cev_callout;
 
