@@ -377,6 +377,7 @@ static int
 armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
     struct cryptop *crp)
 {
+	struct crypto_buffer_cursor fromc, toc;
 	const struct crypto_session_params *csp;
 	struct fpu_kern_ctx *ctx;
 	uint8_t *buf, *authbuf, *outbuf;
@@ -396,11 +397,6 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 	authbuf = NULL;
 	kt = 1;
 
-	buf = armv8_crypto_cipher_alloc(crp, crp->crp_payload_start,
-	    crp->crp_payload_length, &allocated);
-	if (buf == NULL)
-		return (ENOMEM);
-
 	if (csp->csp_cipher_alg == CRYPTO_AES_NIST_GCM_16) {
 		if (crp->crp_aad != NULL)
 			authbuf = crp->crp_aad;
@@ -412,8 +408,19 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 			goto out;
 		}
 	}
-
-	if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+	if (encflag && csp->csp_cipher_alg == CRYPTO_AES_NIST_GCM_16 && CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+		crypto_cursor_init(&fromc, &crp->crp_buf);
+		crypto_cursor_advance(&fromc, crp->crp_payload_start);
+		if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+			crypto_cursor_init(&toc, &crp->crp_obuf);
+			crypto_cursor_advance(&toc, crp->crp_payload_output_start);
+		}
+		outcopy = false;
+	} else if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+		buf = armv8_crypto_cipher_alloc(crp, crp->crp_payload_start,
+		    crp->crp_payload_length, &allocated);
+		if (buf == NULL)
+			return (ENOMEM);
 		outbuf = crypto_buffer_contiguous_subsegment(&crp->crp_obuf,
 		    crp->crp_payload_output_start, crp->crp_payload_length);
 		if (outbuf == NULL) {
@@ -432,6 +439,10 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 		} else
 			outcopy = false;
 	} else {
+		buf = armv8_crypto_cipher_alloc(crp, crp->crp_payload_start,
+		    crp->crp_payload_length, &allocated);
+		if (buf == NULL)
+			return (ENOMEM);
 		outbuf = buf;
 		outcopy = allocated;
 	}
@@ -475,7 +486,16 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 			    buf, iv);
 		break;
 	case CRYPTO_AES_NIST_GCM_16:
-		if (encflag) {
+		if (encflag && CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+			memset(tag, 0, sizeof(tag));
+			armv8_aes_encrypt_gcm_cursor(&ses->enc_schedule,
+			    crp->crp_payload_length,
+			    &fromc, &toc,
+			    crp->crp_aad_length, authbuf,
+			    tag, iv, ses->Htable);
+			crypto_copyback(crp, crp->crp_digest_start, sizeof(tag),
+			    tag);
+		} else if (encflag) {
 			memset(tag, 0, sizeof(tag));
 			armv8_aes_encrypt_gcm(&ses->enc_schedule,
 			    crp->crp_payload_length,
