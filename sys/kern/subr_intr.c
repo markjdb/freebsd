@@ -56,6 +56,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/conf.h>
 #include <sys/cpuset.h>
 #include <sys/rman.h>
+#include <sys/sbuf.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/sysctl.h>
@@ -192,6 +193,42 @@ intr_irq_init(void *dummy __unused)
 	    M_INTRNG, M_WAITOK | M_ZERO);
 }
 SYSINIT(intr_irq_init, SI_SUB_INTR, SI_ORDER_FIRST, intr_irq_init, NULL);
+
+static int
+sysctl_machdep_irqs(SYSCTL_HANDLER_ARGS)
+{
+	char cpus[CPUSETBUFSIZ];
+	struct sbuf sbuf;
+	struct intr_irqsrc *isrc;
+	u_long count;
+	int error, i;
+
+	error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+		return (error);
+
+	sbuf_new_for_sysctl(&sbuf, NULL, 1024, req);
+	for (i = 0; i < intr_nirq; i++) {
+		isrc = irq_sources[i];
+		if (isrc == NULL)
+			continue;
+
+		count = isrc->isrc_count != NULL ? isrc->isrc_count[0] : 0;
+		sbuf_printf(&sbuf, "%s(%s):%d @cpu %s %lu\n",
+		    isrc->isrc_name,
+		    isrc->isrc_event ? isrc->isrc_event->ie_fullname : "",
+		    isrc->isrc_irq, 
+		    cpusetobj_strprint(cpus, &isrc->isrc_cpu), count);
+	}
+
+	error = sbuf_finish(&sbuf);
+	sbuf_delete(&sbuf);
+	return (error);
+}
+SYSCTL_PROC(_machdep, OID_AUTO, irqs,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    0, 0, sysctl_machdep_irqs, "A",
+    "IRQ information");
 
 static void
 intrcnt_setname(const char *name, int index)
