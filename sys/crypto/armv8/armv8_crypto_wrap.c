@@ -99,16 +99,66 @@ armv8_aes_encrypt_cbc(const AES_key_t *key, size_t len,
 	uint8x16_t tot, ivreg, tmp;
 	size_t i;
 
+	KASSERT(len % AES_BLOCK_LEN == 0,
+	    ("%s: length %zu not a multiple of the block size", __func__, len));
+
 	len /= AES_BLOCK_LEN;
 	ivreg = vld1q_u8(iv);
 	for (i = 0; i < len; i++) {
 		tmp = vld1q_u8(from);
 		tot = armv8_aes_enc(key->aes_rounds - 1,
-		    (const void*)key->aes_key, veorq_u8(tmp, ivreg));
+		    (const void *)key->aes_key, veorq_u8(tmp, ivreg));
 		ivreg = tot;
 		vst1q_u8(to, tot);
 		from += AES_BLOCK_LEN;
 		to += AES_BLOCK_LEN;
+	}
+}
+
+void
+armv8_aes_encrypt_cbc_cursor(const AES_key_t *key, size_t len,
+    struct crypto_buffer_cursor *fromc, struct crypto_buffer_cursor *toc,
+    const uint8_t iv[static AES_BLOCK_LEN])
+{
+	uint8x16_t tot, ivreg, tmp;
+	uint8_t block[AES_BLOCK_LEN], *from, *to;
+	size_t fromseglen, seglen, toseglen;
+
+	KASSERT(len % AES_BLOCK_LEN == 0,
+	    ("%s: length %zu not a multiple of the block size", __func__, len));
+
+	ivreg = vld1q_u8(iv);
+	for (; len > 0; len -= seglen) {
+		from = crypto_cursor_segbase(fromc);
+		fromseglen = crypto_cursor_seglen(fromc);
+		to = crypto_cursor_segbase(toc);
+		toseglen = crypto_cursor_seglen(toc);
+
+		seglen = ulmin(len, ulmin(fromseglen, toseglen));
+		if (seglen < AES_BLOCK_LEN) {
+			crypto_cursor_copydata(fromc, AES_BLOCK_LEN, block);
+			tmp = vld1q_u8(block);
+			tot = armv8_aes_enc(key->aes_rounds - 1,
+			    (const void *)key->aes_key, veorq_u8(tmp, ivreg));
+			ivreg = tot;
+			vst1q_u8(block, tot);
+			crypto_cursor_copyback(toc, AES_BLOCK_LEN, block);
+			seglen = AES_BLOCK_LEN;
+		} else {
+			for (; seglen > AES_BLOCK_LEN;
+			    seglen -= AES_BLOCK_LEN) {
+				tmp = vld1q_u8(from);
+				tot = armv8_aes_enc(key->aes_rounds - 1,
+				    (const void *)key->aes_key,
+				    veorq_u8(tmp, ivreg));
+				ivreg = tot;
+				vst1q_u8(to, tot);
+				from += AES_BLOCK_LEN;
+				to += AES_BLOCK_LEN;
+			}
+			crypto_cursor_advance(fromc, seglen);
+			crypto_cursor_advance(toc, seglen);
+		}
 	}
 }
 
@@ -119,6 +169,9 @@ armv8_aes_decrypt_cbc(const AES_key_t *key, size_t len,
 	uint8x16_t ivreg, nextiv, tmp;
 	size_t i;
 
+	KASSERT(len % AES_BLOCK_LEN == 0,
+	    ("%s: length %zu not a multiple of the block size", __func__, len));
+
 	len /= AES_BLOCK_LEN;
 	ivreg = vld1q_u8(iv);
 	for (i = 0; i < len; i++) {
@@ -128,6 +181,52 @@ armv8_aes_decrypt_cbc(const AES_key_t *key, size_t len,
 		vst1q_u8(buf, veorq_u8(tmp, ivreg));
 		ivreg = nextiv;
 		buf += AES_BLOCK_LEN;
+	}
+}
+
+void
+armv8_aes_decrypt_cbc_cursor(const AES_key_t *key, size_t len,
+    struct crypto_buffer_cursor *fromc, struct crypto_buffer_cursor *toc,
+    const uint8_t iv[static AES_BLOCK_LEN])
+{
+	uint8x16_t ivreg, nextiv, tmp;
+	uint8_t block[AES_BLOCK_LEN], *from, *to;
+	size_t fromseglen, seglen, toseglen;
+
+	KASSERT(len % AES_BLOCK_LEN == 0,
+	    ("%s: length %zu not a multiple of the block size", __func__, len));
+
+	ivreg = vld1q_u8(iv);
+	for (; len > 0; len -= seglen) {
+		from = crypto_cursor_segbase(fromc);
+		fromseglen = crypto_cursor_seglen(fromc);
+		to = crypto_cursor_segbase(toc);
+		toseglen = crypto_cursor_seglen(toc);
+
+		seglen = ulmin(len, ulmin(fromseglen, toseglen));
+		if (seglen < AES_BLOCK_LEN) {
+			crypto_cursor_copydata(fromc, AES_BLOCK_LEN, block);
+			nextiv = vld1q_u8(block);
+			tmp = armv8_aes_dec(key->aes_rounds - 1,
+			    (const void *)key->aes_key, nextiv);
+			vst1q_u8(block, veorq_u8(tmp, ivreg));
+			ivreg = nextiv;
+			crypto_cursor_copyback(toc, AES_BLOCK_LEN, block);
+			seglen = AES_BLOCK_LEN;
+		} else {
+			for (; seglen > AES_BLOCK_LEN;
+			    seglen -= AES_BLOCK_LEN) {
+				nextiv = vld1q_u8(from);
+				tmp = armv8_aes_dec(key->aes_rounds - 1,
+				    (const void*)key->aes_key, nextiv);
+				vst1q_u8(to, veorq_u8(tmp, ivreg));
+				ivreg = nextiv;
+				from += AES_BLOCK_LEN;
+				to += AES_BLOCK_LEN;
+			}
+			crypto_cursor_advance(fromc, seglen);
+			crypto_cursor_advance(toc, seglen);
+		}
 	}
 }
 
@@ -356,7 +455,7 @@ armv8_aes_encrypt_gcm_cursor(AES_key_t *aes_key, size_t len,
     const __uint128_val_t *Htable)
 {
 	struct armv8_gcm_state s;
-	uint8_t block[AES_BLOCK_LEN] __aligned(16);
+	uint8_t block[AES_BLOCK_LEN] __aligned(AES_BLOCK_LEN);
 	uint64_t *from64, *to64;
 	size_t fromseglen, i, olen, seglen, toseglen;
 

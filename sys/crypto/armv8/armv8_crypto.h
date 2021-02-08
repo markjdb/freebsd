@@ -66,7 +66,13 @@ void gcm_ghash_v8(uint64_t Xi[2], const __uint128_val_t Htable[16], const uint8_
 
 void armv8_aes_encrypt_cbc(const AES_key_t *, size_t, const uint8_t *,
     uint8_t *, const uint8_t[static AES_BLOCK_LEN]);
+void armv8_aes_encrypt_cbc_cursor(const AES_key_t *key, size_t len,
+    struct crypto_buffer_cursor *fromc, struct crypto_buffer_cursor *toc,
+    const uint8_t iv[static AES_BLOCK_LEN]);
 void armv8_aes_decrypt_cbc(const AES_key_t *, size_t, uint8_t *,
+    const uint8_t[static AES_BLOCK_LEN]);
+void armv8_aes_decrypt_cbc_cursor(const AES_key_t *, size_t,
+    struct crypto_buffer_cursor *fromc, struct crypto_buffer_cursor *toc,
     const uint8_t[static AES_BLOCK_LEN]);
 void armv8_aes_encrypt_gcm(AES_key_t *, size_t, const uint8_t *,
     uint8_t *, size_t, const uint8_t*,
