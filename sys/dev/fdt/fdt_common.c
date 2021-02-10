@@ -42,6 +42,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/limits.h>
 #include <sys/sysctl.h>
 
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/vm_page.h>
+#include <vm/vm_phys.h>
+
 #include <machine/resource.h>
 
 #include <dev/fdt/fdt_common.h>
@@ -544,69 +549,112 @@ fdt_get_reserved_mem(struct mem_region *reserved, int *mreserved)
 	return (0);
 }
 
+struct fdt_mem_region {
+	u_long		start;
+	u_long		size;
+	int		domain;
+};
+
+static int
+get_mem_regions(struct fdt_mem_region *fdtmr, int *countp)
+{
+	pcell_t reg[FDT_REG_CELLS * FDT_MEM_REGIONS], *regp;
+	char name[32];
+	phandle_t node, root;
+	int addr_cells, size_cells;
+	int domain, i, nmr, reg_len, rv, tuples, tuple_size;
+
+	root = OF_peer(0);
+	if (root == 0)
+		return (ENOENT);
+	if ((rv = fdt_addrsize_cells(root, &addr_cells, &size_cells)) != 0)
+		return (rv);
+	if (addr_cells > 2)
+		return (ERANGE);
+	tuple_size = sizeof(pcell_t) * (addr_cells + size_cells);
+
+	for (nmr = 0, node = OF_child(root); node != 0; node = OF_peer(node)) {
+		if (OF_getprop(node, "device_type", name, sizeof(name)) <= 0)
+			continue;
+		if (strcmp(name, "memory") != 0)
+			continue;
+
+		reg_len = OF_getproplen(node, "reg");
+		if (reg_len <= 0 || reg_len > sizeof(reg))
+			return (ERANGE);
+		tuples = reg_len / tuple_size;
+		if (tuples + nmr > *countp)
+			return (ERANGE);
+
+		if (OF_getprop(node, "reg", reg, reg_len) <= 0)
+			return (ENXIO);
+
+		if (OF_getencprop(node, "numa-node-id", &domain,
+		    sizeof(domain)) <= 0)
+			domain = 0;
+
+		regp = (pcell_t *)&reg;
+		for (i = 0; i < tuples; i++, nmr++) {
+			rv = fdt_data_to_res(regp, addr_cells, size_cells,
+			    &fdtmr[nmr].start, &fdtmr[nmr].size);
+			if (rv != 0)
+				return (rv);
+			fdtmr[nmr].domain = domain;
+		}
+	}
+	*countp = nmr;
+	return (0);
+}
+
 int
 fdt_get_mem_regions(struct mem_region *mr, int *mrcnt, uint64_t *memsize)
 {
-	pcell_t reg[FDT_REG_CELLS * FDT_MEM_REGIONS];
-	pcell_t *regp;
-	phandle_t memory;
-	uint64_t memory_size;
-	int addr_cells, size_cells;
-	int i, reg_len, rv, tuple_size, tuples;
+	struct fdt_mem_region fdtmr[FDT_MEM_REGIONS];
+	int count, i, rv;
 
-	memory = OF_finddevice("/memory");
-	if (memory == -1) {
-		rv = ENXIO;
-		goto out;
-	}
+	count = FDT_MEM_REGIONS;
+	if ((rv = get_mem_regions(fdtmr, &count)) != 0)
+		return (rv);
 
-	if ((rv = fdt_addrsize_cells(OF_parent(memory), &addr_cells,
-	    &size_cells)) != 0)
-		goto out;
-
-	if (addr_cells > 2) {
-		rv = ERANGE;
-		goto out;
-	}
-
-	tuple_size = sizeof(pcell_t) * (addr_cells + size_cells);
-	reg_len = OF_getproplen(memory, "reg");
-	if (reg_len <= 0 || reg_len > sizeof(reg)) {
-		rv = ERANGE;
-		goto out;
-	}
-
-	if (OF_getprop(memory, "reg", reg, reg_len) <= 0) {
-		rv = ENXIO;
-		goto out;
-	}
-
-	memory_size = 0;
-	tuples = reg_len / tuple_size;
-	regp = (pcell_t *)&reg;
-	for (i = 0; i < tuples; i++) {
-
-		rv = fdt_data_to_res(regp, addr_cells, size_cells,
-			(u_long *)&mr[i].mr_start, (u_long *)&mr[i].mr_size);
-
-		if (rv != 0)
-			goto out;
-
-		regp += addr_cells + size_cells;
-		memory_size += mr[i].mr_size;
-	}
-
-	if (memory_size == 0) {
-		rv = ERANGE;
-		goto out;
-	}
-
-	*mrcnt = i;
+	*mrcnt = count;
 	if (memsize != NULL)
-		*memsize = memory_size;
-	rv = 0;
-out:
-	return (rv);
+		*memsize = 0;
+	for (i = 0; i < count; i++) {
+		mr[i].mr_start = fdtmr[i].start;
+		mr[i].mr_size = fdtmr[i].size;
+		if (memsize != NULL)
+			*memsize += fdtmr[i].size;
+	}
+	return (0);
+}
+
+/*
+ * Walk the list of memory regions and populate the mem_info array with
+ * information describing each physical memory segment and the associated NUMA
+ * domain.  Return the number of NUMA domains.  This assumes that the set of
+ * numa-node-id values is dense.
+ */
+int
+fdt_get_mem_domains(struct mem_affinity *mem_info, int count)
+{
+	struct fdt_mem_region fdtmr[FDT_MEM_REGIONS];
+	int fdtcount, i, maxdomain, rv;
+
+	fdtcount = FDT_MEM_REGIONS;
+	if ((rv = get_mem_regions(fdtmr, &fdtcount)) != 0)
+		return (0);
+	if (fdtcount > count)
+		return (0);
+
+	maxdomain = 0;
+	for (i = 0; i < fdtcount; i++) {
+		mem_info[i].start = fdtmr[i].start;
+		mem_info[i].end = fdtmr[i].start + fdtmr[i].size;
+		mem_info[i].domain = fdtmr[i].domain;
+		if (mem_info[i].domain > maxdomain)
+			maxdomain = mem_info[i].domain;
+	}
+	return (maxdomain + 1);
 }
 
 int

@@ -1152,8 +1152,9 @@ initarm(struct arm64_bootparams *abp)
 	struct pcpu *pcpup;
 	char *env;
 #ifdef FDT
+	static struct mem_affinity mem_affinity[VM_PHYSSEG_MAX + 1];
 	struct mem_region mem_regions[FDT_MEM_REGIONS];
-	int mem_regions_sz;
+	int mem_regions_sz, ndomains;
 #endif
 	vm_offset_t lastaddr;
 	caddr_t kmdp;
@@ -1193,6 +1194,14 @@ initarm(struct arm64_bootparams *abp)
 	if (fdt_get_reserved_mem(mem_regions, &mem_regions_sz) == 0)
 		physmem_exclude_regions(mem_regions, mem_regions_sz,
 		    EXFLAG_NODUMP | EXFLAG_NOALLOC);
+
+	/*
+	 * Populate the physical memory allocator with NUMA locality
+	 * information.  This may be overridden later during boot.
+	 */
+	ndomains = fdt_get_mem_domains(mem_affinity, (int)nitems(mem_affinity));
+	if (ndomains > 1)
+		vm_phys_register_domains(ndomains, mem_affinity, NULL);
 #endif
 
 	/* Exclude the EFI framebuffer from our view of physical memory. */
