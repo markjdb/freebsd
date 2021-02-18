@@ -209,6 +209,8 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 #define	NI_LCF_BENEATH_ABS	0x0004	/* BENEATH with absolute path */
 #define	NI_LCF_BENEATH_LATCHED	0x0008	/* BENEATH_ABS traversed starting dir */
 #define	NI_LCF_LATCH		0x0010	/* ni_beneath_latch valid */
+#define	NI_LCF_OPER_BENEATH	0x0020	/* operate as if BENEATH specified */
+#define	NI_LCF_OPER_RBENEATH	0x0040	/* operate as if RENEATH specified */
 
 /*
  * Initialization of a nameidata structure.

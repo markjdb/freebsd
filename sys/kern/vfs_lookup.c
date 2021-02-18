@@ -182,8 +182,8 @@ nameicap_tracker_add(struct nameidata *ndp, struct vnode *dp)
 	if ((ndp->ni_lcf & NI_LCF_CAP_DOTDOT) == 0 || dp->v_type != VDIR)
 		return;
 	cnp = &ndp->ni_cnd;
-	if ((cnp->cn_flags & BENEATH) != 0 &&
-	    (ndp->ni_lcf & NI_LCF_BENEATH_LATCHED) == 0) {
+	if ((ndp->ni_lcf & (NI_LCF_OPER_BENEATH | NI_LCF_BENEATH_LATCHED)) ==
+	    NI_LCF_OPER_BENEATH) {
 		MPASS((ndp->ni_lcf & NI_LCF_LATCH) != 0);
 		if (dp != ndp->ni_beneath_latch)
 			return;
@@ -230,9 +230,10 @@ nameicap_check_dotdot(struct nameidata *ndp, struct vnode *dp)
 	struct nameicap_tracker *nt;
 	struct mount *mp;
 
-	if ((ndp->ni_lcf & NI_LCF_CAP_DOTDOT) == 0 || dp == NULL ||
-	    dp->v_type != VDIR)
+	if (dp == NULL || dp->v_type != VDIR)
 		return (0);
+	if ((ndp->ni_lcf & NI_LCF_CAP_DOTDOT) == 0)
+		return (ENOTCAPABLE);
 	mp = dp->v_mount;
 	if (lookup_cap_dotdot_nonlocal == 0 && mp != NULL &&
 	    (mp->mnt_flag & MNT_LOCAL) == 0)
@@ -275,7 +276,7 @@ namei_handle_root(struct nameidata *ndp, struct vnode **dpp)
 #endif
 		return (ENOTCAPABLE);
 	}
-	if ((cnp->cn_flags & BENEATH) != 0) {
+	if ((ndp->ni_lcf & NI_LCF_OPER_BENEATH) != 0) {
 		ndp->ni_lcf |= NI_LCF_BENEATH_ABS;
 		ndp->ni_lcf &= ~NI_LCF_BENEATH_LATCHED;
 		nameicap_cleanup(ndp, false);
@@ -308,6 +309,11 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	*pwdp = NULL;
 	*dpp = NULL;
 
+	if ((cnp->cn_flags & RBENEATH) != 0)
+		ndp->ni_lcf |= NI_LCF_OPER_RBENEATH;
+	else if ((cnp->cn_flags & BENEATH) != 0)
+		ndp->ni_lcf |= NI_LCF_OPER_BENEATH;
+
 #ifdef CAPABILITY_MODE
 	/*
 	 * In capability mode, lookups must be restricted to happen in
@@ -323,6 +329,10 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	 *   the relative root.
 	 */
 	if (IN_CAPABILITY_MODE(td) && (cnp->cn_flags & NOCAPCHECK) == 0) {
+		if ((ndp->ni_lcf & NI_LCF_OPER_BENEATH) != 0) {
+			ndp->ni_lcf &= ~NI_LCF_OPER_BENEATH;
+			ndp->ni_lcf |= NI_LCF_OPER_RBENEATH;
+		}
 		ndp->ni_lcf |= NI_LCF_STRICTRELATIVE;
 		ndp->ni_resflags |= NIRES_STRICTREL;
 		if (ndp->ni_dirfd == AT_FDCWD) {
@@ -410,7 +420,7 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 		if (error == 0 && (*dpp)->v_type != VDIR)
 			error = ENOTDIR;
 	}
-	if (error == 0 && (cnp->cn_flags & BENEATH) != 0) {
+	if (error == 0 && (ndp->ni_lcf & NI_LCF_OPER_BENEATH) != 0) {
 		if (ndp->ni_dirfd == AT_FDCWD) {
 			ndp->ni_beneath_latch = pwd->pwd_cdir;
 			vrefact(ndp->ni_beneath_latch);
@@ -427,7 +437,7 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 		if (error == 0)
 			ndp->ni_lcf |= NI_LCF_LATCH;
 	}
-	if (error == 0 && (cnp->cn_flags & RBENEATH) != 0) {
+	if (error == 0 && (ndp->ni_lcf & NI_LCF_OPER_RBENEATH) != 0) {
 		if (cnp->cn_pnbuf[0] == '/' ||
 		    (ndp->ni_lcf & NI_LCF_BENEATH_ABS) != 0) {
 			error = EINVAL;
@@ -456,8 +466,8 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	    NI_LCF_BENEATH_ABS);
 	if (((ndp->ni_lcf & NI_LCF_STRICTRELATIVE) != 0 &&
 	    lookup_cap_dotdot != 0) ||
-	    ((ndp->ni_lcf & NI_LCF_STRICTRELATIVE) == 0 &&
-	    (cnp->cn_flags & BENEATH) != 0))
+	    (ndp->ni_lcf & (NI_LCF_STRICTRELATIVE | NI_LCF_OPER_BENEATH)) ==
+	    NI_LCF_OPER_BENEATH)
 		ndp->ni_lcf |= NI_LCF_CAP_DOTDOT;
 	SDT_PROBE4(vfs, namei, lookup, entry, *dpp, cnp->cn_pnbuf,
 	    cnp->cn_flags, false);
