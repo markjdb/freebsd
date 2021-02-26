@@ -269,6 +269,13 @@ crypto_cursor_init(struct crypto_buffer_cursor *cc,
 	}
 }
 
+void
+crypto_cursor_copy(const struct crypto_buffer_cursor *fromc,
+    struct crypto_buffer_cursor *toc)
+{
+	memcpy(toc, fromc, sizeof(struct crypto_buffer_cursor));
+}
+
 SDT_PROBE_DEFINE2(opencrypto, criov, cursor_advance, vmpage, "struct crypto_buffer_cursor*", "size_t");
 
 void

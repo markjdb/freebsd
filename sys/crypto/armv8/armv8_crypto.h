@@ -90,10 +90,17 @@ int armv8_aes_decrypt_gcm(AES_key_t *, size_t, const uint8_t *,
     const uint8_t tag[static GMAC_DIGEST_LEN],
     const uint8_t[static AES_BLOCK_LEN],
     const __uint128_val_t *);
+int armv8_aes_decrypt_gcm_cursor(AES_key_t *, size_t,
+    struct crypto_buffer_cursor *, struct crypto_buffer_cursor *,
+    size_t, const uint8_t *, const uint8_t tag[static GMAC_DIGEST_LEN],
+    const uint8_t[static AES_BLOCK_LEN],
+    const __uint128_val_t *);
 
 void armv8_aes_encrypt_xts(AES_key_t *, const void *, size_t,
-    const uint8_t *, uint8_t *, const uint8_t[AES_BLOCK_LEN]);
+    struct crypto_buffer_cursor *, struct crypto_buffer_cursor *,
+    const uint8_t[AES_BLOCK_LEN]);
 void armv8_aes_decrypt_xts(AES_key_t *, const void *, size_t,
-    const uint8_t *, uint8_t *, const uint8_t[AES_BLOCK_LEN]);
+    struct crypto_buffer_cursor *, struct crypto_buffer_cursor *,
+    const uint8_t[AES_BLOCK_LEN]);
 
 #endif /* _ARMV8_CRYPTO_H_ */

@@ -380,19 +380,16 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 	struct crypto_buffer_cursor fromc, toc;
 	const struct crypto_session_params *csp;
 	struct fpu_kern_ctx *ctx;
-	uint8_t *buf, *authbuf, *outbuf;
+	uint8_t *authbuf;
 	uint8_t iv[AES_BLOCK_LEN], tag[GMAC_DIGEST_LEN];
-	int allocated, authallocated, outallocated, i;
+	int authallocated, i;
 	int encflag;
 	int kt;
 	int error;
-	bool outcopy;
 
 	csp = crypto_get_params(crp->crp_session);
 	encflag = CRYPTO_OP_IS_ENCRYPT(crp->crp_op);
 
-	allocated = 0;
-	outallocated = 0;
 	authallocated = 0;
 	authbuf = NULL;
 	kt = 1;
@@ -408,15 +405,16 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 			goto out;
 		}
 	}
-	if (encflag && csp->csp_cipher_alg == CRYPTO_AES_NIST_GCM_16 && CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
-		crypto_cursor_init(&fromc, &crp->crp_buf);
-		crypto_cursor_advance(&fromc, crp->crp_payload_start);
-		if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
-			crypto_cursor_init(&toc, &crp->crp_obuf);
-			crypto_cursor_advance(&toc, crp->crp_payload_output_start);
-		}
-		outcopy = false;
-	} else if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+	crypto_cursor_init(&fromc, &crp->crp_buf);
+	crypto_cursor_advance(&fromc, crp->crp_payload_start);
+	if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
+		crypto_cursor_init(&toc, &crp->crp_obuf);
+		crypto_cursor_advance(&toc, crp->crp_payload_output_start);
+	} else {
+		crypto_cursor_copy(&fromc, &toc);
+	}
+#if 0
+	else if (CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
 		buf = armv8_crypto_cipher_alloc(crp, crp->crp_payload_start,
 		    crp->crp_payload_length, &allocated);
 		if (buf == NULL)
@@ -446,6 +444,7 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 		outbuf = buf;
 		outcopy = allocated;
 	}
+#endif
 
 	kt = is_fpu_kern_thread(0);
 	if (!kt) {
@@ -461,7 +460,6 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 
 	crypto_read_iv(crp, iv);
 
-	/* Do work */
 	switch (csp->csp_cipher_alg) {
 	case CRYPTO_AES_CBC:
 		if ((crp->crp_payload_length % AES_BLOCK_LEN) != 0) {
@@ -469,23 +467,41 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 			goto out;
 		}
 		if (encflag)
-			armv8_aes_encrypt_cbc(&ses->enc_schedule,
-			    crp->crp_payload_length, buf, buf, iv);
+			armv8_aes_encrypt_cbc_cursor(&ses->enc_schedule,
+			    crp->crp_payload_length, &fromc, &toc, iv);
 		else
-			armv8_aes_decrypt_cbc(&ses->dec_schedule,
-			    crp->crp_payload_length, buf, iv);
+			armv8_aes_decrypt_cbc_cursor(&ses->dec_schedule,
+			    crp->crp_payload_length, &fromc, &toc, iv);
 		break;
 	case CRYPTO_AES_XTS:
 		if (encflag)
 			armv8_aes_encrypt_xts(&ses->enc_schedule,
-			    &ses->xts_schedule.aes_key, crp->crp_payload_length, buf,
-			    buf, iv);
+			    &ses->xts_schedule.aes_key, crp->crp_payload_length,
+			    &fromc, &toc, iv);
 		else
 			armv8_aes_decrypt_xts(&ses->dec_schedule,
-			    &ses->xts_schedule.aes_key, crp->crp_payload_length, buf,
-			    buf, iv);
+			    &ses->xts_schedule.aes_key, crp->crp_payload_length,
+			    &fromc, &toc, iv);
 		break;
 	case CRYPTO_AES_NIST_GCM_16:
+		if (encflag) {
+			memset(tag, 0, sizeof(tag));
+			armv8_aes_encrypt_gcm_cursor(&ses->enc_schedule,
+			    crp->crp_payload_length, &fromc, &toc,
+			    crp->crp_aad_length, authbuf, tag, iv, ses->Htable);
+			crypto_copyback(crp, crp->crp_digest_start, sizeof(tag),
+			    tag);
+		} else {
+			crypto_copydata(crp, crp->crp_digest_start, sizeof(tag),
+			    tag);
+			error = armv8_aes_decrypt_gcm_cursor(&ses->enc_schedule,
+			    crp->crp_payload_length, &fromc, &toc,
+			    crp->crp_aad_length, authbuf, tag, iv, ses->Htable);
+			if (error != 0)
+				goto out;
+		}
+
+#if 0
 		if (encflag && CRYPTO_HAS_OUTPUT_BUFFER(crp)) {
 			memset(tag, 0, sizeof(tag));
 			armv8_aes_encrypt_gcm_cursor(&ses->enc_schedule,
@@ -516,13 +532,9 @@ armv8_crypto_cipher_process(struct armv8_crypto_session *ses,
 				goto out;
 			}
 		}
+#endif
 		break;
 	}
-
-	if (outcopy)
-		crypto_copyback(crp, CRYPTO_HAS_OUTPUT_BUFFER(crp) ?
-		    crp->crp_payload_output_start : crp->crp_payload_start,
-		    crp->crp_payload_length, outbuf);
 
 	error = 0;
 out:
@@ -531,12 +543,8 @@ out:
 		RELEASE_CTX(i, ctx);
 	}
 
-	if (allocated)
-		zfree(buf, M_ARMV8_CRYPTO);
 	if (authallocated)
 		zfree(authbuf, M_ARMV8_CRYPTO);
-	if (outallocated)
-		zfree(outbuf, M_ARMV8_CRYPTO);
 	explicit_bzero(iv, sizeof(iv));
 	explicit_bzero(tag, sizeof(tag));
 

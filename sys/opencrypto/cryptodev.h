@@ -698,6 +698,8 @@ void	*crypto_buffer_contiguous_subsegment(struct crypto_buffer *cb,
 size_t	crypto_buffer_len(struct crypto_buffer *cb);
 void	crypto_cursor_init(struct crypto_buffer_cursor *cc,
 	    const struct crypto_buffer *cb);
+void	crypto_cursor_copy(const struct crypto_buffer_cursor *fromc,
+	    struct crypto_buffer_cursor *toc);
 void	crypto_cursor_advance(struct crypto_buffer_cursor *cc, size_t amount);
 void	*crypto_cursor_segbase(struct crypto_buffer_cursor *cc);
 size_t	crypto_cursor_seglen(struct crypto_buffer_cursor *cc);
