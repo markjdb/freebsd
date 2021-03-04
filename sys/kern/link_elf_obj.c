@@ -375,6 +375,8 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 #ifdef __amd64__
 		case SHT_X86_64_UNWIND:
 #endif
+		case SHT_INIT_ARRAY:
+		case SHT_FINI_ARRAY:
 			/* Ignore sections not loaded by the loader. */
 			if (shdr[i].sh_addr == 0)
 				break;
@@ -459,6 +461,7 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 #ifdef __amd64__
 		case SHT_X86_64_UNWIND:
 #endif
+		case SHT_FINI_ARRAY:
 			if (shdr[i].sh_addr == 0)
 				break;
 			ef->progtab[pb].addr = (void *)shdr[i].sh_addr;
@@ -468,6 +471,10 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 			else if (shdr[i].sh_type == SHT_X86_64_UNWIND)
 				ef->progtab[pb].name = "<<UNWIND>>";
 #endif
+			else if (shdr[i].sh_type == SHT_INIT_ARRAY)
+				ef->progtab[pb].name = "<<INIT_ARRAY>>";
+			else if (shdr[i].sh_type == SHT_FINI_ARRAY)
+				ef->progtab[pb].name = "<<FINI_ARRAY>>";
 			else
 				ef->progtab[pb].name = "<<NOBITS>>";
 			ef->progtab[pb].size = shdr[i].sh_size;
@@ -514,10 +521,17 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 				vnet_data_copy(vnet_data, shdr[i].sh_size);
 				ef->progtab[pb].addr = vnet_data;
 #endif
-			} else if (ef->progtab[pb].name != NULL &&
-			    !strcmp(ef->progtab[pb].name, ".ctors")) {
-				lf->ctors_addr = ef->progtab[pb].addr;
-				lf->ctors_size = shdr[i].sh_size;
+			} else if ((ef->progtab[pb].name != NULL &&
+			    strcmp(ef->progtab[pb].name, ".ctors") == 0) ||
+			    shdr[i].sh_type == SHT_INIT_ARRAY) {
+				if (lf->ctors_addr != 0) {
+					printf(
+				    "%s: multiple ctor sections in %s\n",
+					    __func__, filename);
+				} else {
+					lf->ctors_addr = ef->progtab[pb].addr;
+					lf->ctors_size = shdr[i].sh_size;
+				}
 			}
 
 			/* Update all symbol values with the offset. */
@@ -752,6 +766,8 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 #ifdef __amd64__
 		case SHT_X86_64_UNWIND:
 #endif
+		case SHT_INIT_ARRAY:
+		case SHT_FINI_ARRAY:
 			if ((shdr[i].sh_flags & SHF_ALLOC) == 0)
 				break;
 			ef->nprogtab++;
@@ -873,6 +889,8 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 #ifdef __amd64__
 		case SHT_X86_64_UNWIND:
 #endif
+		case SHT_INIT_ARRAY:
+		case SHT_FINI_ARRAY:
 			if ((shdr[i].sh_flags & SHF_ALLOC) == 0)
 				break;
 			alignmask = shdr[i].sh_addralign - 1;
@@ -946,6 +964,8 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 #ifdef __amd64__
 		case SHT_X86_64_UNWIND:
 #endif
+		case SHT_INIT_ARRAY:
+		case SHT_FINI_ARRAY:
 			if ((shdr[i].sh_flags & SHF_ALLOC) == 0)
 				break;
 			alignmask = shdr[i].sh_addralign - 1;
@@ -954,9 +974,18 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 			if (ef->shstrtab != NULL && shdr[i].sh_name != 0) {
 				ef->progtab[pb].name =
 				    ef->shstrtab + shdr[i].sh_name;
-				if (!strcmp(ef->progtab[pb].name, ".ctors")) {
-					lf->ctors_addr = (caddr_t)mapbase;
-					lf->ctors_size = shdr[i].sh_size;
+				if (!strcmp(ef->progtab[pb].name, ".ctors") ||
+				    shdr[i].sh_type == SHT_INIT_ARRAY) {
+					if (lf->ctors_addr != 0) {
+						printf(
+				    "%s: multiple ctor sections in %s\n",
+						    __func__, filename);
+					} else {
+						lf->ctors_addr =
+						    (caddr_t)mapbase;
+						lf->ctors_size =
+						    shdr[i].sh_size;
+					}
 				}
 			} else if (shdr[i].sh_type == SHT_PROGBITS)
 				ef->progtab[pb].name = "<<PROGBITS>>";
