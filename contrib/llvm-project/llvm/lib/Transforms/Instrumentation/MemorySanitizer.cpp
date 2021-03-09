@@ -511,7 +511,7 @@ private:
   void createKernelApi(Module &M);
   void createUserspaceApi(Module &M);
 
-  /// True if we're compiling the Linux kernel.
+  /// True if we're compiling a Linux or BSD kernel.
   bool CompileKernel;
   /// Track origins (allocation points) of uninitialized values.
   int TrackOrigins;
