@@ -957,6 +957,23 @@ vm_fault_cow(struct faultstate *fs)
 		 */
 		fs->m_cow = fs->m;
 		fs->m = NULL;
+
+		/*
+		 * The backing object may be mapped read-only in a different
+		 * address space.  Tear down any such mappings now to ensure
+		 * that the page in the shadow is used instead.
+		 *
+		 * The flag check is racy, but this is tolerable: if
+		 * OBJ_ONEMAPPING is cleared after the check, the busy state
+		 * ensures that new mappings of m_cow can't be created.
+		 * pmap_enter() will replace an existing mapping in the current
+		 * address space.  If OBJ_ONEMAPPING is set after the check,
+		 * removing mappings will at worse trigger some unnecessary page
+		 * faults.
+		 */
+		vm_page_assert_xbusied(fs->m_cow);
+		if ((fs->first_object->flags & OBJ_ONEMAPPING) == 0)
+			pmap_remove_all(fs->m_cow);
 	}
 	/*
 	 * fs->object != fs->first_object due to above 
