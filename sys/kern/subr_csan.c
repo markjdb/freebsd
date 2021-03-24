@@ -350,13 +350,6 @@ kcsan_strlen(const char *str)
 	return (s - str);
 }
 
-#undef copystr
-#undef copyin
-#undef copyin_nofault
-#undef copyinstr
-#undef copyout
-#undef copyout_nofault
-
 int
 kcsan_copystr(const void *kfaddr, void *kdaddr, size_t len, size_t *done)
 {
