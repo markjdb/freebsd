@@ -2293,8 +2293,7 @@ dsp_stdclone(char *name, char *namep, char *sep, int use_sep, int *u, int *c)
 	size_t len;
 
 	len = strlen(namep);
-
-	if (bcmp(name, namep, len) != 0)
+	if (strncmp(name, namep, len) != 0)
 		return (ENODEV);
 
 	name += len;
