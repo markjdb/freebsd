@@ -187,6 +187,12 @@
  */
 #define NKPML4E		4
 
+/*
+ * Number of PML4 slots for the KASAN shadow map.  It requires 1 byte of memory
+ * for every 8 bytes of the kernel address space.
+ */
+#define	NKASANPML4E	((NKPML4E + 7) / 8)
+
 #define	NUPML4E		(NPML4EPG/2)	/* number of userland PML4 pages */
 #define	NUPDPE		(NUPML4E*NPDPEPG)/* number of userland PDP pages */
 #define	NUPDE		(NUPDPE*NPDEPG)	/* number of userland PD entries */
@@ -224,9 +230,11 @@
 #define	KPML4I		(NPML4EPG-1)
 #define	KPDPI		(NPDPEPG-2)	/* kernbase at -2GB */
 
+#define	KASANPML4I	(DMPML4I - NKASANPML4E) /* Below the direct map */
+
 /* Large map: index of the first and max last pml4 entry */
 #define	LMSPML4I	(PML4PML4I + 1)
-#define	LMEPML4I	(DMPML4I - 1)
+#define	LMEPML4I	(KASANPML4I - 1)
 
 /*
  * XXX doesn't really belong here I guess...
@@ -471,6 +479,11 @@ int	pmap_pkru_set(pmap_t pmap, vm_offset_t sva, vm_offset_t eva,
 	    u_int keyidx, int flags);
 void	pmap_thread_init_invl_gen(struct thread *td);
 int	pmap_vmspace_copy(pmap_t dst_pmap, pmap_t src_pmap);
+
+#ifdef KASAN
+void	pmap_kasan_enter(vm_offset_t);
+#endif
+
 #endif /* _KERNEL */
 
 /* Return various clipped indexes for a given VA */
