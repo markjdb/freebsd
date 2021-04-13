@@ -275,6 +275,12 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
 					 * effort first-touch policy.
 					 */
 
+#define	UMA_ZONE_NOKASAN	0x80000	/*
+					 * Disable KASAN verification.  This is
+					 * implied by NOFREE.  Cache zones are
+					 * not verified by default.
+					 */
+
 /*
  * These flags are shared between the keg and zone.  In zones wishing to add
  * new kegs these flags must be compatible.  Some are determined based on
@@ -282,7 +288,7 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
  */
 #define	UMA_ZONE_INHERIT						\
     (UMA_ZONE_OFFPAGE | UMA_ZONE_MALLOC | UMA_ZONE_NOFREE |		\
-    UMA_ZONE_HASH | UMA_ZONE_VTOSLAB | UMA_ZONE_PCPU)
+    UMA_ZONE_HASH | UMA_ZONE_VTOSLAB | UMA_ZONE_PCPU | UMA_ZONE_NOKASAN)
 
 /* Definitions for align */
 #define UMA_ALIGN_PTR	(sizeof(void *) - 1)	/* Alignment fit for ptr */
