@@ -112,6 +112,7 @@ CFLAGS.gcc+=	-falign-functions=16
 .if ${PROFLEVEL} >= 2
 CFLAGS+=	-DGPROF4 -DGUPROF
 PROF=		-pg
+
 .if ${COMPILER_TYPE} == "gcc"
 PROF+=		-mprofiler-epilogue
 .endif
@@ -120,6 +121,17 @@ PROF=		-pg
 .endif
 .endif
 DEFINED_PROF=	${PROF}
+
+KASAN_ENABLED!=	grep KASAN opt_global.h || true ; echo
+.if !empty(KASAN_ENABLED)
+SAN_CFLAGS+=	-fsanitize=kernel-address \
+		-mllvm -asan-stack=true \
+		-mllvm -asan-instrument-dynamic-allocas=true \
+		-mllvm -asan-globals=true \
+		-mllvm -asan-use-after-scope=true \
+		-mllvm -asan-instrumentation-with-call-threshold=0
+.endif
+CFLAGS+=	${SAN_CFLAGS}
 
 # Put configuration-specific C flags last (except for ${PROF}) so that they
 # can override the others.
