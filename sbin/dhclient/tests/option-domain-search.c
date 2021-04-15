@@ -5,12 +5,14 @@
 
 #include "dhcpd.h"
 
+extern jmp_buf env;
+
 jmp_buf env;
 
 void	expand_domain_search(struct packet *packet);
 
-void
-no_option_present()
+static void
+no_option_present(void)
 {
 	int ret;
 	struct option_data option;
@@ -29,15 +31,15 @@ no_option_present()
 		abort();
 }
 
-void
-one_domain_valid()
+static void
+one_domain_valid(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data     = "\007example\003org\0";
-	char *expected = "example.org.";
+	const char *data     = "\007example\003org\0";
+	const char *expected = "example.org.";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 13;
@@ -55,14 +57,14 @@ one_domain_valid()
 	free(option->data);
 }
 
-void
-one_domain_truncated1()
+static void
+one_domain_truncated1(void)
 {
 	int ret;
 	struct option_data *option;
 	struct packet p;
 
-	char *data = "\007example\003org";
+	const char *data = "\007example\003org";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 12;
@@ -79,14 +81,14 @@ one_domain_truncated1()
 	free(option->data);
 }
 
-void
-one_domain_truncated2()
+static void
+one_domain_truncated2(void)
 {
 	int ret;
 	struct option_data *option;
 	struct packet p;
 
-	char *data = "\007ex";
+	const char *data = "\007ex";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 3;
@@ -103,15 +105,15 @@ one_domain_truncated2()
 	free(option->data);
 }
 
-void
-two_domains_valid()
+static void
+two_domains_valid(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data     = "\007example\003org\0\007example\003com\0";
-	char *expected = "example.org. example.com.";
+	const char *data     = "\007example\003org\0\007example\003com\0";
+	const char *expected = "example.org. example.com.";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 26;
@@ -129,14 +131,14 @@ two_domains_valid()
 	free(option->data);
 }
 
-void
-two_domains_truncated1()
+static void
+two_domains_truncated1(void)
 {
 	int ret;
 	struct option_data *option;
 	struct packet p;
 
-	char *data = "\007example\003org\0\007example\003com";
+	const char *data = "\007example\003org\0\007example\003com";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 25;
@@ -153,14 +155,14 @@ two_domains_truncated1()
 	free(option->data);
 }
 
-void
-two_domains_truncated2()
+static void
+two_domains_truncated2(void)
 {
 	int ret;
 	struct option_data *option;
 	struct packet p;
 
-	char *data = "\007example\003org\0\007ex";
+	const char *data = "\007example\003org\0\007ex";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 16;
@@ -177,15 +179,15 @@ two_domains_truncated2()
 	free(option->data);
 }
 
-void
-two_domains_compressed()
+static void
+two_domains_compressed(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data     = "\007example\003org\0\006foobar\xc0\x08";
-	char *expected = "example.org. foobar.org.";
+	const char *data     = "\007example\003org\0\006foobar\xc0\x08";
+	const char *expected = "example.org. foobar.org.";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 22;
@@ -203,14 +205,14 @@ two_domains_compressed()
 	free(option->data);
 }
 
-void
-two_domains_infloop()
+static void
+two_domains_infloop(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data = "\007example\003org\0\006foobar\xc0\x0d";
+	const char *data = "\007example\003org\0\006foobar\xc0\x0d";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 22;
@@ -227,14 +229,14 @@ two_domains_infloop()
 	free(option->data);
 }
 
-void
-two_domains_forwardptr()
+static void
+two_domains_forwardptr(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data = "\007example\003org\xc0\x0d\006foobar\0";
+	const char *data = "\007example\003org\xc0\x0d\006foobar\0";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 22;
@@ -251,14 +253,14 @@ two_domains_forwardptr()
 	free(option->data);
 }
 
-void
-two_domains_truncatedptr()
+static void
+two_domains_truncatedptr(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data = "\007example\003org\0\006foobar\xc0";
+	const char *data = "\007example\003org\0\006foobar\xc0";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 21;
@@ -275,17 +277,17 @@ two_domains_truncatedptr()
 	free(option->data);
 }
 
-void
-multiple_domains_valid()
+static void
+multiple_domains_valid(void)
 {
 	int ret;
 	struct packet p;
 	struct option_data *option;
 
-	char *data =
+	const char *data =
 	    "\007example\003org\0\002cl\006foobar\003com\0\002fr\xc0\x10";
 
-	char *expected = "example.org. cl.foobar.com. fr.foobar.com.";
+	const char *expected = "example.org. cl.foobar.com. fr.foobar.com.";
 
 	option = &p.options[DHO_DOMAIN_SEARCH];
 	option->len  = 33;
@@ -304,7 +306,7 @@ multiple_domains_valid()
 }
 
 int
-main(int argc, char *argv[])
+main(void)
 {
 
 	no_option_present();

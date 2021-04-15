@@ -53,11 +53,11 @@ note(const char *fmt, ...)
 }
 
 void
-bootp(struct packet *packet)
+bootp(struct packet *packet __unused)
 {
 }
 
 void
-dhcp(struct packet *packet)
+dhcp(struct packet *packet __unused)
 {
 }

@@ -8,6 +8,4 @@ SRCS.option-domain-search_test=		alloc.c convert.c hash.c options.c \
 CFLAGS.option-domain-search_test+=	-I${.CURDIR:H}
 LIBADD.option-domain-search_test=	util
 
-WARNS?=	2
-
 .include <bsd.test.mk>
