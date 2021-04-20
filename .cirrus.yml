@@ -22,6 +22,7 @@ task:
   - chown user:user /usr/obj/$(pwd -P)
   script:
   - su user -c "make -j$(sysctl -n hw.ncpu) CROSS_TOOLCHAIN=llvm11 WITHOUT_TOOLCHAIN=yes buildworld buildkernel"
+  - su user -c "make -j$(sysctl -n hw.ncpu) WITHOUT_TOOLCHAIN=yes packages PKG_FORMAT=tzst"
   post_script:
   - df -m
   - du -m -s /usr/obj
