@@ -73,7 +73,7 @@ MTX_SYSINIT(nmi_lock, &nmi_lock, "stack_nmi", MTX_SPIN);
 #endif
 #endif
 
-static void
+static void __nosanitizeaddress
 stack_capture(struct thread *td, struct stack *st, register_t fp)
 {
 	x86_frame_t frame;
