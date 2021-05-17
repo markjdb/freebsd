@@ -270,6 +270,26 @@ dt_decl_attr(ushort_t attr)
 		return (ddp);
 	}
 
+	if ((attr & DT_DA_LONG) && (ddp->dd_attr & DT_DA_LONGLONG)) {
+		xyerror(D_DECL_COMBO, "the attribute 'long' may only "
+		    "be used at most twice in a declaration");
+	}
+
+	if ((attr & DT_DA_SHORT) && (ddp->dd_attr & DT_DA_SHORT)) {
+		xyerror(D_DECL_COMBO, "the attribute 'short' may only be "
+		    "used at most once in a declaration");
+	}
+
+	if ((attr & DT_DA_SIGNED) && (ddp->dd_attr & DT_DA_SIGNED)) {
+		xyerror(D_DECL_COMBO, "the attribute 'signed' may only be "
+		    "used at most once in a declaration");
+	}
+
+	if ((attr & DT_DA_UNSIGNED) && (ddp->dd_attr & DT_DA_UNSIGNED)) {
+		xyerror(D_DECL_COMBO, "the attribute 'unsigned' may only be "
+		    "used at most once in a declaration");
+	}
+
 	if (attr == DT_DA_LONG && (ddp->dd_attr & DT_DA_LONG)) {
 		ddp->dd_attr &= ~DT_DA_LONG;
 		attr = DT_DA_LONGLONG;
@@ -635,7 +655,7 @@ dt_decl_member(dt_node_t *dnp)
 	}
 
 	if (ctf_add_member(dsp->ds_ctfp, dsp->ds_type,
-	    ident, dtt.dtt_type) == CTF_ERR) {
+	    ident, dtt.dtt_type, ULONG_MAX) == CTF_ERR) {
 		xyerror(D_UNKNOWN, "failed to define member '%s': %s\n",
 		    idname, ctf_errmsg(ctf_errno(dsp->ds_ctfp)));
 	}
@@ -677,7 +697,7 @@ dt_decl_enum(char *name)
 	if (name != NULL && (type = ctf_lookup_by_name(ctfp, n)) != CTF_ERR) {
 		if (ctf_enum_iter(ctfp, type, dt_decl_hasmembers, NULL))
 			xyerror(D_DECL_TYPERED, "type redeclared: %s\n", n);
-	} else if ((type = ctf_add_enum(ctfp, flag, name)) == CTF_ERR) {
+	} else if ((type = ctf_add_enum(ctfp, flag, name, 0)) == CTF_ERR) {
 		xyerror(D_UNKNOWN, "failed to define %s: %s\n",
 		    n, ctf_errmsg(ctf_errno(ctfp)));
 	}

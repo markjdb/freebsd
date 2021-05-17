@@ -2245,7 +2245,7 @@ _bootstrap_tools_links+=m4 lex
 # r338478 fixed a crash in objcopy for mips64el objects
 # r339083 libelf: correct mips64el test to use ELF header
 # r348347 Add missing powerpc64 relocation support to libdwarf
-.if ${BOOTSTRAPPING} < 1300030
+.if ${BOOTSTRAPPING} < 1400014
 _elftoolchain_libs= lib/libelf lib/libdwarf lib/libzstd
 ${_bt}-lib/libelf: ${_bt_m4_depend}
 ${_bt}-lib/libdwarf: ${_bt_m4_depend}
@@ -2891,6 +2891,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_kerberos5_lib_libroken} \
 		${_kerberos5_lib_libwind} \
 		lib/libbz2 ${_libcom_err} lib/libcrypt \
+		lib/libdwarf \
 		lib/libelf lib/libexpat \
 		lib/libfigpar \
 		${_lib_libgssapi} \
@@ -2930,6 +2931,7 @@ _prebuild_libs+= lib/libregex
 _prebuild_libs+= lib/libc++
 .endif
 
+lib/libdwarf__L: lib/libelf__L
 lib/libgeom__L: lib/libexpat__L lib/libsbuf__L
 lib/libkvm__L: lib/libelf__L
 
@@ -3006,7 +3008,7 @@ lib/libbe__L: cddl/lib/libzfs__L cddl/lib/libzfsbootenv__L
 .endif
 _cddl_lib_libctf= cddl/lib/libctf
 _cddl_lib= cddl/lib
-cddl/lib/libctf__L: lib/libz__L cddl/lib/libspl__L
+cddl/lib/libctf__L: lib/libdwarf__L lib/libelf__L lib/libz__L cddl/lib/libavl__L cddl/lib/libspl__L
 .endif
 # cddl/lib/libdtrace requires lib/libproc and lib/librtld_db
 _prebuild_libs+=	lib/libprocstat lib/libproc lib/librtld_db

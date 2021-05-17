@@ -24,8 +24,6 @@
  * Use is subject to license terms.
  */
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 #include <ctf_impl.h>
 #include <sys/mman.h>
 #include <stdarg.h>
@@ -55,9 +53,35 @@ ctf_alloc(size_t size)
 	return (malloc(size));
 }
 
+void *
+mergeq_alloc(size_t size)
+{
+	return (malloc(size));
+}
+
+void *
+workq_alloc(size_t size)
+{
+	return (malloc(size));
+}
+
 /*ARGSUSED*/
 void
 ctf_free(void *buf, __unused size_t size)
+{
+	free(buf);
+}
+
+/*ARGSUSED*/
+void
+mergeq_free(void *buf, size_t size)
+{
+	free(buf);
+}
+
+/*ARGSUSED*/
+void
+workq_free(void *buf, size_t size)
 {
 	free(buf);
 }

@@ -1419,13 +1419,13 @@ alloc:
 	 * Add intrinsic pointer types that are needed to initialize printf
 	 * format dictionary types (see table in dt_printf.c).
 	 */
-	(void) ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT,
+	(void) ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT, NULL,
 	    ctf_lookup_by_name(dmp->dm_ctfp, "void"));
 
-	(void) ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT,
+	(void) ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT, NULL,
 	    ctf_lookup_by_name(dmp->dm_ctfp, "char"));
 
-	(void) ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT,
+	(void) ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT, NULL,
 	    ctf_lookup_by_name(dmp->dm_ctfp, "int"));
 
 	if (ctf_update(dmp->dm_ctfp) != 0) {
@@ -1485,11 +1485,11 @@ alloc:
 	ctc.ctc_argc = 0;
 	ctc.ctc_flags = 0;
 
-	dtp->dt_type_func = ctf_add_function(dmp->dm_ctfp,
+	dtp->dt_type_func = ctf_add_funcptr(dmp->dm_ctfp,
 	    CTF_ADD_ROOT, &ctc, NULL);
 
-	dtp->dt_type_fptr = ctf_add_pointer(dmp->dm_ctfp,
-	    CTF_ADD_ROOT, dtp->dt_type_func);
+	dtp->dt_type_fptr = ctf_add_pointer(dmp->dm_ctfp, CTF_ADD_ROOT, NULL,
+	    dtp->dt_type_func);
 
 	/*
 	 * We also insert CTF definitions for the special D intrinsic types
