@@ -78,17 +78,19 @@ dwarf_siblingof_b(Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Die *ret_die,
 	}
 
 	ds = is_info ? dbg->dbg_info_sec : dbg->dbg_types_sec;
-	cu = is_info ? dbg->dbg_cu_current : dbg->dbg_tu_current;
-
-	if (cu == NULL) {
-		DWARF_SET_ERROR(dbg, error, DW_DLE_DIE_NO_CU_CONTEXT);
-		return (DW_DLV_ERROR);
-	}
 
 	/* Application requests the first DIE in this CU. */
-	if (die == NULL)
+	if (die == NULL) {
+		cu = is_info ? dbg->dbg_cu_current : dbg->dbg_tu_current;
+		if (cu == NULL) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_DIE_NO_CU_CONTEXT);
+			return (DW_DLV_ERROR);
+		}
 		return (dwarf_offdie_b(dbg, cu->cu_1st_offset, is_info,
 		    ret_die, error));
+	}
+
+	cu = die->die_cu;
 
 	/*
 	 * Check if the `is_info' flag matches the debug section the
