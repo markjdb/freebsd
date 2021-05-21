@@ -12,6 +12,7 @@ ATF_TESTS_C+=	kern_copyin
 ATF_TESTS_C+=	kern_descrip_test
 ATF_TESTS_C+=	fdgrowtable_test
 ATF_TESTS_C+=	kill_zombie
+ATF_TESTS_C+=	ktls_test
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
 ATF_TESTS_C+=	reaper
