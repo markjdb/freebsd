@@ -55,6 +55,11 @@ CFLAGS+=${CANCELPOINTS_CFLAGS}
 .endif
 
 #
+# Minimize overhead of TLS accesses.
+#
+CFLAGS+= -ftls-model=initial-exec
+
+#
 # Link with static libcompiler_rt.a.
 #
 LDFLAGS+= -nodefaultlibs
