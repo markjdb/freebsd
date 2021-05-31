@@ -300,9 +300,8 @@ crypto_init(void)
 	TAILQ_INIT(&crp_q);
 	mtx_init(&crypto_q_mtx, "crypto", "crypto op queues", MTX_DEF);
 
-	cryptop_zone = uma_zcreate("cryptop",
-	    sizeof(struct cryptop), NULL, NULL, NULL, NULL,
-	    UMA_ALIGN_PTR, UMA_ZONE_ZINIT);
+	cryptop_zone = uma_zcreate("cryptop", sizeof(struct cryptop),
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 
 	crypto_drivers_size = CRYPTO_DRIVERS_INITIAL;
 	crypto_drivers = malloc(crypto_drivers_size *
