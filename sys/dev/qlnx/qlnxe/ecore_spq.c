@@ -780,16 +780,17 @@ void ecore_spq_return_entry(struct ecore_hwfn *p_hwfn,
  * entry in the unlimited_pending pool.
  *
  * @param p_hwfn
- * @param p_ent
+ * @param p_entp
  * @param priority
  *
  * @return enum _ecore_status_t
  */
 static enum _ecore_status_t ecore_spq_add_entry(struct ecore_hwfn *p_hwfn,
-						struct ecore_spq_entry *p_ent,
+						struct ecore_spq_entry **p_entp,
 						enum spq_priority priority)
 {
-	struct ecore_spq	*p_spq	= p_hwfn->p_spq;
+	struct ecore_spq	*p_spq = p_hwfn->p_spq;
+	struct ecore_spq_entry	*p_ent = *p_entp;
 
 	if (p_ent->queue == &p_spq->unlimited_pending) {
 		if (OSAL_LIST_IS_EMPTY(&p_spq->free_pool)) {
@@ -820,6 +821,7 @@ static enum _ecore_status_t ecore_spq_add_entry(struct ecore_hwfn *p_hwfn,
 				OSAL_FREE(p_hwfn->p_dev, p_ent);
 
 			p_ent = p_en2;
+			*p_entp = p_ent;
 		}
 	}
 
@@ -913,7 +915,7 @@ enum _ecore_status_t ecore_spq_pend_post(struct ecore_hwfn *p_hwfn)
 #endif
 		OSAL_LIST_REMOVE_ENTRY(&p_ent->list, &p_spq->unlimited_pending);
 
-		ecore_spq_add_entry(p_hwfn, p_ent, p_ent->priority);
+		ecore_spq_add_entry(p_hwfn, &p_ent, p_ent->priority);
 	}
 
 	return ecore_spq_post_list(p_hwfn, &p_spq->pending,
@@ -956,7 +958,7 @@ enum _ecore_status_t ecore_spq_post(struct ecore_hwfn		*p_hwfn,
 		goto spq_post_fail;
 
 	/* Add the request to the pending queue */
-	rc = ecore_spq_add_entry(p_hwfn, p_ent, p_ent->priority);
+	rc = ecore_spq_add_entry(p_hwfn, &p_ent, p_ent->priority);
 	if (rc)
 		goto spq_post_fail;
 
