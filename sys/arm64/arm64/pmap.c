@@ -3518,7 +3518,7 @@ setl2:
 
 	if ((newl2 & (ATTR_S1_AP_RW_BIT | ATTR_SW_DBM)) ==
 	    (ATTR_S1_AP(ATTR_S1_AP_RO) | ATTR_SW_DBM)) {
-		if (!atomic_fcmpset_64(l2, &newl2, newl2 & ~ATTR_SW_DBM))
+		if (!atomic_fcmpset_64(firstl3, &newl2, newl2 & ~ATTR_SW_DBM))
 			goto setl2;
 		newl2 &= ~ATTR_SW_DBM;
 	}
