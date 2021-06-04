@@ -4564,7 +4564,7 @@ pmap_copy(pmap_t dst_pmap, pmap_t src_pmap, vm_offset_t dst_addr, vm_size_t len,
 			    ((srcptepaddr & ATTR_SW_MANAGED) == 0 ||
 			    pmap_pv_insert_l2(dst_pmap, addr, srcptepaddr,
 			    PMAP_ENTER_NORECLAIM, &lock))) {
-				mask = ATTR_AF | ATTR_SW_WIRED;
+				mask = ATTR_AF | ATTR_SW_DBM | ATTR_SW_WIRED;
 				nbits = 0;
 				if ((srcptepaddr & ATTR_SW_DBM) != 0)
 					nbits |= ATTR_S1_AP_RW_BIT;
