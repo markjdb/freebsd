@@ -178,7 +178,7 @@ pf_find_or_create_kruleset(const char *path)
 	p = (char *)rs_malloc(MAXPATHLEN);
 	if (p == NULL)
 		return (NULL);
-	strlcpy(p, path, MAXPATHLEN);
+	(void)strlcpy(p, path, MAXPATHLEN);
 	while (parent == NULL && (q = strrchr(p, '/')) != NULL) {
 		*q = 0;
 		if ((ruleset = pf_find_kruleset(p)) != NULL) {
