@@ -922,7 +922,7 @@ iommu_bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map,
 {
 }
 
-struct bus_dma_impl bus_dma_iommu_impl = {
+const struct bus_dma_impl bus_dma_iommu_impl = {
 	.tag_create = iommu_bus_dma_tag_create,
 	.tag_destroy = iommu_bus_dma_tag_destroy,
 	.tag_set_domain = iommu_bus_dma_tag_set_domain,

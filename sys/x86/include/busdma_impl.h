@@ -35,7 +35,7 @@
 #define	__X86_BUSDMA_IMPL_H
 
 struct bus_dma_tag_common {
-	struct bus_dma_impl *impl;
+	const struct bus_dma_impl *impl;
 	struct bus_dma_tag_common *parent;
 	bus_size_t	  alignment;
 	bus_addr_t	  boundary;
@@ -96,6 +96,6 @@ int common_bus_dma_tag_create(struct bus_dma_tag_common *parent,
     int nsegments, bus_size_t maxsegsz, int flags, bus_dma_lock_t *lockfunc,
     void *lockfuncarg, size_t sz, void **dmat);
 
-extern struct bus_dma_impl bus_dma_bounce_impl;
+extern const struct bus_dma_impl bus_dma_bounce_impl;
 
 #endif

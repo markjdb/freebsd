@@ -1463,7 +1463,7 @@ busdma_swi(void)
 	mtx_unlock(&bounce_lock);
 }
 
-struct bus_dma_impl bus_dma_bounce_impl = {
+const struct bus_dma_impl bus_dma_bounce_impl = {
 	.tag_create = bounce_bus_dma_tag_create,
 	.tag_destroy = bounce_bus_dma_tag_destroy,
 	.id_mapped = bounce_bus_dma_id_mapped,
