@@ -2875,7 +2875,8 @@ closef_nothread(struct file *fp)
  * called with bad data.
  */
 void
-finit(struct file *fp, u_int flag, short type, void *data, struct fileops *ops)
+finit(struct file *fp, u_int flag, short type, void *data,
+    const struct fileops *ops)
 {
 	fp->f_data = data;
 	fp->f_flag = flag;
@@ -2884,7 +2885,7 @@ finit(struct file *fp, u_int flag, short type, void *data, struct fileops *ops)
 }
 
 void
-finit_vnode(struct file *fp, u_int flag, void *data, struct fileops *ops)
+finit_vnode(struct file *fp, u_int flag, void *data, const struct fileops *ops)
 {
 	fp->f_seqcount[UIO_READ] = 1;
 	fp->f_seqcount[UIO_WRITE] = 1;
@@ -4971,7 +4972,7 @@ badfo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 	return (0);
 }
 
-struct fileops badfileops = {
+const struct fileops badfileops = {
 	.fo_read = badfo_readwrite,
 	.fo_write = badfo_readwrite,
 	.fo_truncate = badfo_truncate,
@@ -5002,7 +5003,7 @@ path_close(struct file *fp, struct thread *td)
 	return (0);
 }
 
-struct fileops path_fileops = {
+const struct fileops path_fileops = {
 	.fo_read = badfo_readwrite,
 	.fo_write = badfo_readwrite,
 	.fo_truncate = badfo_truncate,

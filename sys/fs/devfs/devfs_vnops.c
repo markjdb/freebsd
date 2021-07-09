@@ -70,7 +70,7 @@
 
 static struct vop_vector devfs_vnodeops;
 static struct vop_vector devfs_specops;
-static struct fileops devfs_ops_f;
+static const struct fileops devfs_ops_f;
 
 #include <fs/devfs/devfs.h>
 #include <fs/devfs/devfs_int.h>
@@ -2021,7 +2021,7 @@ dev2udev(struct cdev *x)
 	return (cdev2priv(x)->cdp_inode);
 }
 
-static struct fileops devfs_ops_f = {
+static const struct fileops devfs_ops_f = {
 	.fo_read =	devfs_read_f,
 	.fo_write =	devfs_write_f,
 	.fo_truncate =	devfs_truncate_f,

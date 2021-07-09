@@ -148,7 +148,7 @@ static fo_add_seals_t	shm_add_seals;
 static fo_fallocate_t	shm_fallocate;
 
 /* File descriptor operations. */
-struct fileops shm_ops = {
+const struct fileops shm_ops = {
 	.fo_read = shm_read,
 	.fo_write = shm_write,
 	.fo_truncate = shm_truncate,

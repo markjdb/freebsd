@@ -119,7 +119,7 @@ static fo_stat_t	timerfd_stat;
 static fo_close_t	timerfd_close;
 static fo_fill_kinfo_t	timerfd_fill_kinfo;
 
-static struct fileops timerfdops = {
+static const struct fileops timerfdops = {
 	.fo_read = timerfd_read,
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,

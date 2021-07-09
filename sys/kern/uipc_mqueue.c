@@ -229,7 +229,7 @@ static uma_zone_t		mqueue_zone;
 static uma_zone_t		mvdata_zone;
 static uma_zone_t		mqnoti_zone;
 static struct vop_vector	mqfs_vnodeops;
-static struct fileops		mqueueops;
+static const struct fileops	mqueueops;
 static unsigned			mqfs_osd_jail_slot;
 
 /*
@@ -2656,7 +2656,7 @@ mqf_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 	return (0);
 }
 
-static struct fileops mqueueops = {
+static const struct fileops mqueueops = {
 	.fo_read		= invfo_rdwr,
 	.fo_write		= invfo_rdwr,
 	.fo_truncate		= invfo_truncate,

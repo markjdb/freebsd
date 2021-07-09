@@ -606,7 +606,7 @@ ptsdev_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 	return (0);
 }
 
-static struct fileops ptsdev_ops = {
+static const struct fileops ptsdev_ops = {
 	.fo_read	= ptsdev_read,
 	.fo_write	= ptsdev_write,
 	.fo_truncate	= invfo_truncate,

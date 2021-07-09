@@ -130,7 +130,7 @@ static fo_stat_t	kqueue_stat;
 static fo_close_t	kqueue_close;
 static fo_fill_kinfo_t	kqueue_fill_kinfo;
 
-static struct fileops kqueueops = {
+static const struct fileops kqueueops = {
 	.fo_read = invfo_rdwr,
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,

@@ -1753,7 +1753,7 @@ linux_iminor(struct inode *inode)
 	return (minor(ldev->dev));
 }
 
-struct fileops linuxfileops = {
+const struct fileops linuxfileops = {
 	.fo_read = linux_file_read,
 	.fo_write = linux_file_write,
 	.fo_truncate = invfo_truncate,

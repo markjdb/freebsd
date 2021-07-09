@@ -157,7 +157,7 @@ static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
 
-struct fileops pipeops = {
+const struct fileops pipeops = {
 	.fo_read = pipe_read,
 	.fo_write = pipe_write,
 	.fo_truncate = pipe_truncate,

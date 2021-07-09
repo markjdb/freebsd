@@ -54,7 +54,7 @@
  * See sys_pipe.c for info on what these limits mean. 
  */
 extern long	maxpipekva;
-extern struct	fileops pipeops;
+const extern struct fileops pipeops;
 #endif
 
 /*
