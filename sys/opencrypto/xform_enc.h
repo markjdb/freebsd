@@ -73,16 +73,16 @@ struct enc_xform {
 };
 
 
-extern struct enc_xform enc_xform_null;
-extern struct enc_xform enc_xform_rijndael128;
-extern struct enc_xform enc_xform_aes_icm;
-extern struct enc_xform enc_xform_aes_nist_gcm;
-extern struct enc_xform enc_xform_aes_nist_gmac;
-extern struct enc_xform enc_xform_aes_xts;
-extern struct enc_xform enc_xform_camellia;
-extern struct enc_xform enc_xform_chacha20;
-extern struct enc_xform enc_xform_chacha20_poly1305;
-extern struct enc_xform enc_xform_ccm;
+extern const struct enc_xform enc_xform_null;
+extern const struct enc_xform enc_xform_rijndael128;
+extern const struct enc_xform enc_xform_aes_icm;
+extern const struct enc_xform enc_xform_aes_nist_gcm;
+extern const struct enc_xform enc_xform_aes_nist_gmac;
+extern const struct enc_xform enc_xform_aes_xts;
+extern const struct enc_xform enc_xform_camellia;
+extern const struct enc_xform enc_xform_chacha20;
+extern const struct enc_xform enc_xform_chacha20_poly1305;
+extern const struct enc_xform enc_xform_ccm;
 
 struct aes_icm_ctx {
 	uint32_t	ac_ek[4*(RIJNDAEL_MAXNR + 1)];
