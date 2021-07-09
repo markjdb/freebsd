@@ -209,10 +209,12 @@ extern char start_exceptions[], end_exceptions[];
 extern struct sysentvec elf32_freebsd_sysvec;
 
 /* Default init_ops implementation. */
-struct init_ops init_ops = {
+const struct init_ops native_init_ops = {
 	.early_clock_source_init =	i8254_init,
 	.early_delay =			i8254_delay,
 };
+
+const struct init_ops *init_ops = &native_init_ops;
 
 static void
 cpu_startup(dummy)

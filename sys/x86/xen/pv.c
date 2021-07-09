@@ -103,7 +103,7 @@ static void xen_pvh_parse_memmap(caddr_t, vm_paddr_t *, int *);
 extern uint32_t end;
 
 /*-------------------------------- Global Data -------------------------------*/
-struct init_ops xen_pvh_init_ops = {
+const struct init_ops xen_pvh_init_ops = {
 	.parse_preload_data		= xen_pvh_parse_preload_data,
 	.early_clock_source_init	= xen_clock_init,
 	.early_delay			= xen_delay,
@@ -188,7 +188,7 @@ hammer_time_xen(vm_paddr_t start_info_paddr)
 	}
 
 	/* Set the hooks for early functions that diverge from bare metal */
-	init_ops = xen_pvh_init_ops;
+	init_ops = &xen_pvh_init_ops;
 	hvm_start_flags = start_info->flags;
 
 	/* Now we can jump into the native init function */

@@ -182,12 +182,14 @@ static caddr_t native_parse_preload_data(u_int64_t);
 static void native_parse_memmap(caddr_t, vm_paddr_t *, int *);
 
 /* Default init_ops implementation. */
-struct init_ops init_ops = {
-	.parse_preload_data =	native_parse_preload_data,
+const struct init_ops native_init_ops = {
+	.parse_preload_data =		native_parse_preload_data,
 	.early_clock_source_init =	i8254_init,
 	.early_delay =			i8254_delay,
 	.parse_memmap =			native_parse_memmap,
 };
+
+const struct init_ops *init_ops = &native_init_ops;
 
 /*
  * Physical address of the EFI System Table. Stashed from the metadata hints
@@ -1212,7 +1214,7 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 	bzero(physmap, sizeof(physmap));
 	physmap_idx = 0;
 
-	init_ops.parse_memmap(kmdp, physmap, &physmap_idx);
+	init_ops->parse_memmap(kmdp, physmap, &physmap_idx);
 	physmap_idx -= 2;
 
 	/*
@@ -1608,7 +1610,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	TSRAW(&thread0, TS_ENTER, __func__, NULL);
 
-	kmdp = init_ops.parse_preload_data(modulep);
+	kmdp = init_ops->parse_preload_data(modulep);
 
 	efi_boot = preload_search_info(kmdp, MODINFO_METADATA |
 	    MODINFOMD_EFI_MAP) != NULL;

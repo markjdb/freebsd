@@ -119,7 +119,7 @@ DELAY(int n)
 		return;
 	}
 
-	init_ops.early_delay(n);
+	init_ops->early_delay(n);
 	TSEXIT();
 }
 

@@ -43,7 +43,7 @@ struct init_ops {
 	void	(*parse_memmap)(caddr_t, vm_paddr_t *, int *);
 };
 
-extern struct init_ops init_ops;
+extern const struct init_ops *init_ops;
 
 /* Knob to disable acpi_cpu devices */
 extern bool acpi_cpu_disabled;
