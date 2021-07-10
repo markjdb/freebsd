@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/asan.h>
 #include <sys/bus.h>
 #include <sys/cons.h>	/* cngetc() */
 #include <sys/cpuset.h>
@@ -1253,6 +1254,8 @@ ipi_bitmap_handler(struct trapframe frame)
 	u_int ipi_bitmap;
 
 	critical_enter();
+	kasan_mark(&frame, sizeof(frame), sizeof(frame), 0);
+
 	td = curthread;
 	td->td_intr_nesting_level++;
 	oldframe = td->td_intr_frame;
