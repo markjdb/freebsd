@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_stack.h"
 
 #include <sys/param.h>
+#include <sys/asan.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
 #include <sys/proc.h>
@@ -194,6 +195,8 @@ trap(struct trapframe *frame)
 	td = curthread;
 	p = td->td_proc;
 	dr6 = 0;
+
+	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
 
 	VM_CNT_INC(v_trap);
 	type = frame->tf_trapno;
