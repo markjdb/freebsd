@@ -64,6 +64,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/lock.h>
 #include <sys/loginclass.h>
 #include <sys/mount.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/dtrace_bsd.h>
 #include <sys/syscallsubr.h>
@@ -615,6 +616,7 @@ proc0_init(void *dummy __unused)
 #endif
 	EVENTHANDLER_DIRECT_INVOKE(process_ctor, p);
 	EVENTHANDLER_DIRECT_INVOKE(thread_ctor, td);
+	kmsan_thread_alloc(td);
 
 	/*
 	 * Charge root for one process.
