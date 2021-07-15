@@ -1,0 +1,151 @@
+.\"-
+.\" Copyright (c) 2021 The FreeBSD Foundation
+.\"
+.\" This documentation was written by Mark Johnston under sponsorship from
+.\" the FreeBSD Foundation.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.\" $FreeBSD$
+.\"
+.Dd July 21, 2021
+.Dt KMSAN 9
+.Os
+.Sh NAME
+.Nm KMSAN
+.Nd Kernel Memory SANitizer
+.Sh SYNOPSIS
+The
+.Pa GENERIC-KMSAN
+kernel configuration can be used to compile a KMSAN-enabled kernel using
+.Pa GENERIC
+as a base configuration.
+Alternately, to compile KMSAN into the kernel, place the following line in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "options KMSAN"
+.Ed
+.Pp
+.Ft void
+.Fn kmsan_mark "const void *addr" "size_t size" "uint8_t code"
+.Ft void
+.Fn kmsan_orig "const void *addr" "size_t size" "int type" "uintptr_t pc"
+.Ft void
+.Fn kmsan_check "const void *addr" "size_t size" "const char *descr"
+.Ft void
+.Fn kmsan_check_bio "const struct bio *" "const char *descr"
+.Ft void
+.Fn kmsan_check_ccb "const union ccb *" "const char *descr"
+.Ft void
+.Fn kmsan_check_mbuf "const struct mbuf *" "const char *descr"
+.Sh DESCRIPTION
+.Nm
+is a subsystem which leverages compiler instrumentation to detect uses of
+uninitialized memory in the kernel.
+Currently it is implemented only on the amd64 platform.
+.Pp
+When
+.Nm
+is compiled into the kernel, the compiler is configured to emit function
+calls preceding memory accesses.
+The functions are implemented by the
+.Nm
+runtime component and use hidden, byte-granular shadow state to determine
+whether the source operand has been initialized.
+When uninitialized memory is used as a source operand in certain operations,
+such as control flow expressions or pointer dereferences, the runtime reports
+an error.
+Otherwise, the shadow state is propagated to destination operand.
+For example, a
+variable assignment or a
+.Fn memcpy
+call which copies uninitialized memory will cause the destination buffer or
+variable to be marked uninitialized.
+.Pp
+In addition to compiler-detected uses of uninitialized memory,
+various kernel I/O
+.Dq exit points ,
+such as
+.Xr copyout 9 ,
+are overridden to validate the input's shadow state and will raise an error if
+any uninitialized bytes are detected.
+.Pp
+The
+.Nm
+option imposes a significant performance penalty.
+Kernel code typically runs two or three times slower, and each byte mapped in
+the kernel map requires two bytes of shadow state.
+As a result,
+.Nm
+should be used only for kernel testing and development.
+It is not recommended to enable
+.Nm
+in systems with less than 8GB of physical RAM.
+.Sh IMPLEMENTATION NOTES
+The
+.Nm
+runtime makes use of two shadows of the kernel map.
+Each address in the kernel map has a linear mapping to addresses in the
+two shadows.
+The first, simply called the shadow map, tracks the state of the corresponding
+kernel memory.
+A non-zero byte in the shadow indicates that the corresponding byte of kernel
+memory is uninitialized.
+The
+.Nm
+instrumentation automatically propagates shadow state as the contents of kernel
+memory are transformed and copied.
+The second shadow is called the origin map, and exists only to help debug
+reports from the sanitizer.
+.Sh SEE ALSO
+.Xr build 7 ,
+.Xr copyout 9 ,
+.Xr KASAN 9
+.Rs
+.%A Evgeniy Stepanov
+.%A Konstantin Serebryany
+.%T MemorySanitizer: fast detector of uninitialized memory use in C++
+.%J 2015 IEEE/ACM International Symposium on Code Generation and Optimization (CGO)
+.%D 2015
+.Re
+.Sh HISTORY
+.Nm
+was ported from
+.Nx
+and first appeared in
+.Fx 14.0 .
+.Sh BUGS
+Accesses to kernel memory outside of the kernel map are ignored by the
+.Nm
+runtime.
+In particular, memory accesses via the direct map are not validated.
+When memory is copied from outside the kernel map into the kernel map,
+it is marked as initialized.
+This is a conservative policy that aims to avoid raising false positives,
+but it may mask bugs.
+.Nm
+On amd64, global variables and the physical page array
+.Va vm_page_array
+are not sanitized.
+This is intentional, as it reduces memory usage by avoiding creating
+shadows of large regions of the kernel map.
+However, this can allow bugs to go undetected.
