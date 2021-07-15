@@ -1,0 +1,7 @@
+# $FreeBSD$
+
+include GENERIC
+
+ident   GENERIC-KUBSAN
+
+options 	KUBSAN
