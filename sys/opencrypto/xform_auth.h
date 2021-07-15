@@ -51,7 +51,7 @@
 /* Declarations */
 struct auth_hash {
 	int type;
-	char *name;
+	const char *name;
 	uint16_t keysize;
 	uint16_t hashsize; 
 	uint16_t ctxsize;

@@ -48,7 +48,7 @@
 /* Declarations */
 struct enc_xform {
 	int type;
-	char *name;
+	const char *name;
 	size_t ctxsize;
 	uint16_t blocksize;	/* Required input block size -- 1 for stream ciphers. */
 	uint16_t native_blocksize;	/* Used for stream ciphers. */
