@@ -274,7 +274,7 @@ init_secondary(void)
 	ucode_load_ap(cpu);
 
 	/* Get per-cpu data and save  */
-	pc = &__pcpu[cpu];
+	pc = bootpcpu;
 
 	/* prime data page for it to use */
 	pcpu_init(pc, cpu, sizeof(struct pcpu));
@@ -492,6 +492,7 @@ start_all_aps(void)
 		dpcpu = (void *)kmem_malloc_domainset(DOMAINSET_PREF(domain),
 		    DPCPU_SIZE, M_WAITOK | M_ZERO);
 
+		bootpcpu = &__pcpu[cpu];
 		bootSTK = (char *)bootstacks[cpu] +
 		    kstack_pages * PAGE_SIZE - 8;
 		bootAP = cpu;

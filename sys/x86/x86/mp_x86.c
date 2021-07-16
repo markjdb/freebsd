@@ -92,6 +92,7 @@ int	mp_naps;		/* # of Applications processors */
 int	boot_cpu_id = -1;	/* designated BSP */
 
 /* AP uses this during bootstrap.  Do not staticize.  */
+void *bootpcpu;
 char *bootSTK;
 int bootAP;
 

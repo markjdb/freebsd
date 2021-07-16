@@ -270,4 +270,12 @@ entry_64:
 2:	movq	KPML5phys, %rax
 3:	movq	%rax, %cr3
 	movq	bootSTK, %rsp
+
+#ifdef KMSAN
+	movl	$MSR_GSBASE, %ecx
+	movq	bootpcpu, %rax
+	movq	%rax, %rdx
+	shrq	$32, %rdx
+	wrmsr
+#endif
 	jmp	init_secondary
