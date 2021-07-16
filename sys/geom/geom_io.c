@@ -894,6 +894,8 @@ g_read_data(struct g_consumer *cp, off_t offset, off_t length, int *error)
 	bp->bio_data = ptr;
 	g_io_request(bp, cp);
 	errorc = biowait(bp, "gread");
+	if (errorc == 0 && bp->bio_completed != length)
+		errorc = EINVAL;
 	if (error != NULL)
 		*error = errorc;
 	g_destroy_bio(bp);
