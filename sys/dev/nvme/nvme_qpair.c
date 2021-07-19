@@ -1050,7 +1050,7 @@ nvme_payload_map(void *arg, bus_dma_segment_t *seg, int nseg, int error)
 	}
 
 	bus_dmamap_sync(tr->qpair->dma_tag_payload, tr->payload_dma_map,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    BUS_DMASYNC_PREREAD);
 	nvme_qpair_submit_tracker(tr->qpair, tr);
 }
 
