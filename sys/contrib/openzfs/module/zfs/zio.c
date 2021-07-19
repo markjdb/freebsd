@@ -1852,6 +1852,15 @@ zio_free_bp_init(zio_t *zio)
  * ==========================================================================
  */
 
+#ifdef _KERNEL
+static int
+zio_kmsan_check(void *buf, size_t len, void *priv)
+{
+	kmsan_check(buf, len, priv);
+	return (0);
+}
+#endif
+
 static void
 zio_taskq_dispatch(zio_t *zio, zio_taskq_type_t q, boolean_t cutinline)
 {
@@ -1883,6 +1892,17 @@ zio_taskq_dispatch(zio_t *zio, zio_taskq_type_t q, boolean_t cutinline)
 		q++;
 
 	ASSERT3U(q, <, ZIO_TASKQ_TYPES);
+
+#ifdef _KERNEL
+	if (zio->io_type == ZIO_TYPE_WRITE) {
+		if (abd_is_linear(zio->io_abd))
+			kmsan_check(abd_to_buf(zio->io_abd), zio->io_size,
+			    "zio_execute");
+		else
+			abd_iterate_func(zio->io_abd, 0, zio->io_size,
+			    zio_kmsan_check, "zio_execute");
+	}
+#endif
 
 	/*
 	 * NB: We are assuming that the zio can only be dispatched

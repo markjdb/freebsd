@@ -467,6 +467,7 @@ benchmark_raidz(void)
 #if defined(_KERNEL)
 	zio_t *bench_zio = NULL;
 	raidz_map_t *bench_rm = NULL;
+	abd_t *pabd;
 	uint64_t bench_parity;
 
 	/* Fake a zio and run the benchmark on a warmed up buffer */
@@ -491,6 +492,12 @@ benchmark_raidz(void)
 	/* Benchmark data reconstruction methods */
 	bench_rm = vdev_raidz_map_alloc(bench_zio, SPA_MINBLOCKSHIFT,
 	    BENCH_COLS, PARITY_PQR);
+
+	/* Ensure that fake parity blocks are initialized */
+	for (c = 0; c < bench_rm->rm_row[0]->rr_firstdatacol; c++) {
+		pabd = bench_rm->rm_row[0]->rr_col[c].rc_abd;
+		memset(abd_to_buf(pabd), 0xAA, abd_get_size(pabd));
+	}
 
 	for (int fn = 0; fn < RAIDZ_REC_NUM; fn++)
 		benchmark_raidz_impl(bench_rm, fn, benchmark_rec_impl);

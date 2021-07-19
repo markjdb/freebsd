@@ -140,6 +140,7 @@
 #include <sys/simd.h>
 #include <sys/zio_checksum.h>
 #include <sys/zfs_context.h>
+#include <sys/msan.h>
 #include <zfs_fletcher.h>
 
 #define	FLETCHER_MIN_SIMD_SIZE	64
@@ -241,6 +242,8 @@ fletcher_2_incremental_native(void *buf, size_t size, void *data)
 	const uint64_t *ip = buf;
 	const uint64_t *ipend = ip + (size / sizeof (uint64_t));
 	uint64_t a0, b0, a1, b1;
+
+	kmsan_check(buf, size, "fletcher");
 
 	a0 = zcp->zc_word[0];
 	a1 = zcp->zc_word[1];

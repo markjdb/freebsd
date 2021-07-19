@@ -32,6 +32,7 @@
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/lock.h>
+#include <sys/msan.h>
 #include <sys/sx.h>
 
 typedef enum {
@@ -61,6 +62,8 @@ typedef	struct sx	krwlock_t;
 #define	rw_init(lock, desc, type, arg)	do {				\
 	const char *_name;						\
 	ASSERT((type) == 0 || (type) == RW_DEFAULT);			\
+	kmsan_mark(&(lock)->lock_object.lo_flags, sizeof(int),		\
+	    KMSAN_STATE_INITED);					\
 	KASSERT(((lock)->lock_object.lo_flags & LO_ALLMASK) !=		\
 	    LO_EXPECTED, ("lock %s already initialized", #lock));	\
 	bzero((lock), sizeof(struct sx));				\

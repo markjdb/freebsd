@@ -48,7 +48,7 @@ MALLOC_DECLARE(M_SOLARIS);
 #define	KM_PUSHPAGE		M_WAITOK
 #define	KM_NOSLEEP		M_NOWAIT
 #define	KM_NORMALPRI		0
-#define	KMC_NODEBUG		UMA_ZONE_NODUMP
+#define	KMC_NODEBUG		0//UMA_ZONE_NODUMP
 
 typedef struct vmem vmem_t;
 

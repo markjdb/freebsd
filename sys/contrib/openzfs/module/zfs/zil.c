@@ -43,6 +43,7 @@
 #include <sys/metaslab.h>
 #include <sys/trace_zfs.h>
 #include <sys/abd.h>
+#include <sys/msan.h>
 
 /*
  * The ZFS Intent Log (ZIL) saves "transaction records" (itxs) of system
@@ -1549,17 +1550,17 @@ zil_lwb_write_issue(zilog_t *zilog, lwb_t *lwb)
 		wsz = P2ROUNDUP_TYPED(lwb->lwb_nused, ZIL_MIN_BLKSZ, uint64_t);
 		ASSERT3U(wsz, <=, lwb->lwb_sz);
 		zio_shrink(lwb->lwb_write_zio, wsz);
-
 	} else {
 		wsz = lwb->lwb_sz;
 	}
 
 	zilc->zc_pad = 0;
 	zilc->zc_nused = lwb->lwb_nused;
+	zilc->zc_eck.zec_magic = 0;
 	zilc->zc_eck.zec_cksum = lwb->lwb_blk.blk_cksum;
 
 	/*
-	 * clear unused data for security
+	 * Clear uninitialized bytes.
 	 */
 	bzero(lwb->lwb_buf + lwb->lwb_nused, wsz - lwb->lwb_nused);
 

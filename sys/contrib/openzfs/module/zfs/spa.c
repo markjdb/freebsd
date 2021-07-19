@@ -94,6 +94,7 @@
 #include <sys/callb.h>
 #include <sys/zone.h>
 #include <sys/vmsystm.h>
+#include <sys/msan.h>
 #endif	/* _KERNEL */
 
 #include "zfs_prop.h"

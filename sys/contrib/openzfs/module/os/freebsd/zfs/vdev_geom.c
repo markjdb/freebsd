@@ -1115,6 +1115,10 @@ vdev_geom_check_unmapped(zio_t *zio, struct g_consumer *cp)
 	if ((cp->provider->flags & G_PF_ACCEPT_UNMAPPED) == 0)
 		return (0);
 
+	/* If unmapped I/O is administratively disabled, respect that. */
+	if (!unmapped_buf_allowed)
+		return (0);
+
 	/* Check the buffer chunks sizes/alignments and count pages. */
 	s.pages = s.end = 0;
 	if (abd_iterate_func(zio->io_abd, 0, zio->io_size,

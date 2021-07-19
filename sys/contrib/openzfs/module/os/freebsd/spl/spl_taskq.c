@@ -30,8 +30,6 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
-#include <sys/ck.h>
-#include <sys/epoch.h>
 #include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/lock.h>
@@ -65,7 +63,7 @@ extern int uma_align_cache;
 
 static MALLOC_DEFINE(M_TASKQ, "taskq", "taskq structures");
 
-static CK_LIST_HEAD(tqenthashhead, taskq_ent) *tqenthashtbl;
+static LIST_HEAD(tqenthashhead, taskq_ent) *tqenthashtbl;
 static unsigned long tqenthash;
 static unsigned long tqenthashlock;
 static struct sx *tqenthashtbl_lock;
@@ -116,7 +114,7 @@ system_taskq_fini(void *arg)
 	for (i = 0; i < tqenthashlock + 1; i++)
 		sx_destroy(&tqenthashtbl_lock[i]);
 	for (i = 0; i < tqenthash + 1; i++)
-		VERIFY(CK_LIST_EMPTY(&tqenthashtbl[i]));
+		VERIFY(LIST_EMPTY(&tqenthashtbl[i]));
 	free(tqenthashtbl_lock, M_TASKQ);
 	free(tqenthashtbl, M_TASKQ);
 }
@@ -158,7 +156,7 @@ taskq_lookup(taskqid_t tqid)
 	taskq_ent_t *ent = NULL;
 
 	sx_xlock(TQIDHASHLOCK(tqid));
-	CK_LIST_FOREACH(ent, TQIDHASH(tqid), tqent_hash) {
+	LIST_FOREACH(ent, TQIDHASH(tqid), tqent_hash) {
 		if (ent->tqent_id == tqid)
 			break;
 	}
@@ -177,7 +175,7 @@ taskq_insert(taskq_ent_t *ent)
 	ent->tqent_id = tqid;
 	ent->tqent_registered = B_TRUE;
 	sx_xlock(TQIDHASHLOCK(tqid));
-	CK_LIST_INSERT_HEAD(TQIDHASH(tqid), ent, tqent_hash);
+	LIST_INSERT_HEAD(TQIDHASH(tqid), ent, tqent_hash);
 	sx_xunlock(TQIDHASHLOCK(tqid));
 	return (tqid);
 }
@@ -191,7 +189,7 @@ taskq_remove(taskq_ent_t *ent)
 		return;
 
 	sx_xlock(TQIDHASHLOCK(tqid));
-	CK_LIST_REMOVE(ent, tqent_hash);
+	LIST_REMOVE(ent, tqent_hash);
 	sx_xunlock(TQIDHASHLOCK(tqid));
 	ent->tqent_registered = B_FALSE;
 }
