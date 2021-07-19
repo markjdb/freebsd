@@ -224,7 +224,11 @@ uint32_t armv8_crc32c(uint32_t, const unsigned char *, unsigned int);
 #endif
 #endif
 
-#ifdef SAN_PREFIX
+#ifdef SAN_NEEDS_INTERCEPTORS
+#ifndef SAN_INTERCEPTOR
+#define	SAN_INTERCEPTOR(func)	\
+	__CONCAT(SAN_INTERCEPTOR_PREFIX, __CONCAT(_, func))
+#endif
 char	*SAN_INTERCEPTOR(strcpy)(char *, const char *);
 int	SAN_INTERCEPTOR(strcmp)(const char *, const char *);
 size_t	SAN_INTERCEPTOR(strlen)(const char *);
@@ -233,11 +237,11 @@ size_t	SAN_INTERCEPTOR(strlen)(const char *);
 #define	strcmp(s1, s2)	SAN_INTERCEPTOR(strcmp)((s1), (s2))
 #define	strlen(s)	SAN_INTERCEPTOR(strlen)(s)
 #endif /* !SAN_RUNTIME */
-#else
-#define strcpy(d, s) __builtin_strcpy((d), (s))
-#define strcmp(s1, s2) __builtin_strcmp((s1), (s2))
-#define strlen(s) __builtin_strlen((s))
-#endif /* SAN_PREFIX */
+#else /* !SAN_NEEDS_INTERCEPTORS */
+#define strcpy(d, s)	__builtin_strcpy((d), (s))
+#define strcmp(s1, s2)	__builtin_strcmp((s1), (s2))
+#define strlen(s)	__builtin_strlen((s))
+#endif /* SAN_NEEDS_INTERCEPTORS */
 
 static __inline char *
 index(const char *p, int ch)
