@@ -36,9 +36,10 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/sockio.h>
-#include <sys/mbuf.h>
 #include <sys/malloc.h>
+#include <sys/mbuf.h>
 #include <sys/module.h>
+#include <sys/msan.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/random.h>
@@ -1949,6 +1950,7 @@ vtnet_rxq_merged_eof(struct vtnet_rxq *rxq, struct mbuf *m_head, int nbufs)
 
 		m->m_len = len;
 		m->m_flags &= ~M_PKTHDR;
+		kmsan_mark(m->m_data, len, KMSAN_STATE_INITED);
 
 		m_head->m_pkthdr.len += len;
 		m_tail->m_next = m;
@@ -2070,6 +2072,9 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 			vtnet_rxq_discard_buf(rxq, m);
 			continue;
 		}
+
+		/* XXXMJ len may be adjusted below */
+		kmsan_mark(m->m_data, len, KMSAN_STATE_INITED);
 
 		if (sc->vtnet_flags & VTNET_FLAG_MRG_RXBUFS) {
 			struct virtio_net_hdr_mrg_rxbuf *mhdr =
