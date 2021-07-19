@@ -203,9 +203,9 @@ size_t	SAN_INTERCEPTOR(strlen)(const char *);
 #define	strlen(s)	SAN_INTERCEPTOR(strlen)(s)
 #endif /* !SAN_RUNTIME */
 #else
-#define strcpy(d, s) __builtin_strcpy((d), (s))
-#define strcmp(s1, s2) __builtin_strcmp((s1), (s2))
-#define strlen(s) __builtin_strlen((s))
+#define strcpy(d, s)	__builtin_strcpy((d), (s))
+#define strcmp(s1, s2)	__builtin_strcmp((s1), (s2))
+#define strlen(s)	__builtin_strlen((s))
 #endif /* SAN_PREFIX */
 
 static __inline char *

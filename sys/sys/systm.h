@@ -374,13 +374,13 @@ int	SAN_INTERCEPTOR(memcmp)(const void *, const void *, size_t);
 #define memcmp(b1, b2, len)	SAN_INTERCEPTOR(memcmp)((b1), (b2), (len))
 #endif /* !SAN_RUNTIME */
 #else
-#define bcopy(from, to, len) __builtin_memmove((to), (from), (len))
-#define bzero(buf, len) __builtin_memset((buf), 0, (len))
-#define bcmp(b1, b2, len) __builtin_memcmp((b1), (b2), (len))
-#define memset(buf, c, len) __builtin_memset((buf), (c), (len))
-#define memcpy(to, from, len) __builtin_memcpy((to), (from), (len))
-#define memmove(dest, src, n) __builtin_memmove((dest), (src), (n))
-#define memcmp(b1, b2, len) __builtin_memcmp((b1), (b2), (len))
+#define bcopy(from, to, len)	__builtin_memmove((to), (from), (len))
+#define bzero(buf, len)		__builtin_memset((buf), 0, (len))
+#define bcmp(b1, b2, len)	__builtin_memcmp((b1), (b2), (len))
+#define memset(buf, c, len)	__builtin_memset((buf), (c), (len))
+#define memcpy(to, from, len)	__builtin_memcpy((to), (from), (len))
+#define memmove(dest, src, n)	__builtin_memmove((dest), (src), (n))
+#define memcmp(b1, b2, len)	__builtin_memcmp((b1), (b2), (len))
 #endif /* !SAN_PREFIX */
 
 void	*memset_early(void * _Nonnull buf, int c, size_t len);
