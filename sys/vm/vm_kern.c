@@ -77,6 +77,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/msan.h>
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sysctl.h>
@@ -171,6 +172,23 @@ kva_free(vm_offset_t addr, vm_size_t size)
 	vmem_free(kernel_arena, addr, size);
 }
 
+static void
+kmem_zero_page(vm_offset_t va, vm_page_t m, int flags)
+{
+	if ((flags & M_ZERO) != 0) {
+		if ((m->flags & PG_ZERO) == 0)
+			pmap_zero_page(m);
+
+		/*
+		 * pmap_zero_page() may zero the page via the direct map, so we
+		 * have to update the shadow map manually.
+		 */
+		kmsan_mark((void *)va, PAGE_SIZE, KMSAN_STATE_INITED);
+	} else {
+		kmsan_mark((void *)va, PAGE_SIZE, KMSAN_STATE_UNINIT);
+	}
+}
+
 static vm_page_t
 kmem_alloc_contig_pages(vm_object_t object, vm_pindex_t pindex, int domain,
     int pflags, u_long npages, vm_paddr_t low, vm_paddr_t high,
@@ -246,8 +264,7 @@ kmem_alloc_attr_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 		KASSERT(vm_page_domain(m) == domain,
 		    ("kmem_alloc_attr_domain: Domain mismatch %d != %d",
 		    vm_page_domain(m), domain));
-		if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
-			pmap_zero_page(m);
+		kmem_zero_page(addr + i, m, flags);
 		vm_page_valid(m);
 		pmap_enter(kernel_pmap, addr + i, m, prot,
 		    prot | PMAP_ENTER_WIRED, 0);
@@ -328,8 +345,7 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	end_m = m + npages;
 	tmp = addr;
 	for (; m < end_m; m++) {
-		if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
-			pmap_zero_page(m);
+		kmem_zero_page(tmp, m, flags);
 		vm_page_valid(m);
 		pmap_enter(kernel_pmap, tmp, m, VM_PROT_RW,
 		    VM_PROT_RW | PMAP_ENTER_WIRED, 0);
@@ -504,8 +520,7 @@ retry:
 		KASSERT(vm_page_domain(m) == domain,
 		    ("kmem_back_domain: Domain mismatch %d != %d",
 		    vm_page_domain(m), domain));
-		if (flags & M_ZERO && (m->flags & PG_ZERO) == 0)
-			pmap_zero_page(m);
+		kmem_zero_page(addr + i, m, flags);
 		KASSERT((m->oflags & VPO_UNMANAGED) != 0,
 		    ("kmem_malloc: page %p is managed", m));
 		vm_page_valid(m);
