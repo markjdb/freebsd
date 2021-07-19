@@ -79,6 +79,7 @@
 #include <sys/malloc.h>
 #include <sys/mdioctl.h>
 #include <sys/mount.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/sx.h>
 #include <sys/namei.h>
@@ -774,6 +775,8 @@ mdstart_malloc(struct md_s *sc, struct bio *bp)
 						bcopy(dst, (void *)osp,
 						    sc->sectorsize);
 					}
+					kmsan_check((void *)osp, sc->sectorsize,
+					    "mdwrite");
 					osp = 0;
 				}
 			}
