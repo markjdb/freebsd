@@ -31,6 +31,8 @@
 #ifndef	_VMX_CPUFUNC_H_
 #define	_VMX_CPUFUNC_H_
 
+#include <sys/msan.h>
+
 struct vmcs;
 
 /*
@@ -140,7 +142,7 @@ vmread(uint64_t r, uint64_t *addr)
 			 : [error] "=r" (error)
 			 : [r] "r" (r), [addr] "m" (*addr)
 			 : "memory");
-
+	kmsan_mark(addr, sizeof(*addr), KMSAN_STATE_INITED);
 	return (error);
 }
 

@@ -43,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
@@ -743,8 +744,11 @@ fputrap_sse(void)
 	critical_enter();
 	if (PCPU_GET(fpcurthread) != curthread)
 		mxcsr = curpcb->pcb_save->sv_env.en_mxcsr;
-	else
+	else {
 		stmxcsr(&mxcsr);
+		/* XXXMJ */
+		kmsan_mark(&mxcsr, sizeof(mxcsr), KMSAN_STATE_INITED);
+	}
 	critical_exit();
 	return (fpetable[(mxcsr & (~mxcsr >> 7)) & 0x3f]);
 }
