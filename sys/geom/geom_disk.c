@@ -49,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/devctl.h>
 #include <sys/fcntl.h>
 #include <sys/malloc.h>
+#include <sys/msan.h>
 #include <sys/sbuf.h>
 #include <sys/devicestat.h>
 
@@ -239,6 +240,10 @@ g_disk_done(struct bio *bp)
 		bp2->bio_error = bp->bio_error;
 	bp2->bio_completed += bp->bio_length - bp->bio_resid;
 
+	/* Make sure that block drivers updated shadow state appropriately. */
+	if (bp->bio_cmd == BIO_READ)
+		kmsan_check(bp2->bio_data, bp2->bio_completed, "g_disk_done");
+
 	switch (bp->bio_cmd) {
 	case BIO_ZONE:
 		bcopy(&bp->bio_zone, &bp2->bio_zone, sizeof(bp->bio_zone));
@@ -256,6 +261,14 @@ g_disk_done(struct bio *bp)
 	if (bp2->bio_children == bp2->bio_inbed) {
 		mtx_unlock(&sc->done_mtx);
 		bp2->bio_resid = bp2->bio_bcount - bp2->bio_completed;
+#if 0
+#ifdef KMSAN
+		if (bp2->bio_cmd == BIO_READ &&
+		    (bp2->bio_flags & BIO_UNMAPPED) == 0)
+			kmsan_mark(bp2->bio_data, bp2->bio_completed,
+			    KMSAN_STATE_INITED);
+#endif
+#endif
 		g_io_deliver(bp2, bp2->bio_error);
 	} else
 		mtx_unlock(&sc->done_mtx);
@@ -445,6 +458,10 @@ g_disk_start(struct bio *bp)
 		KASSERT((dp->d_flags & DISKFLAG_UNMAPPED_BIO) != 0 ||
 		    (bp->bio_flags & BIO_UNMAPPED) == 0,
 		    ("unmapped bio not supported by disk %s", dp->d_name));
+
+		if (bp->bio_cmd == BIO_WRITE)
+			kmsan_check_bio(bp, "g_disk_start");
+
 		off = 0;
 		bp3 = NULL;
 		bp2 = g_clone_bio(bp);
