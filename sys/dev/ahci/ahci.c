@@ -1109,8 +1109,8 @@ ahci_dmainit(device_t dev)
 	    0, NULL, NULL, &ch->dma.rfis_tag);
 	if (error != 0)
 		goto error;
-	error = bus_dmamem_alloc(ch->dma.rfis_tag, (void **)&ch->dma.rfis, 0,
-	    &ch->dma.rfis_map);
+	error = bus_dmamem_alloc(ch->dma.rfis_tag, (void **)&ch->dma.rfis,
+	    BUS_DMA_ZERO, &ch->dma.rfis_map);
 	if (error != 0)
 		goto error;
 	error = bus_dmamap_load(ch->dma.rfis_tag, ch->dma.rfis_map, ch->dma.rfis,
