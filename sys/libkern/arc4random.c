@@ -35,6 +35,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/linker.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/random.h>
 #include <sys/smp.h>
@@ -106,6 +107,8 @@ chacha20_randomstir(struct chacha20_s *chacha20)
 				    "knob 'bypass_before_seeding' was "
 				    "enabled.\n");
 		}
+
+		kmsan_mark(key, sizeof(key), KMSAN_STATE_INITED);
 
 		/* Last ditch effort to inject something in a bad condition. */
 		cc = get_cyclecount();
