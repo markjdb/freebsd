@@ -172,8 +172,8 @@ bpf_buffer_ioctl_sblen(struct bpf_d *d, u_int *i)
 		*i = size = BPF_MINBUFSIZE;
 
 	/* Allocate buffers immediately */
-	fbuf = (caddr_t)malloc(size, M_BPF, M_WAITOK);
-	sbuf = (caddr_t)malloc(size, M_BPF, M_WAITOK);
+	fbuf = (caddr_t)malloc(size, M_BPF, M_WAITOK | M_ZERO);
+	sbuf = (caddr_t)malloc(size, M_BPF, M_WAITOK | M_ZERO);
 
 	BPFD_LOCK(d);
 	if (d->bd_bif != NULL) {
