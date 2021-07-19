@@ -24,7 +24,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if defined(KASAN) || defined(KCSAN)
+#if defined(KASAN) || defined(KCSAN) || defined(KMSAN)
 #define	SAN_RUNTIME
 #endif
 
