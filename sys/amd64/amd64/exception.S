@@ -282,8 +282,15 @@ alltraps_pushregs_no_rax:
 	.globl	calltrap
 	.type	calltrap,@function
 calltrap:
-	movq	%rsp,%rdi
+#ifdef KMSAN
+	movq	$8, %rdi		/* sizeof(struct trapframe *) */
+	call	kmsan_intr_enter
+#endif
+	movq	%rsp, %rdi
 	call	trap_check
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	jmp	doreti			/* Handle any pending ASTs */
 
 	/*
@@ -571,6 +578,10 @@ fast_syscall_common:
 	movq	%r14,TF_R14(%rsp)	/* C preserved */
 	movq	%r15,TF_R15(%rsp)	/* C preserved */
 	movl	$TF_HASSEGS,TF_FLAGS(%rsp)
+#ifdef KMSAN
+	movq	$12, %rdi	/* sizeof(struct trapframe *) + sizeof(int) */
+	call	kmsan_init_arg
+#endif
 	movq	PCPU(CURTHREAD),%rdi
 	movq	%rsp,TD_FRAME(%rdi)
 	movl	TF_RFLAGS(%rsp),%esi
@@ -609,6 +620,10 @@ fast_syscall_common:
 
 3:	/* AST scheduled. */
 	sti
+#ifdef KMSAN
+	movq	$8, %rdi	/* sizeof(struct trapframe *) */
+	call	kmsan_init_arg
+#endif
 	movq	%rsp,%rdi
 	call	ast
 	jmp	1b

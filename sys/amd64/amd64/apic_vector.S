@@ -81,6 +81,7 @@ as_lapic_eoi:
  */
 	.macro	ISR_VEC	index, vec_name
 	INTR_HANDLER	\vec_name
+	xorq	%rax, %rax
 	cmpl	$0,x2apic_mode
 	je	1f
 	movl	$(MSR_APIC_ISR0 + \index),%ecx
@@ -93,9 +94,17 @@ as_lapic_eoi:
 	bsrl	%eax, %eax	/* index of highest set bit in ISR */
 	jz	3f
 	addl	$(32 * \index),%eax
+	movq	%rax, %r12
+#ifdef KMSAN
+	movq	$12, %rdi	/* sizeof(int) + sizeof(struct trapframe *) */
+	call	kmsan_intr_enter
+#endif
 	movq	%rsp, %rsi
-	movl	%eax, %edi	/* pass the IRQ */
+	movq	%r12, %rdi	/* pass the IRQ */
 	call	lapic_handle_intr
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 3:
 	jmp	doreti
 	.endm
@@ -125,8 +134,15 @@ IDTVEC(spuriousint)
  * Local APIC periodic timer handler.
  */
 	INTR_HANDLER	timerint
+#ifdef KMSAN
+	movq	$8, %rdi	/* sizeof(struct trapframe *) */
+	call	kmsan_intr_enter
+#endif
 	movq	%rsp, %rdi
 	call	lapic_handle_timer
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	jmp	doreti
 
 /*
@@ -165,8 +181,15 @@ IDTVEC(spuriousint)
  * IPI handler for cache and TLB shootdown
  */
 	INTR_HANDLER invlop
+#ifdef KMSAN
+	mov	$0, %rdi
+	call	kmsan_intr_enter
+#endif
 	call	invlop_handler
 	call	as_lapic_eoi
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	jmp	ld_regs
 
 /*
@@ -174,7 +197,14 @@ IDTVEC(spuriousint)
  */
 	INTR_HANDLER ipi_intr_bitmap_handler
 	call	as_lapic_eoi
+#ifdef KMSAN
+	mov	$0, %rdi
+	call	kmsan_intr_enter
+#endif
 	call	ipi_bitmap_handler
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	jmp	doreti
 
 /*
@@ -198,7 +228,14 @@ IDTVEC(spuriousint)
  */
 	INTR_HANDLER ipi_swi
 	call	as_lapic_eoi
+#ifdef KMSAN
+	mov	$0, %rdi
+	call	kmsan_intr_enter
+#endif
 	call	ipi_swi_handler
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	jmp	doreti
 
 /*
@@ -212,7 +249,18 @@ IDTVEC(spuriousint)
 	movq	ipi_rendezvous_counts(,%rax,8), %rax
 	incq	(%rax)
 #endif
+#ifdef KMSAN
+	mov	$0, %rdi
+	call	kmsan_intr_enter
+	movq	%rsp, %rdi
+	mov	$TF_SIZE, %rsi
+	mov	$0, %rdx /* XXXMJ KMSAN_STATE_INITED */
+	callq	kmsan_mark
+#endif
 	call	smp_rendezvous_action
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	call	as_lapic_eoi
 	jmp	doreti
 

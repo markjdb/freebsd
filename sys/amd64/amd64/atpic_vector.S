@@ -46,7 +46,14 @@
 	INTR_HANDLER	\vec_name
 	movq	%rsp, %rsi
 	movl	$\irq_num, %edi	 	/* pass the IRQ */
+#ifdef KMSAN
+	mov	$12, %rdi
+	call	kmsan_intr_enter
+#endif
 	call	atpic_handle_intr
+#ifdef KMSAN
+	call	kmsan_intr_leave
+#endif
 	jmp	doreti
 	.endm
 

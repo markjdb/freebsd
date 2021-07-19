@@ -58,7 +58,11 @@
  */
 ENTRY(cpu_throw)
 	movq	%rsi,%r12
-	movq	%rsi,%rdi
+#ifdef KMSAN
+	movq	$8, %rdi	/* sizeof (struct thread *) */
+	call	kmsan_init_arg
+#endif
+	movq	%r12,%rdi
 	call	pmap_activate_sw
 	jmp	sw1
 END(cpu_throw)
@@ -139,8 +143,12 @@ ctx_switch_fpusave_done:
 	movq	%rsi,%r12
 	movq	%rdi,%r13
 	movq	%rdx,%r15
-	movq	%rsi,%rdi
-	callq	pmap_activate_sw
+#ifdef KMSAN
+	movq	$8, %rdi	/* sizeof(struct thread *) */
+	call	kmsan_init_arg
+#endif
+	movq	%r12,%rdi
+	call	pmap_activate_sw
 	movq	%r15,TD_LOCK(%r13)		/* Release the old thread */
 sw1:
 	leaq	TD_MD_PCB(%r12),%r8
@@ -222,6 +230,10 @@ done_load_dr:
 	movq	PCB_RBX(%r8),%rbx
 	movq	PCB_RIP(%r8),%rax
 	movq	%rax,(%rsp)
+#ifdef KMSAN
+	movq	$8, %rdi	/* sizeof(struct thread *) */
+	call	kmsan_init_arg
+#endif
 	movq	PCPU(CURTHREAD),%rdi
 	call	fpu_activate_sw
 	cmpb	$0,cpu_flush_rsb_ctxsw(%rip)

@@ -48,6 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
@@ -1308,6 +1309,7 @@ lapic_handle_intr(int vector, struct trapframe *frame)
 
 	/* The frame may have been written into a poisoned region. */
 	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
+	kmsan_mark(frame, sizeof(*frame), KMSAN_STATE_INITED);
 
 	isrc = intr_lookup_source(apic_idt_to_irq(PCPU_GET(apic_id),
 	    vector));
@@ -1326,6 +1328,7 @@ lapic_handle_timer(struct trapframe *frame)
 
 	/* The frame may have been written into a poisoned region. */
 	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
+	kmsan_mark(frame, sizeof(*frame), KMSAN_STATE_INITED);
 
 #if defined(SMP) && !defined(SCHED_ULE)
 	/*

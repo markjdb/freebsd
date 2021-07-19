@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysctl.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
@@ -1054,6 +1055,8 @@ fork_exit(void (*callout)(void *, struct trapframe *), void *arg,
 	struct proc *p;
 	struct thread *td;
 	struct thread *dtd;
+
+	kmsan_mark(frame, sizeof(*frame), KMSAN_STATE_INITED);
 
 	td = curthread;
 	p = td->td_proc;
