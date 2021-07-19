@@ -45,7 +45,7 @@ __FBSDID("$FreeBSD$");
 /*
  * Read bytes from kernel address space for debugger.
  */
-int
+int __nosanitizememory
 db_read_bytes(vm_offset_t addr, size_t size, char *data)
 {
 	jmp_buf jb;
