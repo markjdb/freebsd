@@ -522,6 +522,87 @@ kasan_copyout(const void *kaddr, void *uaddr, size_t len)
 
 /* -------------------------------------------------------------------------- */
 
+int
+kasan_fubyte(volatile const void *base)
+{
+	return (fubyte(base));
+}
+
+int
+kasan_fuword16(volatile const void *base)
+{
+	return (fuword16(base));
+}
+
+int
+kasan_fueword(volatile const void *base, long *val)
+{
+	kasan_shadow_check((unsigned long)val, sizeof(*val), true, __RET_ADDR);
+	return (fueword(base, val));
+}
+
+int
+kasan_fueword32(volatile const void *base, int32_t *val)
+{
+	kasan_shadow_check((unsigned long)val, sizeof(*val), true, __RET_ADDR);
+	return (fueword32(base, val));
+}
+
+int
+kasan_fueword64(volatile const void *base, int64_t *val)
+{
+	kasan_shadow_check((unsigned long)val, sizeof(*val), true, __RET_ADDR);
+	return (fueword64(base, val));
+}
+
+/* XXXMJ */
+#if 0
+int
+kmsan_subyte(volatile void *base, int byte)
+{
+}
+
+int
+kmsan_suword(volatile void *base, long word)
+{
+}
+
+int
+kmsan_suword16(volatile void *base, int word)
+{
+}
+
+int
+kmsan_suword32(volatile void *base, int32_t word)
+{
+}
+
+int
+kmsan_suword64(volatile void *base, int64_t word)
+{
+}
+#endif
+
+int
+kasan_casueword32(volatile uint32_t *base, uint32_t oldval, uint32_t *oldvalp,
+    uint32_t newval)
+{
+	kasan_shadow_check((unsigned long)oldvalp, sizeof(*oldvalp), true,
+	    __RET_ADDR);
+	return (casueword32(base, oldval, oldvalp, newval));
+}
+
+int
+kasan_casueword(volatile u_long *base, u_long oldval, u_long *oldvalp,
+    u_long newval)
+{
+	kasan_shadow_check((unsigned long)oldvalp, sizeof(*oldvalp), true,
+	    __RET_ADDR);
+	return (casueword(base, oldval, oldvalp, newval));
+}
+
+/* -------------------------------------------------------------------------- */
+
 #include <machine/atomic.h>
 #define	ATOMIC_SAN_PREFIX	kasan
 #include <sys/atomic_san.h>
