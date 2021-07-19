@@ -194,6 +194,9 @@ char	*strstr(const char *, const char *);
 int	 strvalid(const char *, size_t);
 
 #ifdef SAN_PREFIX
+#ifndef SAN_INTERCEPTOR
+#define	SAN_INTERCEPTOR(func)	__CONCAT(SAN_PREFIX, __CONCAT(_, func))
+#endif
 char	*SAN_INTERCEPTOR(strcpy)(char *, const char *);
 int	SAN_INTERCEPTOR(strcmp)(const char *, const char *);
 size_t	SAN_INTERCEPTOR(strlen)(const char *);

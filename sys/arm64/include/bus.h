@@ -92,15 +92,7 @@
 #define	BUS_SPACE_BARRIER_READ	0x01
 #define	BUS_SPACE_BARRIER_WRITE	0x02
 
-#ifndef SAN_RUNTIME
-#if defined(KASAN)
-#define	BUS_SAN_PREFIX	kasan
-#elif defined(KCSAN)
-#define	BUS_SAN_PREFIX	kcsan
-#endif
-#endif
-
-#ifdef BUS_SAN_PREFIX
+#ifdef SAN_PREFIX
 #include <sys/bus_san.h>
 #else
 

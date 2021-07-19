@@ -351,14 +351,8 @@ void	*memcpy(void * _Nonnull to, const void * _Nonnull from, size_t len);
 void	*memmove(void * _Nonnull dest, const void * _Nonnull src, size_t n);
 int	memcmp(const void *b1, const void *b2, size_t len);
 
-#if defined(KASAN)
-#define	SAN_PREFIX	kasan_
-#elif defined(KCSAN)
-#define	SAN_PREFIX	kcsan_
-#endif
-
 #ifdef SAN_PREFIX
-#define	SAN_INTERCEPTOR(func)	__CONCAT(SAN_PREFIX, func)
+#define	SAN_INTERCEPTOR(func)	__CONCAT(SAN_PREFIX, __CONCAT(_, func))
 
 void	*SAN_INTERCEPTOR(memset)(void *, int, size_t);
 void	*SAN_INTERCEPTOR(memcpy)(void *, const void *, size_t);
