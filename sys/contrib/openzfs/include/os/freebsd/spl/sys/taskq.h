@@ -30,9 +30,9 @@
 
 #include <sys/types.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
 #include <sys/taskqueue.h>
 #include <sys/thread.h>
-#include <sys/ck.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -53,7 +53,7 @@ typedef struct taskq_ent {
 	task_func_t	*tqent_func;
 	void		*tqent_arg;
 	taskqid_t tqent_id;
-	CK_LIST_ENTRY(taskq_ent) tqent_hash;
+	LIST_ENTRY(taskq_ent) tqent_hash;
 	uint8_t tqent_type;
 	uint8_t tqent_registered;
 	uint8_t tqent_cancelled;

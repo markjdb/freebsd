@@ -94,6 +94,7 @@
 #include <sys/callb.h>
 #include <sys/zone.h>
 #include <sys/vmsystm.h>
+#include <sys/msan.h>
 #endif	/* _KERNEL */
 
 #include "zfs_prop.h"
@@ -4183,7 +4184,7 @@ spa_ld_get_props(spa_t *spa)
 		return (spa_vdev_err(rvd, VDEV_AUX_CORRUPT_DATA, EIO));
 
 	if (error == 0) {
-		uint64_t autoreplace;
+		uint64_t autoreplace = 0;
 
 		spa_prop_find(spa, ZPOOL_PROP_BOOTFS, &spa->spa_bootfs);
 		spa_prop_find(spa, ZPOOL_PROP_AUTOREPLACE, &autoreplace);

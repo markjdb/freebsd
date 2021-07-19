@@ -57,6 +57,7 @@
 #ifdef _KERNEL
 #include <sys/vmsystm.h>
 #include <sys/zfs_znode.h>
+#include <sys/msan.h>
 #endif
 
 /*
@@ -1326,8 +1327,15 @@ dmu_write_uio_dnode(dnode_t *dn, zfs_uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		if (tocpy == db->db_size)
 			dmu_buf_fill_done(db, tx);
 
-		if (err)
+		if (err) {
+			/*
+			 * XXXMJ arc_cksum_compute() will still compute a
+			 * checksum for the (uninitialized) data.
+			 */
+			kmsan_mark((char *)db->db_data + bufoff, tocpy,
+			    KMSAN_STATE_INITED);
 			break;
+		}
 
 		size -= tocpy;
 	}

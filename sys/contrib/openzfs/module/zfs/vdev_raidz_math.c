@@ -491,6 +491,15 @@ benchmark_raidz(void)
 	/* Benchmark data reconstruction methods */
 	bench_rm = vdev_raidz_map_alloc(bench_zio, SPA_MINBLOCKSHIFT,
 	    BENCH_COLS, PARITY_PQR);
+#if defined(__FreeBSD__) && defined(KMSAN)
+	/*
+	 * XXXMJ hack to avoid triggering a false positive during reconstruction
+	 * benchmarking.
+	 */
+	for (c = 0; c < bench_rm->rm_row[0]->rr_cols; c++)
+		memset(abd_to_buf(bench_rm->rm_row[0]->rr_col[c].rc_abd),
+		    0, bench_rm->rm_row[0]->rr_col[c].rc_size);
+#endif
 
 	for (int fn = 0; fn < RAIDZ_REC_NUM; fn++)
 		benchmark_raidz_impl(bench_rm, fn, benchmark_rec_impl);
