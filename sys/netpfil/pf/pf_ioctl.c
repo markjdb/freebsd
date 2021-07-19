@@ -3841,7 +3841,6 @@ DIOCCHANGEADDR_error:
 	case DIOCRGETTABLES: {
 		struct pfioc_table *io = (struct pfioc_table *)addr;
 		struct pfr_table *pfrts;
-		size_t totlen;
 		int n;
 
 		if (io->pfrio_esize != sizeof(struct pfr_table)) {
@@ -3857,8 +3856,6 @@ DIOCCHANGEADDR_error:
 		}
 		io->pfrio_size = min(io->pfrio_size, n);
 
-		totlen = io->pfrio_size * sizeof(struct pfr_table);
-
 		pfrts = mallocarray(io->pfrio_size, sizeof(struct pfr_table),
 		    M_TEMP, M_NOWAIT);
 		if (pfrts == NULL) {
@@ -3869,8 +3866,10 @@ DIOCCHANGEADDR_error:
 		error = pfr_get_tables(&io->pfrio_table, pfrts,
 		    &io->pfrio_size, io->pfrio_flags | PFR_FLAG_USERIOCTL);
 		PF_RULES_RUNLOCK();
-		if (error == 0)
-			error = copyout(pfrts, io->pfrio_buffer, totlen);
+		if (error == 0) {
+			error = copyout(pfrts, io->pfrio_buffer,
+			    io->pfrio_size * sizeof(struct pfr_table));
+		}
 		free(pfrts, M_TEMP);
 		break;
 	}
@@ -3878,7 +3877,6 @@ DIOCCHANGEADDR_error:
 	case DIOCRGETTSTATS: {
 		struct pfioc_table *io = (struct pfioc_table *)addr;
 		struct pfr_tstats *pfrtstats;
-		size_t totlen;
 		int n;
 
 		if (io->pfrio_esize != sizeof(struct pfr_tstats)) {
@@ -3896,7 +3894,6 @@ DIOCCHANGEADDR_error:
 		}
 		io->pfrio_size = min(io->pfrio_size, n);
 
-		totlen = io->pfrio_size * sizeof(struct pfr_tstats);
 		pfrtstats = mallocarray(io->pfrio_size,
 		    sizeof(struct pfr_tstats), M_TEMP, M_NOWAIT);
 		if (pfrtstats == NULL) {
@@ -3910,7 +3907,8 @@ DIOCCHANGEADDR_error:
 		PF_RULES_RUNLOCK();
 		PF_TABLE_STATS_UNLOCK();
 		if (error == 0)
-			error = copyout(pfrtstats, io->pfrio_buffer, totlen);
+			error = copyout(pfrtstats, io->pfrio_buffer,
+			    io->pfrio_size * sizeof(struct pfr_tstats));
 		free(pfrtstats, M_TEMP);
 		break;
 	}
@@ -4116,7 +4114,6 @@ DIOCCHANGEADDR_error:
 	case DIOCRGETADDRS: {
 		struct pfioc_table *io = (struct pfioc_table *)addr;
 		struct pfr_addr *pfras;
-		size_t totlen;
 
 		if (io->pfrio_esize != sizeof(struct pfr_addr)) {
 			error = ENODEV;
@@ -4128,7 +4125,6 @@ DIOCCHANGEADDR_error:
 			error = EINVAL;
 			break;
 		}
-		totlen = io->pfrio_size * sizeof(struct pfr_addr);
 		pfras = mallocarray(io->pfrio_size, sizeof(struct pfr_addr),
 		    M_TEMP, M_WAITOK);
 		PF_RULES_RLOCK();
@@ -4136,7 +4132,8 @@ DIOCCHANGEADDR_error:
 		    &io->pfrio_size, io->pfrio_flags | PFR_FLAG_USERIOCTL);
 		PF_RULES_RUNLOCK();
 		if (error == 0)
-			error = copyout(pfras, io->pfrio_buffer, totlen);
+			error = copyout(pfras, io->pfrio_buffer,
+			    io->pfrio_size * sizeof(struct pfr_addr));
 		free(pfras, M_TEMP);
 		break;
 	}
@@ -4144,7 +4141,6 @@ DIOCCHANGEADDR_error:
 	case DIOCRGETASTATS: {
 		struct pfioc_table *io = (struct pfioc_table *)addr;
 		struct pfr_astats *pfrastats;
-		size_t totlen;
 
 		if (io->pfrio_esize != sizeof(struct pfr_astats)) {
 			error = ENODEV;
@@ -4156,7 +4152,6 @@ DIOCCHANGEADDR_error:
 			error = EINVAL;
 			break;
 		}
-		totlen = io->pfrio_size * sizeof(struct pfr_astats);
 		pfrastats = mallocarray(io->pfrio_size,
 		    sizeof(struct pfr_astats), M_TEMP, M_WAITOK);
 		PF_RULES_RLOCK();
@@ -4164,7 +4159,8 @@ DIOCCHANGEADDR_error:
 		    &io->pfrio_size, io->pfrio_flags | PFR_FLAG_USERIOCTL);
 		PF_RULES_RUNLOCK();
 		if (error == 0)
-			error = copyout(pfrastats, io->pfrio_buffer, totlen);
+			error = copyout(pfrastats, io->pfrio_buffer,
+			    io->pfrio_size * sizeof(struct pfr_astats));
 		free(pfrastats, M_TEMP);
 		break;
 	}
@@ -4649,7 +4645,6 @@ DIOCCHANGEADDR_error:
 	case DIOCIGETIFACES: {
 		struct pfioc_iface *io = (struct pfioc_iface *)addr;
 		struct pfi_kif *ifstore;
-		size_t bufsiz;
 
 		if (io->pfiio_esize != sizeof(struct pfi_kif)) {
 			error = ENODEV;
@@ -4663,14 +4658,14 @@ DIOCCHANGEADDR_error:
 			break;
 		}
 
-		bufsiz = io->pfiio_size * sizeof(struct pfi_kif);
 		ifstore = mallocarray(io->pfiio_size, sizeof(struct pfi_kif),
 		    M_TEMP, M_WAITOK);
 
 		PF_RULES_RLOCK();
 		pfi_get_ifaces(io->pfiio_name, ifstore, &io->pfiio_size);
 		PF_RULES_RUNLOCK();
-		error = copyout(ifstore, io->pfiio_buffer, bufsiz);
+		error = copyout(ifstore, io->pfiio_buffer,
+		    io->pfiio_size * sizeof(struct pfi_kif));
 		free(ifstore, M_TEMP);
 		break;
 	}

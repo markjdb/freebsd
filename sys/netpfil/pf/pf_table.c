@@ -1321,6 +1321,7 @@ pfr_get_tstats(struct pfr_table *filter, struct pfr_tstats *tbl, int *size,
 			continue;
 		if (n-- <= 0)
 			continue;
+		bzero(tbl, sizeof(*tbl));
 		bcopy(&p->pfrkt_kts.pfrts_t, &tbl->pfrts_t,
 		    sizeof(struct pfr_table));
 		for (pfr_dir = 0; pfr_dir < PFR_DIR_MAX; pfr_dir ++) {
