@@ -208,7 +208,7 @@
 
 /* detects whether we are being compiled under msan */
 #ifndef ZSTD_MEMORY_SANITIZER
-#  if __has_feature(memory_sanitizer)
+#  if __has_feature(memory_sanitizer) && !defined(_KERNEL)
 #    define ZSTD_MEMORY_SANITIZER 1
 #  else
 #    define ZSTD_MEMORY_SANITIZER 0
