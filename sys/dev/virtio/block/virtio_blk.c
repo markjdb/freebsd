@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bio.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/msan.h>
 #include <sys/sglist.h>
 #include <sys/sysctl.h>
 #include <sys/lock.h>
@@ -1146,6 +1147,8 @@ vtblk_bio_done(struct vtblk_softc *sc, struct bio *bp, int error)
 	/* Because of GEOM direct dispatch, we cannot hold any locks. */
 	if (sc != NULL)
 		VTBLK_LOCK_ASSERT_NOTOWNED(sc);
+
+	kmsan_mark(bp->bio_data, bp->bio_length, KMSAN_STATE_INITED);
 
 	if (error) {
 		bp->bio_resid = bp->bio_bcount;
