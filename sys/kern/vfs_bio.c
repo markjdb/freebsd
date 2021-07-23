@@ -63,6 +63,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mount.h>
+#include <sys/msan.h>
 #include <sys/mutex.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
@@ -2292,6 +2293,8 @@ bufwrite(struct buf *bp)
 	 */
 	bufobj_wref(bp->b_bufobj);
 	bundirty(bp);
+
+	kmsan_check(bp->b_data, bp->b_bcount, "bufwrite");
 
 	bp->b_flags &= ~B_DONE;
 	bp->b_ioflags &= ~BIO_ERROR;
