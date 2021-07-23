@@ -1324,7 +1324,7 @@ ret:
 	return (error);
 }
 
-#define	suword __CONCAT(suword, __ELF_WORD_SIZE)
+#define	elf_suword __CONCAT(suword, __ELF_WORD_SIZE)
 
 int
 __elfN(freebsd_fixup)(register_t **stack_base, struct image_params *imgp)
@@ -1385,7 +1385,7 @@ __elfN(freebsd_fixup)(register_t **stack_base, struct image_params *imgp)
 		return (error);
 
 	base--;
-	if (suword(base, imgp->args->argc) == -1)
+	if (elf_suword(base, imgp->args->argc) == -1)
 		return (EFAULT);
 	*stack_base = (register_t *)base;
 	return (0);
