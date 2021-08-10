@@ -235,6 +235,7 @@ ZSTDIO		opt_zstdio.h
 # Sanitizers
 KASAN		opt_global.h
 KCSAN		opt_global.h
+KMSAN		opt_global.h
 
 # POSIX kernel options
 P1003_1B_MQUEUE			opt_posix.h
