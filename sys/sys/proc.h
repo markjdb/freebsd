@@ -177,6 +177,7 @@ struct kaioinfo;
 struct kaudit_record;
 struct kdtrace_proc;
 struct kdtrace_thread;
+struct kmsan_td;
 struct mqueue_notifier;
 struct nlminfo;
 struct p_sched;
@@ -369,6 +370,7 @@ struct thread {
 	struct mdthread td_md;		/* (k) Any machine-dependent fields. */
 #endif
 	int		td_pflags2;	/* (k) Private thread (TDP2_*) flags. */
+	struct kmsan_td	*td_kmsan;	/* (k) KMSAN state */
 };
 
 struct thread0_storage {
