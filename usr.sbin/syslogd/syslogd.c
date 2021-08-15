@@ -1747,7 +1747,7 @@ dofsync(void)
 	struct filed *f;
 
 	LOGDST_FOREACH(f) {
-		if ((f->f_type == F_FILE) &&
+		if (f->f_type == F_FILE &&
 		    (f->f_flags & FFLAG_NEEDSYNC)) {
 			f->f_flags &= ~FFLAG_NEEDSYNC;
 			(void)fsync(f->f_file);
@@ -2230,7 +2230,7 @@ ttymsg_check(struct iovec *iov, int iovcnt, char *line, int tmout)
 	if ((sb.st_mode & S_IWGRP) == 0)
 		/* Messages disabled. */
 		return (NULL);
-	return ttymsg(iov, iovcnt, line, tmout);
+	return (ttymsg(iov, iovcnt, line, tmout));
 }
 
 static void
@@ -2758,11 +2758,11 @@ prop_filter_compile(struct prop_filter *pfilter, char *filter)
 	/* fill in prop_type */
 	if (strcasecmp(argv[0], "msg") == 0)
 		pfilter->prop_type = PROP_TYPE_MSG;
-	else if(strcasecmp(argv[0], "hostname") == 0)
+	else if (strcasecmp(argv[0], "hostname") == 0)
 		pfilter->prop_type = PROP_TYPE_HOSTNAME;
-	else if(strcasecmp(argv[0], "source") == 0)
+	else if (strcasecmp(argv[0], "source") == 0)
 		pfilter->prop_type = PROP_TYPE_HOSTNAME;
-	else if(strcasecmp(argv[0], "programname") == 0)
+	else if (strcasecmp(argv[0], "programname") == 0)
 		pfilter->prop_type = PROP_TYPE_PROGNAME;
 	else {
 		logerror("unknown property");
@@ -3744,6 +3744,7 @@ socksetup(struct peer *pe)
 	int error;
 	char *cp;
 	int (*sl_recv)(struct socklist *);
+
 	/*
 	 * We have to handle this case for backwards compatibility:
 	 * If there are two (or more) colons but no '[' and ']',
@@ -3798,8 +3799,7 @@ socksetup(struct peer *pe)
 	for (res = res0; res != NULL; res = res->ai_next) {
 		int s;
 
-		if (res->ai_family != AF_LOCAL &&
-		    SecureMode > 1) {
+		if (res->ai_family != AF_LOCAL && SecureMode > 1) {
 			/* Only AF_LOCAL in secure mode. */
 			continue;
 		}
@@ -3847,6 +3847,7 @@ socksetup(struct peer *pe)
 		 * system will choose a port for us.
 		 */
 		if (res->ai_family == AF_LOCAL)
+			/* XXXMJ capmode */
 			unlink(pe->pe_name);
 		if (res->ai_family == AF_LOCAL ||
 		    NoBind == 0 || pe->pe_name != NULL) {
