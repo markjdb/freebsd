@@ -129,11 +129,11 @@ in the case where
 is already open as the file descriptor
 .Fa fd .
 Otherwise, the path will not be removed and an error will be returned.
-The
+If the value
+.Dv FD_NONE
+is specified for the
 .Fa fd
-can be set the
-.Dv FD_NONE .
-In that case
+parameter,
 .Fn funlinkat
 behaves exactly like
 .Fn unlinkat .
