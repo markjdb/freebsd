@@ -136,6 +136,7 @@ __FBSDID("$FreeBSD$");
 #include <limits.h>
 #include <netdb.h>
 #include <paths.h>
+#include <regex.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -145,7 +146,6 @@ __FBSDID("$FreeBSD$");
 #include <sysexits.h>
 #include <unistd.h>
 #include <utmpx.h>
-#include <regex.h>
 
 #include "pathnames.h"
 #include "ttymsg.h"
@@ -760,35 +760,28 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* Do not block SIGCHLD. */
 	(void)sigemptyset(&sigset);
-	(void)sigaddset(&sigset, SIGTERM);
-	(void)sigaddset(&sigset, SIGINT);
-	(void)sigaddset(&sigset, SIGQUIT);
-	(void)sigaddset(&sigset, SIGHUP);
-	(void)sigaddset(&sigset, SIGALRM);
-	(void)sigaddset(&sigset, SIGPIPE);
-
+#define	EVSIG(s) do {						\
+	(void)sigaddset(&sigset, (s));				\
+	EV_SET(&ev, (s), EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);	\
+	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {		\
+		warn("kevent");					\
+		pidfile_remove(pfh);				\
+		exit(1);					\
+	}							\
+} while (0)
+	EVSIG(SIGTERM);
+	EVSIG(SIGINT);
+	EVSIG(SIGQUIT);
+	EVSIG(SIGHUP);
+	EVSIG(SIGALRM);
+	EVSIG(SIGPIPE);
+#undef EVSIG
 	if (sigprocmask(SIG_BLOCK, &sigset, NULL) != 0) {
 		warn("sigprocmask");
 		pidfile_remove(pfh);
 		exit(1);
 	}
-
-	/* XXXMJ subroutine */
-	EV_SET(&ev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-	EV_SET(&ev, SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-	EV_SET(&ev, SIGQUIT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-	EV_SET(&ev, SIGHUP, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-	EV_SET(&ev, SIGALRM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-	EV_SET(&ev, SIGPIPE, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
-
 	(void)alarm(TIMERINTVL);
 
 	STAILQ_FOREACH(sl, &shead, next) {
@@ -1623,6 +1616,8 @@ logmsg(int pri, const struct logtime *timestamp, const char *hostname,
 		/*
 		 * Open in non-blocking mode to avoid hangs during open
 		 * and close(waiting for the port to drain).
+		 *
+		 * XXXMJ capmode
 		 */
 		f->f_file = open(ctty, O_WRONLY | O_NONBLOCK, 0);
 
