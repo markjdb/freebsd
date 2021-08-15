@@ -33,7 +33,7 @@
 # - various elements of syslog.conf selectors
 # - hostname, program, property-based filters
 # - actions: path name, hostname, users (can we implement this?), pipes
-#
+# - signal handlers (config reload particularly)
 #
 
 readonly SYSLOGD_PIDFILE=syslogd.pid
@@ -62,6 +62,12 @@ syslogd_start()
 syslogd_log()
 {
     atf_check -s exit:0 -o empty -e empty logger $*
+}
+
+# Make syslogd reload its configuration file.
+syslogd_reload()
+{
+    pkill -HUP -F $SYSLOGD_PIDFILE
 }
 
 # Stop a private syslogd instance.
@@ -113,7 +119,47 @@ basic_cleanup()
     syslogd_stop
 }
 
+atf_test_case "reload" "cleanup"
+reload_head()
+{
+    atf_set descr 'XXX'
+}
+reload_body()
+{
+    cat <<__EOF__ > $SYSLOGD_CONFIG
+user.* $(pwd)/reload
+__EOF__
+
+    truncate -s 0 reload
+
+    syslogd_start
+
+    syslogd_log -p user.notice -t reload -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+        "pre-reload"
+    atf_check -s exit:0 -o match:'reload: pre-reload' cat reload
+
+    # Override the old rule.
+    cat <<__EOF__ > $SYSLOGD_CONFIG
+news.* $(pwd)/reload
+__EOF__
+    truncate -s 0 reload
+
+    syslogd_reload
+
+    syslogd_log -p user.notice -t reload -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+        "post-reload user"
+    syslogd_log -p news.notice -t reload -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+        "post-reload news"
+    atf_check -s exit:0 -o not-match:'reload: post-reload user' cat reload
+    atf_check -s exit:0 -o match:'reload: post-reload news' cat reload
+}
+reload_cleanup()
+{
+    syslogd_stop
+}
+
 atf_init_test_cases()
 {
     atf_add_test_case "basic"
+    atf_add_test_case "reload"
 }
