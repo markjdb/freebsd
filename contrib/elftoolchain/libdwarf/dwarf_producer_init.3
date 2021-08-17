@@ -28,8 +28,7 @@
 .Dt DWARF_PRODUCER_INIT 3
 .Os
 .Sh NAME
-.Nm dwarf_producer_init ,
-.Nm dwarf_producer_init_b
+.Nm dwarf_producer_init
 .Nd allocate a DWARF producer descriptor
 .Sh LIBRARY
 .Lb libdwarf
@@ -42,14 +41,6 @@
 .Fa "Dwarf_Handler errhand"
 .Fa "Dwarf_Ptr errarg"
 .Fa "Dwarf_Error *err"
-.Fc
-.Ft Dwarf_P_Debug
-.Fo dwarf_producer_init_b
-.Fa "Dwarf_Unsigned flags"
-.Fa "Dwarf_Callback_Func_b func"
-.Fa "Dwarf_Handler errhand"
-.Fa "Dwarf_Ptr errarg"
-.Fa "Dwarf_Error *error"
 .Fc
 .Sh DESCRIPTION
 These functions allocate and return a
@@ -209,12 +200,6 @@ library.
 Function
 .Fn dwarf_producer_init
 is deprecated.
-Function
-.Fn dwarf_producer_init
-is identical to function
-.Fn dwarf_producer_init_b
-except that the callback function it expects can not properly handle
-arbitrary section symbol index values.
 .Ss Memory Management
 The
 .Vt Dwarf_P_Debug

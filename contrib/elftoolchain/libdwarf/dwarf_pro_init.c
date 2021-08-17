@@ -28,82 +28,48 @@
 
 ELFTC_VCSID("$Id: dwarf_pro_init.c 2074 2011-10-27 03:34:33Z jkoshy $");
 
-Dwarf_P_Debug
+int
 dwarf_producer_init(Dwarf_Unsigned flags, Dwarf_Callback_Func func,
-    Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Error *error)
+    Dwarf_Handler errhand, Dwarf_Ptr errarg, void *data, const char *isa __unused,
+    const char *version __unused, const char *extra __unused,
+    Dwarf_P_Debug *ret_dbg, Dwarf_Error *error)
 {
 	Dwarf_P_Debug dbg;
 	int mode;
 
 	if (flags & DW_DLC_READ || flags & DW_DLC_RDWR) {
 		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
+		return (DW_DLV_ERROR);
 	}
 
 	if (flags & DW_DLC_WRITE)
 		mode = DW_DLC_WRITE;
 	else {
 		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
+		return (DW_DLV_ERROR);
 	}
 
 	if (func == NULL) {
 		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
+		return (DW_DLV_ERROR);
 	}
 
 	if (_dwarf_alloc(&dbg, DW_DLC_WRITE, error) != DW_DLE_NONE)
-		return (DW_DLV_BADADDR);
+		return (DW_DLV_ERROR);
 
 	dbg->dbg_mode = mode;
 
 	if (_dwarf_init(dbg, flags, errhand, errarg, error) != DW_DLE_NONE) {
 		free(dbg);
-		return (DW_DLV_BADADDR);
+		return (DW_DLV_ERROR);
 	}
 
 	dbg->dbgp_func = func;
+	dbg->dbgp_func_data = data;
 
-	return (dbg);
-}
+	*ret_dbg = dbg;
 
-Dwarf_P_Debug
-dwarf_producer_init_b(Dwarf_Unsigned flags, Dwarf_Callback_Func_b func,
-    Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Error *error)
-{
-	Dwarf_P_Debug dbg;
-	int mode;
-
-	if (flags & DW_DLC_READ || flags & DW_DLC_RDWR) {
-		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
-	}
-
-	if (flags & DW_DLC_WRITE)
-		mode = DW_DLC_WRITE;
-	else {
-		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
-	}
-
-	if (func == NULL) {
-		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
-	}
-
-	if (_dwarf_alloc(&dbg, DW_DLC_WRITE, error) != DW_DLE_NONE)
-		return (DW_DLV_BADADDR);
-
-	dbg->dbg_mode = mode;
-
-	if (_dwarf_init(dbg, flags, errhand, errarg, error) != DW_DLE_NONE) {
-		free(dbg);
-		return (DW_DLV_BADADDR);
-	}
-
-	dbg->dbgp_func_b = func;
-
-	return (dbg);
+	return (DW_DLV_OK);
 }
 
 int

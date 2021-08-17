@@ -60,9 +60,7 @@ by this function may be obtained by calling function
 Argument
 .Ar dbg
 should reference a DWARF producer instance allocated using
-.Xr dwarf_producer_init 3 in sequence.
-or
-.Xr dwarf_producer_init_b 3 .
+.Xr dwarf_producer_init 3 .
 The
 .Dv DW_DLC_SYMBOLIC_RELOCATIONS
 flag should have been set on the DWARF producer instance.
@@ -223,6 +221,5 @@ was not called prior to calling function
 .Xr dwarf_get_relocation_info_count 3 ,
 .Xr dwarf_producer_finish 3 ,
 .Xr dwarf_producer_init 3 ,
-.Xr dwarf_producer_init_b 3 ,
 .Xr dwarf_reset_section_bytes 3 ,
 .Xr dwarf_transform_to_disk_form 3

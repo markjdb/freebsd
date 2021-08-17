@@ -98,18 +98,14 @@ _dwarf_pro_callback(Dwarf_P_Debug dbg, char *name, int size,
     Dwarf_Unsigned type, Dwarf_Unsigned flags, Dwarf_Unsigned link,
     Dwarf_Unsigned info, Dwarf_Unsigned *symndx, int *error)
 {
-	int e, ret, isymndx;
+	Dwarf_Unsigned isymndx;
+	int e, ret;
 
 	assert(dbg != NULL && name != NULL && symndx != NULL);
 
-	if (dbg->dbgp_func_b)
-		ret = dbg->dbgp_func_b(name, size, type, flags, link, info,
-		    symndx, &e);
-	else {
-		ret = dbg->dbgp_func(name, size, type, flags, link, info,
-		    &isymndx, &e);
-		*symndx = isymndx;
-	}
+	ret = dbg->dbgp_func(name, size, type, flags, link, info,
+	    &isymndx, dbg->dbgp_func_data, &e);
+	*symndx = isymndx;
 	if (ret < 0) {
 		if (error)
 			*error = e;

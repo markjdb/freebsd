@@ -450,7 +450,7 @@ struct _Dwarf_Debug {
 	Dwarf_Unsigned	dbgp_flags;
 	Dwarf_Unsigned	dbgp_isa;
 	Dwarf_Callback_Func dbgp_func;
-	Dwarf_Callback_Func_b dbgp_func_b;
+	void 		*dbgp_func_data;
 	Dwarf_Die	dbgp_root_die;
 	STAILQ_HEAD(, _Dwarf_Die) dbgp_dielist;
 	STAILQ_HEAD(, _Dwarf_P_Expr) dbgp_pelist;

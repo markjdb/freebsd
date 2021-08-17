@@ -568,7 +568,23 @@ insert_shtab(struct elfcopy *ecp, int tail)
 void
 copy_content(struct elfcopy *ecp)
 {
+	Elf_Scn *shstrtab;
+	GElf_Shdr shdr;
 	struct section *s;
+	size_t indx, sizehint;
+
+	if (elf_getshstrndx(ecp->ein, &indx) != 0) {
+		shstrtab = elf_getscn(ecp->ein, indx);
+		if (shstrtab == NULL)
+			errx(EXIT_FAILURE, "elf_getscn failed: %s",
+			    elf_errmsg(-1));
+		if (gelf_getshdr(shstrtab, &shdr) != &shdr)
+			errx(EXIT_FAILURE, "gelf_getshdr failed: %s",
+			    elf_errmsg(-1));
+		sizehint = shdr.sh_size;
+	} else {
+		sizehint = 0;
+	}
 
 	TAILQ_FOREACH(s, &ecp->v_sec, sec_list) {
 		/* Skip pseudo section. */

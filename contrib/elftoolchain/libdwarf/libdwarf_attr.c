@@ -52,10 +52,18 @@ _dwarf_attr_add(Dwarf_Die die, Dwarf_Attribute atref, Dwarf_Attribute *atp,
     Dwarf_Error *error)
 {
 	Dwarf_Attribute at;
+#if 0
 	int ret;
 
 	if ((ret = _dwarf_attr_alloc(die, &at, error)) != DW_DLE_NONE)
 		return (ret);
+#else
+	at = malloc(sizeof(*at));
+	if (at == NULL) {
+		DWARF_SET_ERROR(die->die_dbg, error, DW_DLE_MEMORY);
+		return (DW_DLE_MEMORY);
+	}
+#endif
 
 	memcpy(at, atref, sizeof(struct _Dwarf_Attribute));
 

@@ -32,8 +32,8 @@ void
 dwarf_dealloc(Dwarf_Debug dbg, Dwarf_Ptr p, Dwarf_Unsigned alloc_type)
 {
 	Dwarf_Abbrev ab;
-	Dwarf_AttrDef ad, tad;
-	Dwarf_Attribute at, tat;
+	Dwarf_AttrDef ad;
+	Dwarf_Attribute at;
 	Dwarf_Die die;
 
 	/*
@@ -51,7 +51,7 @@ dwarf_dealloc(Dwarf_Debug dbg, Dwarf_Ptr p, Dwarf_Unsigned alloc_type)
 		free(p);
 	else if (alloc_type == DW_DLA_ABBREV) {
 		ab = p;
-		STAILQ_FOREACH_SAFE(ad, &ab->ab_attrdef, ad_next, tad) {
+		while ((ad = STAILQ_FIRST(&ab->ab_attrdef)) != NULL) {
 			STAILQ_REMOVE(&ab->ab_attrdef, ad, _Dwarf_AttrDef,
 			    ad_next);
 			free(ad);
@@ -59,7 +59,7 @@ dwarf_dealloc(Dwarf_Debug dbg, Dwarf_Ptr p, Dwarf_Unsigned alloc_type)
 		free(ab);
 	} else if (alloc_type == DW_DLA_DIE) {
 		die = p;
-		STAILQ_FOREACH_SAFE(at, &die->die_attr, at_next, tat) {
+		while ((at = STAILQ_FIRST(&die->die_attr)) != NULL) {
 			STAILQ_REMOVE(&die->die_attr, at,
 			    _Dwarf_Attribute, at_next);
 			if (at->at_ld != NULL)
