@@ -109,6 +109,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/nv.h>
 #include <sys/procdesc.h>
 #include <sys/queue.h>
 #include <sys/resource.h>
@@ -147,11 +148,15 @@ __FBSDID("$FreeBSD$");
 #include <unistd.h>
 #include <utmpx.h>
 
-#include "pathnames.h"
-#include "ttymsg.h"
+#include <libcasper.h>
+#include <libutil.h>
 
 #define SYSLOG_NAMES
 #include <sys/syslog.h>
+
+#include "config.h"
+#include "pathnames.h"
+#include "ttymsg.h"
 
 static const char *ConfFile = _PATH_LOGCONF;
 static const char *PidFile = _PATH_LOGPID;
@@ -419,6 +424,8 @@ static int	needdofsync = 0; /* Are any file(s) waiting to be fsynced? */
 static struct pidfh *pfh;
 static bool	RFC3164OutputFormat = true; /* Use legacy format by default. */
 
+static cap_channel_t *cap_config; /* Obtain capabilities defined by config. */
+
 struct iovlist;
 
 static int	allowaddr(char *);
@@ -514,6 +521,31 @@ addsock(struct addrinfo *ai, struct socklist *sl0)
 			sl->sl_sa = NULL;
 	}
 	STAILQ_INSERT_TAIL(&shead, sl, next);
+}
+
+static int
+init_capabilities(void)
+{
+#ifdef WITH_CASPER
+	cap_channel_t *capcasper;
+	nvlist_t *limits;
+
+	capcasper = cap_init();
+	if (capcasper == NULL)
+		return (-1);
+
+	cap_config = cap_service_open(capcasper, "syslogd.config");
+	if (cap_config == NULL)
+		return (-1);
+
+	limits = nvlist_create(0);
+	nvlist_add_string(limits, "file", ConfFile);
+	if (cap_limit_set(cap_config, limits) != 0)
+		return (-1);
+
+	cap_close(capcasper);
+#endif
+	return (0);
 }
 
 int
@@ -795,6 +827,8 @@ main(int argc, char *argv[])
 	}
 
 	pidfile_write(pfh);
+
+	init_capabilities();
 
 	dprintf("off & running....\n");
 
@@ -2172,6 +2206,8 @@ wallmsg(struct filed *f, struct iovec *iov, const int iovlen)
 	int i;
 	const char *p;
 
+	/* XXXMJ can this cause problems? need a way for the service to return a
+	 * log msg error*/
 	if (reenter++)
 		return;
 	setutxent();
@@ -2496,7 +2532,7 @@ _readconfigfile(FILE *cf, struct filed_head *l, bool allow_includes)
 	}
 }
 
-static void
+static void __unused
 readconfigfile(const char *path)
 {
 	struct filed_head l;
@@ -2626,7 +2662,7 @@ init(bool reload)
 	free(fa);
 	facnt = 0;
 
-	readconfigfile(ConfFile);
+	cap_readconfig(cap_config, ConfFile);
 	Initialized = 1;
 
 	if (Debug) {

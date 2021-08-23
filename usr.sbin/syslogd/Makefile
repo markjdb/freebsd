@@ -3,15 +3,22 @@
 
 .include <src.opts.mk>
 
-.PATH: ${SRCTOP}/usr.bin/wall
-
 CONFGROUPS=	CONFS SYSLOGD_D
 CONFS=	syslog.conf
 PROG=	syslogd
 MAN=	syslog.conf.5 syslogd.8
-SRCS=	syslogd.c ttymsg.c
+SRCS=	syslogd.c \
+	cap_config.c
 
-LIBADD=	util
+.PATH: ${SRCTOP}/usr.bin/wall
+SRCS+= ttymsg.c
+
+LIBADD= util
+
+.if ${MK_CASPER} != "no"
+CFLAGS+= -DWITH_CASPER
+LIBADD+= casper nv
+.endif
 
 .if ${MK_INET_SUPPORT} != "no"
 CFLAGS+= -DINET
