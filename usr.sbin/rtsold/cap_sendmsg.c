@@ -278,5 +278,5 @@ sendmsg_command(const char *cmd, const nvlist_t *limits __unused, nvlist_t *nvli
 	return (0);
 }
 
-CREATE_SERVICE("rtsold.sendmsg", NULL, sendmsg_command, 0);
+CASPER_SERVICE("rtsold.sendmsg", NULL, sendmsg_command, 0);
 #endif /* WITH_CASPER */

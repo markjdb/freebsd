@@ -1410,4 +1410,4 @@ net_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	return (EINVAL);
 }
 
-CREATE_SERVICE("system.net", net_limit, net_command, 0);
+CASPER_SERVICE("system.net", net_limit, net_command, 0);

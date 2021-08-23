@@ -28,7 +28,7 @@
 .Dt LIBCASPER 3
 .Os
 .Sh NAME
-.Nm CREATE_SERVICE
+.Nm CASPER_SERVICE
 .Nd "casper service declaration macro"
 .Sh LIBRARY
 .Lb libcasper
@@ -43,10 +43,10 @@ typedef int service_command_func_t(const char *, const nvlist_t *, nvlist_t *,
     nvlist_t *);
 
 .Ed
-.Fn CREATE_SERVICE "name" "limit_func" "command_func" "flags"
+.Fn CASPER_SERVICE "name" "limit_func" "command_func" "flags"
 .Sh DESCRIPTION
 The
-.Nm CREATE_SERVICE
+.Nm CASPER_SERVICE
 macro to create a new Casper service.
 The
 .Fa name

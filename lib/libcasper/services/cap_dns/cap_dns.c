@@ -767,4 +767,4 @@ dns_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	return (error);
 }
 
-CREATE_SERVICE("system.dns", dns_limit, dns_command, 0);
+CASPER_SERVICE("system.dns", dns_limit, dns_command, 0);

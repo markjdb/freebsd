@@ -55,7 +55,7 @@ struct casper_service *service_register(const char *name,
     uint64_t flags);
 
 #define	__constructor	__attribute__((constructor))
-#define	CREATE_SERVICE(name, limit_func, command_func, flags)		\
+#define	CASPER_SERVICE(name, limit_func, command_func, flags)		\
 	static __constructor void					\
 	init_casper_service(void)					\
 	{								\
@@ -63,5 +63,8 @@ struct casper_service *service_register(const char *name,
 		(void)service_register(name, limit_func, command_func,  \
 		    flags);						\
 	}
+
+/* For compatibility. */
+#define	CREATE_SERVICE	CASPER_SERVICE
 
 #endif	/* !_LIBCASPER_SERVICE_H_ */

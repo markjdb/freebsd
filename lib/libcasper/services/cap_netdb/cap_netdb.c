@@ -152,4 +152,4 @@ netdb_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	return (error);
 }
 
-CREATE_SERVICE("system.netdb", netdb_limit, netdb_command, 0);
+CASPER_SERVICE("system.netdb", netdb_limit, netdb_command, 0);

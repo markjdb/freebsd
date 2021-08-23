@@ -737,5 +737,5 @@ fileargs_command(const char *cmd, const nvlist_t *limits,
 	return (EINVAL);
 }
 
-CREATE_SERVICE("system.fileargs", fileargs_limit, fileargs_command,
+CASPER_SERVICE("system.fileargs", fileargs_limit, fileargs_command,
     CASPER_SERVICE_FD | CASPER_SERVICE_STDIO | CASPER_SERVICE_NO_UNIQ_LIMITS);

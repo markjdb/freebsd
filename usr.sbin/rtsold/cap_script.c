@@ -232,5 +232,5 @@ script_limit(const nvlist_t *oldlimits, const nvlist_t *newlimits)
 	return (0);
 }
 
-CREATE_SERVICE("rtsold.script", script_limit, script_command, 0);
+CASPER_SERVICE("rtsold.script", script_limit, script_command, 0);
 #endif /* WITH_CASPER */

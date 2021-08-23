@@ -159,5 +159,5 @@ llflags_command(const char *cmd, const nvlist_t *limits __unused,
 	return (0);
 }
 
-CREATE_SERVICE("rtsold.llflags", NULL, llflags_command, 0);
+CASPER_SERVICE("rtsold.llflags", NULL, llflags_command, 0);
 #endif /* WITH_CASPER */

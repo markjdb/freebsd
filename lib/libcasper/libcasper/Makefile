@@ -40,6 +40,6 @@ MLINKS+=libcasper.3 cap_recv_nvlist.3
 MLINKS+=libcasper.3 cap_xfer_nvlist.3
 MLINKS+=libcasper.3 cap_service_open.3
 
-MLINKS+=libcasper_service.3 CREATE_SERVICE.3
+MLINKS+=libcasper_service.3 CASPER_SERVICE.3
 
 .include <bsd.lib.mk>
