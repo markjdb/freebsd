@@ -362,7 +362,7 @@ static TAILQ_HEAD(, deadq_entry) deadq_head =
  * of measure is `mark intervals', i.e. 20 minutes by default.
  * Processes on the dead queue will be terminated after that time.
  */
-#define	 DQ_TIMO_INIT	2
+#define	DQ_TIMO_INIT	2
 
 /*
  * Intervals at which we flush out "message repeated" messages,
@@ -377,7 +377,7 @@ static int repeatinterval[] = { 30, 120, 600 };	/* # of secs before flush */
 					(f)->f_repeatcount = MAXREPEAT;	\
 			} while (0)
 
-static const char *TypeNames[] = {
+static const char * const TypeNames[] = {
 	"UNUSED",	"FILE",		"TTY",		"CONSOLE",
 	"FORW",		"USERS",	"WALL",		"PIPE"
 };
@@ -449,9 +449,9 @@ static int	socklist_recv_file(struct socklist *);
 static int	socklist_recv_sock(struct socklist *);
 static int	skip_message(const char *, const char *, int);
 static int	evaluate_prop_filter(const struct prop_filter *filter,
-    const char *value);
+		    const char *value);
 static int	prop_filter_compile(struct prop_filter *pfilter,
-    char *filterstr);
+		    char *filterstr);
 static void	parsemsg(const char *, char *);
 static void	printsys(char *);
 static int	p_open(const char *, pid_t *);
@@ -2238,6 +2238,7 @@ reapchild(int pd)
 	LOGDST_FOREACH(f) {
 		if (f->f_type == F_PIPE && f->fu_pipe_pd == pd) {
 			(void)pdgetpid(pd, &pid);
+			/* XXXMJ can't do this in capability mode */
 			if (waitpid(pid, &status, 0) != pid)
 				/* XXXMJ */
 				abort();
