@@ -31,13 +31,27 @@
 #
 # Test case ideas:
 # - various elements of syslog.conf selectors
-# - hostname, program, property-based filters
+# - hostname, program, property-based filters, mix of different filters
 # - actions: path name, hostname, users (can we implement this?), pipes
 # - signal handlers (config reload particularly)
+# - config includes (recursion?)
 #
 
+#
+# Basic test structure:
+# - write a config file to $SYSLOGD_CONFIG
+# - start syslogd
+# - log messages using logger(1) via syslogd_log
+# - check that messages (didn't) appear in the log(s)
+# - stop syslogd using the cleanup routine
+#
+
+########################
+### Helper functions ###
+########################
+
 readonly SYSLOGD_PIDFILE=syslogd.pid
-readonly SYSLOGD_LOCAL_SOCKET=log
+readonly SYSLOGD_LOCAL_SOCKET=$(pwd)/log
 readonly SYSLOGD_LOCAL_PRIVSOCKET=logpriv
 readonly SYSLOGD_CONFIG=syslog.conf
 readonly SYSLOGD_UDP_PORT=12345
@@ -45,16 +59,24 @@ readonly SYSLOGD_UDP_PORT=12345
 # Start a private syslogd instance.
 syslogd_start()
 {
+    local i
+
     syslogd \
         -b :$SYSLOGD_UDP_PORT \
         -P $(pwd)/$SYSLOGD_PIDFILE \
-        -p $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+        -p $SYSLOGD_LOCAL_SOCKET \
         -S $(pwd)/$SYSLOGD_LOCAL_PRIV_SOCKET \
         -f $(pwd)/$SYSLOGD_CONFIG \
         $@
 
-    while [ ! -S $(pwd)/$SYSLOGD_LOCAL_SOCKET ]; do
+    # Give it a bit of time to spin up.
+    i=0
+    while [ ! -S $SYSLOGD_LOCAL_SOCKET ]; do
         sleep 0.1
+        i=$((i + 1))
+        if [ $i -eq 20 ]; then
+            atf_fail "timed out waiting for syslogd to start"
+        fi
     done
 }
 
@@ -86,6 +108,10 @@ syslogd_stop()
     rm -f $SYSLOGD_PIDFILE $SYSLOGD_LOCAL_SOCKET $SYSLOGD_LOCAL_PRIVSOCKET
 }
 
+##################
+### Test Cases ###
+##################
+
 atf_test_case "basic" "cleanup"
 basic_head()
 {
@@ -101,7 +127,7 @@ __EOF__
 
     syslogd_start
 
-    syslogd_log -p user.notice -t basic -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+    syslogd_log -p user.notice -t basic -h $SYSLOGD_LOCAL_SOCKET \
         "hello, world (unix)"
     atf_check -s exit:0 -o match:'basic: hello, world \(unix\)' cat basic
 
@@ -134,7 +160,7 @@ __EOF__
 
     syslogd_start
 
-    syslogd_log -p user.notice -t reload -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+    syslogd_log -p user.notice -t reload -h $SYSLOGD_LOCAL_SOCKET \
         "pre-reload"
     atf_check -s exit:0 -o match:'reload: pre-reload' cat reload
 
@@ -146,9 +172,9 @@ __EOF__
 
     syslogd_reload
 
-    syslogd_log -p user.notice -t reload -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+    syslogd_log -p user.notice -t reload -h $SYSLOGD_LOCAL_SOCKET \
         "post-reload user"
-    syslogd_log -p news.notice -t reload -h $(pwd)/$SYSLOGD_LOCAL_SOCKET \
+    syslogd_log -p news.notice -t reload -h $SYSLOGD_LOCAL_SOCKET \
         "post-reload news"
     atf_check -s exit:0 -o not-match:'reload: post-reload user' cat reload
     atf_check -s exit:0 -o match:'reload: post-reload news' cat reload
@@ -158,8 +184,53 @@ reload_cleanup()
     syslogd_stop
 }
 
+atf_test_case "prog_filter" "cleanup"
+prog_filter_head()
+{
+    atf_set descr 'XXX'
+}
+prog_filter_body()
+{
+    cat <<__EOF__ > $SYSLOGD_CONFIG
+!prog1,prog2
+user.* $(pwd)/prog_filter
+__EOF__
+    truncate -s 0 prog_filter
+
+    syslogd_start
+
+    for i in 1 2 3; do
+        syslogd_log -p user.notice -t prog$i -h $SYSLOGD_LOCAL_SOCKET \
+            "hello this is prog${i}"
+    done
+    atf_check -s exit:0 -o match:'prog1: hello this is prog1' cat prog_filter
+    atf_check -s exit:0 -o match:'prog2: hello this is prog2' cat prog_filter
+    atf_check -s exit:0 -o not-match:'prog3: hello this is prog3' cat prog_filter
+
+    cat <<__EOF__ > $SYSLOGD_CONFIG
+!-prog1,prog2
+user.* $(pwd)/prog_filter
+__EOF__
+    truncate -s 0 prog_filter
+
+    syslogd_reload
+
+    for i in 1 2 3; do
+        syslogd_log -p user.notice -t prog$i -h $SYSLOGD_LOCAL_SOCKET \
+            "hello this is prog${i}"
+    done
+    atf_check -s exit:0 -o not-match:'prog1: hello this is prog1' cat prog_filter
+    atf_check -s exit:0 -o not-match:'prog2: hello this is prog2' cat prog_filter
+    atf_check -s exit:0 -o match:'prog3: hello this is prog3' cat prog_filter
+}
+prog_filter_cleanup()
+{
+    syslogd_stop
+}
+
 atf_init_test_cases()
 {
     atf_add_test_case "basic"
     atf_add_test_case "reload"
+    atf_add_test_case "prog_filter"
 }

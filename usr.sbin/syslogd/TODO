@@ -1,0 +1,7 @@
+- readconfig returns an array of logging destinations
+  - index (for re-opening)
+  - fd (file descriptor, or socket, or ...)
+    - names? log file name, remote host, ...
+  - filter info
+    - facility/priority pairs
+    - program, hostname, property (could be split out...)

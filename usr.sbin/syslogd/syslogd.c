@@ -294,6 +294,15 @@ enum f_type {
  * or if f_type is F_PIPE and f_pid > 0.
  */
 
+struct filter {
+	u_char	f_pmask[LOG_NFACILITIES + 1];
+	u_char	f_pcmp[LOG_NFACILITIES + 1];
+
+	const char *f_host;
+	const char *f_program;
+	struct prop_filter *f_prop_filter;
+};
+
 struct filed {
 	STAILQ_ENTRY(filed)	next;	/* next in linked list */
 	enum f_type f_type;
@@ -619,6 +628,7 @@ main(int argc, char *argv[])
 			no_compress++;
 			break;
 		case 'C':
+			/* XXXMJ */
 			logflags |= O_CREAT;
 			break;
 		case 'd':		/* debug */
@@ -2662,7 +2672,8 @@ init(bool reload)
 	free(fa);
 	facnt = 0;
 
-	cap_readconfig(cap_config, ConfFile);
+	//cap_readconfig(cap_config, ConfFile);
+	readconfigfile(ConfFile);
 	Initialized = 1;
 
 	if (Debug) {
@@ -3187,32 +3198,6 @@ cfline(const char *line, const char *prog, const char *host,
 	}
 
 	STAILQ_INSERT_TAIL(l, f, next);
-}
-
-/*
- *  Decode a symbolic name to a numeric value
- */
-static int
-decode(const char *name, const CODE *codetab)
-{
-	const CODE *c;
-	char *p, buf[40];
-
-	if (isdigit(*name))
-		return (atoi(name));
-
-	for (p = buf; *name && p < &buf[sizeof(buf) - 1]; p++, name++) {
-		if (isupper(*name))
-			*p = tolower(*name);
-		else
-			*p = *name;
-	}
-	*p = '\0';
-	for (c = codetab; c->c_name; c++)
-		if (!strcmp(buf, c->c_name))
-			return (c->c_val);
-
-	return (-1);
 }
 
 static void

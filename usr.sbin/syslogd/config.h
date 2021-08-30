@@ -28,6 +28,32 @@
  * SUCH DAMAGE.
  */
 
+#ifndef __CONFIG_H__
+#define	__CONFIG_H__
+
 struct cap_channel;
 
+/* Need:
+ * filter info
+ * capability name
+ * capability type
+ * index
+ */
+
+enum captype {
+	C_FILE,
+	C_SOCK,
+	C_PIPE,
+	C_PROC, /* XXXMJ need pipe and proc sometimes...? */
+};
+
+struct logcap {
+	int idx;	/* capability index */
+	int fd;		/* socket, file descriptor, process descriptor, pipe */
+};
+
+/* XXXMJ call it loadconfig? */
 int	cap_readconfig(struct cap_channel *cap, const char *path);
+int	cap_getcap(struct cap_channel *cap, int index);
+
+#endif /* __CONFIG_H__ */
