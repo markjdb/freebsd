@@ -880,7 +880,7 @@ mdstart_vnode(struct md_s *sc, struct bio *bp)
 	struct buf *pb;
 	bus_dma_segment_t *vlist;
 	struct thread *td;
-	off_t iolen, iostart, off, len;
+	off_t iolen, iostart, iostart1, off, len;
 	int ma_offs, npages;
 
 	switch (bp->bio_cmd) {
@@ -975,16 +975,27 @@ unmapped_step:
 		auio.uio_iov = &aiov;
 		auio.uio_iovcnt = 1;
 	}
+
 	iostart = auio.uio_offset;
 	if (auio.uio_rw == UIO_READ) {
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		error = VOP_READ(vp, &auio, 0, sc->cred);
+		do {
+			iostart1 = auio.uio_offset;
+			error = VOP_READ(vp, &auio, 0, sc->cred);
+			if (error == 0 && auio.uio_offset == iostart1)
+				error = ENXIO;
+		} while (error == 0 && auio.uio_resid != 0);
 		VOP_UNLOCK(vp);
 	} else {
 		(void) vn_start_write(vp, &mp, V_WAIT);
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		error = VOP_WRITE(vp, &auio, sc->flags & MD_ASYNC ? 0 : IO_SYNC,
-		    sc->cred);
+		do {
+			iostart1 = auio.uio_offset;
+			error = VOP_WRITE(vp, &auio,
+			    sc->flags & MD_ASYNC ? 0 : IO_SYNC, sc->cred);
+			if (error == 0 && auio.uio_offset == iostart1)
+				error = ENXIO;
+		} while (error == 0 && auio.uio_resid != 0);
 		VOP_UNLOCK(vp);
 		vn_finished_write(mp);
 		if (error == 0)
@@ -1009,6 +1020,13 @@ unmapped_step:
 	} else {
 		bp->bio_resid = auio.uio_resid;
 	}
+
+	/*
+	 * Upper layers generally do not handle a non-zero residual, flag this
+	 * condition as an error.
+	 */
+	if (bp->bio_resid != 0)
+		bp->bio_flags |= BIO_ERROR;
 
 	free(piov, M_MD);
 	return (error);
