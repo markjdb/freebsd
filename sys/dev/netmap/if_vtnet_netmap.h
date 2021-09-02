@@ -447,9 +447,5 @@ vtnet_netmap_attach(struct vtnet_softc *sc)
 	na.nm_config = vtnet_netmap_config;
 
 	netmap_attach(&na);
-
-	nm_prinf("vtnet attached txq=%d, txd=%d rxq=%d, rxd=%d",
-			na.num_tx_rings, na.num_tx_desc,
-			na.num_tx_rings, na.num_rx_desc);
 }
 /* end of file */
