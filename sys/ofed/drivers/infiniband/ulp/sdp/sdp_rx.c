@@ -241,7 +241,7 @@ sdp_sock_queue_rcv_mb(struct socket *sk, struct mbuf *mb)
 	}
 
 	m_adj(mb, SDP_HEAD_SIZE);
-	SOCKBUF_LOCK(&sk->so_rcv);
+	SOCK_RECVBUF_LOCK(sk);
 	if (unlikely(h->flags & SDP_OOB_PRES))
 		sdp_urg(ssk, mb);
 	sbappend_locked(&sk->so_rcv, mb, 0);

@@ -927,7 +927,7 @@ ngs_rcvmsg(node_p node, item_p item, hook_p lasthook)
 		return (EINVAL);
 	}
 	so = pcbp->ng_socket;
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 
 	/* As long as the race is handled, priv->mtx may be unlocked now. */
 	mtx_unlock(&priv->mtx);
@@ -953,7 +953,7 @@ ngs_rcvmsg(node_p node, item_p item, hook_p lasthook)
 		default:
 			error = EINVAL;		/* unknown command */
 		}
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 
 		/* Free the message and return. */
 		NG_FREE_MSG(msg);
@@ -967,7 +967,7 @@ ngs_rcvmsg(node_p node, item_p item, hook_p lasthook)
 	addrlen = snprintf((char *)&addr.sg_data, sizeof(addr.sg_data),
 	    "[%x]:", retaddr);
 	if (addrlen < 0 || addrlen > sizeof(addr.sg_data)) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		printf("%s: snprintf([%x]) failed - %d\n", __func__, retaddr,
 		    addrlen);
 		NG_FREE_MSG(msg);
@@ -985,7 +985,7 @@ ngs_rcvmsg(node_p node, item_p item, hook_p lasthook)
 	NG_FREE_MSG(msg);
 
 	if (m == NULL) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		TRAP_ERROR;
 		return (ENOBUFS);
 	}
@@ -1038,10 +1038,10 @@ ngs_rcvdata(hook_p hook, item_p item)
 	addr->sg_data[addrlen] = '\0';
 
 	/* Try to tell the socket which hook it came in on. */
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	if (sbappendaddr_locked(&so->so_rcv, (struct sockaddr *)addr, m,
 	    NULL) == 0) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		m_freem(m);
 		TRAP_ERROR;
 		return (ENOBUFS);

@@ -1275,7 +1275,7 @@ static int
 socket_send(struct socket *s, struct mbuf *mm, struct sockaddr_in *src)
 {
     if (s) {
-	SOCKBUF_LOCK(&s->so_rcv);
+	SOCK_RECVBUF_LOCK(s);
 	if (sbappendaddr_locked(&s->so_rcv, (struct sockaddr *)src, mm,
 	    NULL) != 0) {
 	    sorwakeup_locked(s);

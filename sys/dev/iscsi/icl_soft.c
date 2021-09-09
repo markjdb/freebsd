@@ -742,9 +742,9 @@ icl_receive_thread(void *arg)
 	so = ic->ic_socket;
 
 	for (;;) {
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		if (ic->ic_disconnecting) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			break;
 		}
 
@@ -761,7 +761,7 @@ icl_receive_thread(void *arg)
 			so->so_rcv.sb_lowat = so->so_rcv.sb_hiwat + 1;
 			available = sbavail(&so->so_rcv);
 		}
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 
 		if (available == 0) {
 			if (so->so_error != 0) {
@@ -889,7 +889,7 @@ icl_conn_send_pdus(struct icl_soft_conn *isc, struct icl_pdu_stailq *queue)
 
 	so = ic->ic_socket;
 
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	/*
 	 * Check how much space do we have for transmit.  We can't just
 	 * call sosend() and retry when we get EWOULDBLOCK or EMSGSIZE,
@@ -904,7 +904,7 @@ icl_conn_send_pdus(struct icl_soft_conn *isc, struct icl_pdu_stailq *queue)
 	 * for the time being.
 	 */
 	so->so_snd.sb_lowat = so->so_snd.sb_hiwat + 1;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 
 	while (!STAILQ_EMPTY(queue)) {
 		request = STAILQ_FIRST(queue);
@@ -916,7 +916,7 @@ icl_conn_send_pdus(struct icl_soft_conn *isc, struct icl_pdu_stailq *queue)
 			 * to avoid unnecessary wakeups until there
 			 * is enough space for the PDU to fit.
 			 */
-			SOCKBUF_LOCK(&so->so_snd);
+			SOCK_SENDBUF_LOCK(so);
 			available = sbspace(&so->so_snd);
 			if (available < size) {
 #if 1
@@ -926,10 +926,10 @@ icl_conn_send_pdus(struct icl_soft_conn *isc, struct icl_pdu_stailq *queue)
 #endif
 				so->so_snd.sb_lowat = max(size,
 				    so->so_snd.sb_hiwat / 8);
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				return;
 			}
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 		}
 		STAILQ_REMOVE_HEAD(queue, ip_next);
 		error = icl_pdu_finalize(request);
@@ -1454,12 +1454,12 @@ icl_conn_start(struct icl_conn *ic)
 	 * Register socket upcall, to get notified about incoming PDUs
 	 * and free space to send outgoing ones.
 	 */
-	SOCKBUF_LOCK(&ic->ic_socket->so_snd);
+	SOCK_SENDBUF_LOCK(ic->ic_socket);
 	soupcall_set(ic->ic_socket, SO_SND, icl_soupcall_send, isc);
-	SOCKBUF_UNLOCK(&ic->ic_socket->so_snd);
-	SOCKBUF_LOCK(&ic->ic_socket->so_rcv);
+	SOCK_SENDBUF_UNLOCK(ic->ic_socket);
+	SOCK_RECVBUF_LOCK(ic->ic_socket);
 	soupcall_set(ic->ic_socket, SO_RCV, icl_soupcall_receive, isc);
-	SOCKBUF_UNLOCK(&ic->ic_socket->so_rcv);
+	SOCK_RECVBUF_UNLOCK(ic->ic_socket);
 
 	/*
 	 * Start threads.
@@ -1571,10 +1571,10 @@ icl_soft_conn_close(struct icl_conn *ic)
 	if (!ic->ic_disconnecting) {
 		so = ic->ic_socket;
 		if (so)
-			SOCKBUF_LOCK(&so->so_rcv);
+			SOCK_RECVBUF_LOCK(so);
 		ic->ic_disconnecting = true;
 		if (so)
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 	}
 	while (isc->receive_running || isc->send_running) {
 		cv_signal(&isc->receive_cv);
@@ -1594,14 +1594,14 @@ icl_soft_conn_close(struct icl_conn *ic)
 	 * Deregister socket upcalls.
 	 */
 	ICL_CONN_UNLOCK(ic);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	if (so->so_snd.sb_upcall != NULL)
 		soupcall_clear(so, SO_SND);
-	SOCKBUF_UNLOCK(&so->so_snd);
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_SENDBUF_UNLOCK(so);
+	SOCK_RECVBUF_LOCK(so);
 	if (so->so_rcv.sb_upcall != NULL)
 		soupcall_clear(so, SO_RCV);
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 	soclose(so);
 	ICL_CONN_LOCK(ic);
 

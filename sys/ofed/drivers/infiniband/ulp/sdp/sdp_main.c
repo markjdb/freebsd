@@ -986,9 +986,9 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 		m_freem(control);	/* empty control, just free it */
 	}
 	if (!(flags & PRUS_OOB)) {
-		SOCKBUF_LOCK(&so->so_snd);
+		SOCK_SENDBUF_LOCK(so);
 		sdp_append(ssk, &so->so_snd, m, cnt);
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		if (nam && ssk->state < TCPS_SYN_SENT) {
 			/*
 			 * Do implied connect if not yet connected.
@@ -1012,9 +1012,9 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 		SDP_WUNLOCK(ssk);
 		return (0);
 	} else {
-		SOCKBUF_LOCK(&so->so_snd);
+		SOCK_SENDBUF_LOCK(so);
 		if (sbspace(&so->so_snd) < -512) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			m_freem(m);
 			error = ENOBUFS;
 			goto out;
@@ -1029,7 +1029,7 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 		 */
 		m->m_flags |= M_URG | M_PUSH;
 		sdp_append(ssk, &so->so_snd, m, cnt);
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		if (nam && ssk->state < TCPS_SYN_SENT) {
 			/*
 			 * Do implied connect if not yet connected.
@@ -1109,20 +1109,20 @@ sdp_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 
 restart:
 	do {
-		SOCKBUF_LOCK(&so->so_snd);
+		SOCK_SENDBUF_LOCK(so);
 		if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = EPIPE;
 			goto release;
 		}
 		if (so->so_error) {
 			error = so->so_error;
 			so->so_error = 0;
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			goto release;
 		}
 		if ((so->so_state & SS_ISCONNECTED) == 0 && addr == NULL) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = ENOTCONN;
 			goto release;
 		}
@@ -1130,7 +1130,7 @@ restart:
 		if (flags & MSG_OOB)
 			space += 1024;
 		if (atomic && resid > ssk->xmit_size_goal - SDP_HEAD_SIZE) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = EMSGSIZE;
 			goto release;
 		}
@@ -1138,17 +1138,17 @@ restart:
 		    (atomic || space < so->so_snd.sb_lowat)) {
 			if ((so->so_state & SS_NBIO) ||
 			    (flags & (MSG_NBIO | MSG_DONTWAIT)) != 0) {
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				error = EWOULDBLOCK;
 				goto release;
 			}
 			error = sbwait(so, SO_SND);
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			if (error)
 				goto release;
 			goto restart;
 		}
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		do {
 			if (uio == NULL) {
 				resid = 0;
@@ -1295,7 +1295,7 @@ sdp_sorecv(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	}
 
 restart:
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	/* Abort if socket has reported problems. */
 	if (so->so_error) {
@@ -1342,7 +1342,7 @@ restart:
 	goto restart;
 
 deliver:
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 	KASSERT(sbavail(sb), ("%s: sockbuf empty", __func__));
 	KASSERT(sb->sb_mb != NULL, ("%s: sb_mb == NULL", __func__));
 

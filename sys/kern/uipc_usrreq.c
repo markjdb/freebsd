@@ -979,10 +979,10 @@ uipc_rcvd(struct socket *so, int flags)
 	 * so_rcv to avoid holding the so_rcv lock over the entire
 	 * transaction on the remote so_snd.
 	 */
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	mbcnt = so->so_rcv.sb_mbcnt;
 	sbcc = sbavail(&so->so_rcv);
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 	/*
 	 * There is a benign race condition at this point.  If we're planning to
 	 * clear SB_STOP, but uipc_send is called on the connected socket at
@@ -999,7 +999,7 @@ uipc_rcvd(struct socket *so, int flags)
 		return (0);
 	}
 	so2 = unp2->unp_socket;
-	SOCKBUF_LOCK(&so2->so_snd);
+	SOCK_SENDBUF_LOCK(so2);
 	if (sbcc < so2->so_snd.sb_hiwat && mbcnt < so2->so_snd.sb_mbmax)
 		so2->so_snd.sb_flags &= ~SB_STOP;
 	sowwakeup_locked(so2);
@@ -1677,11 +1677,11 @@ uipc_ready(struct socket *so, struct mbuf *m, int count)
 	if ((unp2 = unp_pcb_lock_peer(unp)) != NULL) {
 		UNP_PCB_UNLOCK(unp);
 		so2 = unp2->unp_socket;
-		SOCKBUF_LOCK(&so2->so_rcv);
+		SOCK_RECVBUF_LOCK(so2);
 		if ((error = sbready(&so2->so_rcv, m, count)) == 0)
 			sorwakeup_locked(so2);
 		else
-			SOCKBUF_UNLOCK(&so2->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so2);
 		UNP_PCB_UNLOCK(unp2);
 		return (error);
 	}

@@ -1314,7 +1314,7 @@ ktls_enable_rx(struct socket *so, struct tls_enable *en)
 	}
 
 	/* Mark the socket as using TLS offload. */
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	so->so_rcv.sb_tls_seqno = be64dec(en->rec_seq);
 	so->so_rcv.sb_tls_info = tls;
 	so->so_rcv.sb_flags |= SB_TLS_RX;
@@ -1322,7 +1322,7 @@ ktls_enable_rx(struct socket *so, struct tls_enable *en)
 	/* Mark existing data as not ready until it can be decrypted. */
 	sb_mark_notready(&so->so_rcv);
 	ktls_check_rx(&so->so_rcv);
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	/* Prefer TOE -> ifnet TLS -> software TLS. */
 #ifdef TCP_OFFLOAD
@@ -1404,12 +1404,12 @@ ktls_enable_tx(struct socket *so, struct tls_enable *en)
 	 */
 	inp = so->so_pcb;
 	INP_WLOCK(inp);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	so->so_snd.sb_tls_seqno = be64dec(en->rec_seq);
 	so->so_snd.sb_tls_info = tls;
 	if (tls->mode != TCP_TLS_MODE_SW)
 		so->so_snd.sb_flags |= SB_TLS_IFNET;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	INP_WUNLOCK(inp);
 	SOCK_IO_SEND_UNLOCK(so);
 
@@ -1523,20 +1523,20 @@ ktls_set_tx_mode(struct socket *so, int mode)
 
 	inp = so->so_pcb;
 	INP_WLOCK_ASSERT(inp);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	tls = so->so_snd.sb_tls_info;
 	if (tls == NULL) {
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		return (0);
 	}
 
 	if (tls->mode == mode) {
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		return (0);
 	}
 
 	tls = ktls_hold(tls);
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	INP_WUNLOCK(inp);
 
 	tls_new = ktls_clone_session(tls, KTLS_TX);
@@ -1576,11 +1576,11 @@ ktls_set_tx_mode(struct socket *so, int mode)
 	}
 
 	INP_WLOCK(inp);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	so->so_snd.sb_tls_info = tls_new;
 	if (tls_new->mode != TCP_TLS_MODE_SW)
 		so->so_snd.sb_flags |= SB_TLS_IFNET;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	SOCK_IO_SEND_UNLOCK(so);
 
 	/*

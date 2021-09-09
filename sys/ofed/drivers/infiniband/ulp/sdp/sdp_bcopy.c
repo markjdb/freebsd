@@ -207,14 +207,14 @@ again:
 	    sdp_nagle_off(ssk, mb)) {
 		struct mbuf *n;
 
-		SOCKBUF_LOCK(&sk->so_snd);
+		SOCK_SENDBUF_LOCK(sk);
 		sk->so_snd.sb_sndptr = mb->m_nextpkt;
 		sk->so_snd.sb_mb = mb->m_nextpkt;
 		mb->m_nextpkt = NULL;
 		SB_EMPTY_FIXUP(&sk->so_snd);
 		for (n = mb; n != NULL; n = n->m_next)
 			sbfree(&sk->so_snd, n);
-		SOCKBUF_UNLOCK(&sk->so_snd);
+		SOCK_SENDBUF_UNLOCK(sk);
 		sdp_post_send(ssk, mb);
 		post_count++;
 	}

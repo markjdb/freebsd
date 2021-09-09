@@ -1123,7 +1123,7 @@ hvsock_chan_cb(struct vmbus_channel *chan, void *context)
 		/*
 		 * Wake up reader if there are data to read.
 		 */
-		SOCKBUF_LOCK(&(so)->so_rcv);
+		SOCK_RECVBUF_LOCK((so));
 
 		HVSOCK_DBG(HVSOCK_DBG_VERBOSE,
 		    "%s: read available = %u\n", __func__,
@@ -1132,12 +1132,12 @@ hvsock_chan_cb(struct vmbus_channel *chan, void *context)
 		if (hvsock_chan_readable(pcb->chan))
 			sorwakeup_locked(so);
 		else
-			SOCKBUF_UNLOCK(&(so)->so_rcv);
+			SOCK_RECVBUF_UNLOCK((so));
 
 		/*
 		 * Wake up sender if space becomes available to write.
 		 */
-		SOCKBUF_LOCK(&(so)->so_snd);
+		SOCK_SENDBUF_LOCK((so));
 		canwrite = hvsock_canwrite_check(pcb);
 
 		HVSOCK_DBG(HVSOCK_DBG_VERBOSE,
@@ -1146,7 +1146,7 @@ hvsock_chan_cb(struct vmbus_channel *chan, void *context)
 		if (canwrite > 0) {
 			sowwakeup_locked(so);
 		} else {
-			SOCKBUF_UNLOCK(&(so)->so_snd);
+			SOCK_SENDBUF_UNLOCK((so));
 		}
 	}
 

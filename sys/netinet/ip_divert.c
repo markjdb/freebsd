@@ -284,7 +284,7 @@ divert_packet(struct mbuf *m, bool incoming)
 	nport = htons((u_int16_t)(((struct ipfw_rule_ref *)(mtag+1))->info));
 	while ((inp = inp_next(&inpi)) != NULL) {
 		sa = inp->inp_socket;
-		SOCKBUF_LOCK(&sa->so_rcv);
+		SOCK_RECVBUF_LOCK(sa);
 		if (sbappendaddr_locked(&sa->so_rcv,
 		    (struct sockaddr *)&divsrc, m, NULL) == 0) {
 			soroverflow_locked(sa);

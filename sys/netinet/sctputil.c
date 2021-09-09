@@ -5580,7 +5580,7 @@ restart:
 
 restart_nosblocks:
 	if (hold_sblock == 0) {
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		hold_sblock = 1;
 	}
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_SOCKET_GONE) ||
@@ -5653,7 +5653,7 @@ restart_nosblocks:
 		}
 	}
 	if (hold_sblock == 1) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		hold_sblock = 0;
 	}
 	/* we possibly have data we can read */
@@ -5999,7 +5999,7 @@ found_one:
 		hold_rlock = 0;
 	}
 	if (hold_sblock) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		hold_sblock = 0;
 	}
 	/* now copy out what data we can */
@@ -6247,7 +6247,7 @@ wait_some_more:
 			hold_rlock = 0;
 		}
 		if (hold_sblock == 0) {
-			SOCKBUF_LOCK(&so->so_rcv);
+			SOCK_RECVBUF_LOCK(so);
 			hold_sblock = 1;
 		}
 		if ((copied_so_far) && (control->length == 0) &&
@@ -6262,7 +6262,7 @@ wait_some_more:
 			control->held_length = 0;
 		}
 		if (hold_sblock) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			hold_sblock = 0;
 		}
 		if (control->length == 0) {
@@ -6364,7 +6364,7 @@ release:
 		hold_rlock = 0;
 	}
 	if (hold_sblock == 1) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		hold_sblock = 0;
 	}
 
@@ -6373,7 +6373,7 @@ release:
 
 release_unlocked:
 	if (hold_sblock) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		hold_sblock = 0;
 	}
 	if ((stcb) && (in_flags & MSG_PEEK) == 0) {
@@ -6400,7 +6400,7 @@ out:
 		SCTP_INP_READ_UNLOCK(inp);
 	}
 	if (hold_sblock) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 	}
 	if (sockbuf_lock) {
 		SOCK_IO_RECV_UNLOCK(so);

@@ -3390,11 +3390,11 @@ tcp_mtudisc(struct inpcb *inp, int mtuoffer)
 	tcp_mss_update(tp, -1, mtuoffer, NULL, NULL);
 
 	so = inp->inp_socket;
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	/* If the mss is larger than the socket buffer, decrease the mss. */
 	if (so->so_snd.sb_hiwat < tp->t_maxseg)
 		tp->t_maxseg = so->so_snd.sb_hiwat;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 
 	TCPSTAT_INC(tcps_mturesent);
 	tp->t_rtttime = 0;

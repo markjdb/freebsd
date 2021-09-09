@@ -304,7 +304,7 @@ send_input(struct mbuf *m, struct ifnet *ifp, int direction, int msglen __unused
 	 * Send incoming or outgoing traffic to user space either to be
 	 * protected (outgoing) or validated (incoming) according to rfc3971.
 	 */
-	SOCKBUF_LOCK(&V_send_so->so_rcv);
+	SOCK_RECVBUF_LOCK(V_send_so);
 	if (sbappendaddr_locked(&V_send_so->so_rcv,
 	    (struct sockaddr *)&sendsrc, m, NULL) == 0) {
 		soroverflow_locked(V_send_so);

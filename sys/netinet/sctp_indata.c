@@ -4136,7 +4136,7 @@ sctp_express_handle_sack(struct sctp_tcb *stcb, uint32_t cumack,
 	}
 	/* sa_ignore NO_NULL_CHK */
 	if (stcb->sctp_socket) {
-		SOCKBUF_LOCK(&stcb->sctp_socket->so_snd);
+		SOCK_SENDBUF_LOCK(stcb->sctp_socket);
 		if (SCTP_BASE_SYSCTL(sctp_logging_level) & SCTP_WAKE_LOGGING_ENABLE) {
 			/* sa_ignore NO_NULL_CHK */
 			sctp_wakeup_log(stcb, 1, SCTP_WAKESND_FROM_SACK);
@@ -4824,7 +4824,7 @@ hopeless_peer:
 
 	/* sa_ignore NO_NULL_CHK */
 	if ((wake_him) && (stcb->sctp_socket)) {
-		SOCKBUF_LOCK(&stcb->sctp_socket->so_snd);
+		SOCK_SENDBUF_LOCK(stcb->sctp_socket);
 		if (SCTP_BASE_SYSCTL(sctp_logging_level) & SCTP_WAKE_LOGGING_ENABLE) {
 			sctp_wakeup_log(stcb, wake_him, SCTP_WAKESND_FROM_SACK);
 		}

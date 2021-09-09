@@ -351,7 +351,7 @@ udp_append(struct inpcb *inp, struct ip *ip, struct mbuf *n, int off,
 	m_adj(n, off);
 
 	so = inp->inp_socket;
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	if (sbappendaddr_locked(&so->so_rcv, append_sa, n, opts) == 0) {
 		soroverflow_locked(so);
 		m_freem(n);

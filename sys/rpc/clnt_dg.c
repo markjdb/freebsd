@@ -277,11 +277,11 @@ clnt_dg_create(
 	}
 
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 recheck_socket:
 	if (sb->sb_upcall) {
 		if (sb->sb_upcall != clnt_dg_soupcall) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			printf("clnt_dg_create(): socket already has an incompatible upcall\n");
 			goto err2;
 		}
@@ -294,9 +294,9 @@ recheck_socket:
 		 * We are the first on this socket - allocate the
 		 * structure and install it in the socket.
 		 */
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		cs = mem_alloc(sizeof(*cs));
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		if (sb->sb_upcall) {
 			/*
 			 * We have lost a race with some other client.
@@ -310,7 +310,7 @@ recheck_socket:
 		TAILQ_INIT(&cs->cs_pending);
 		soupcall_set(so, SO_RCV, clnt_dg_soupcall, cs);
 	}
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	cl->cl_refs = 1;
 	cl->cl_ops = &clnt_dg_ops;
@@ -1000,7 +1000,7 @@ clnt_dg_destroy(CLIENT *cl)
 	cs = cu->cu_socket->so_rcv.sb_upcallarg;
 	clnt_dg_close(cl);
 
-	SOCKBUF_LOCK(&cu->cu_socket->so_rcv);
+	SOCK_RECVBUF_LOCK(cu->cu_socket);
 	mtx_lock(&cs->cs_lock);
 
 	cs->cs_refs--;
@@ -1008,13 +1008,13 @@ clnt_dg_destroy(CLIENT *cl)
 		mtx_unlock(&cs->cs_lock);
 		soupcall_clear(cu->cu_socket, SO_RCV);
 		clnt_dg_upcallsdone(cu->cu_socket, cs);
-		SOCKBUF_UNLOCK(&cu->cu_socket->so_rcv);
+		SOCK_RECVBUF_UNLOCK(cu->cu_socket);
 		mtx_destroy(&cs->cs_lock);
 		mem_free(cs, sizeof(*cs));
 		lastsocketref = TRUE;
 	} else {
 		mtx_unlock(&cs->cs_lock);
-		SOCKBUF_UNLOCK(&cu->cu_socket->so_rcv);
+		SOCK_RECVBUF_UNLOCK(cu->cu_socket);
 		lastsocketref = FALSE;
 	}
 
@@ -1059,14 +1059,14 @@ clnt_dg_soupcall(struct socket *so, void *arg, int waitflag)
 	uio.uio_resid = 1000000000;
 	uio.uio_td = curthread;
 	do {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		m = NULL;
 		control = NULL;
 		rcvflag = MSG_DONTWAIT;
 		error = soreceive(so, NULL, &uio, &m, &control, &rcvflag);
 		if (control)
 			m_freem(control);
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 
 		if (error == EWOULDBLOCK)
 			break;
@@ -1147,7 +1147,7 @@ static void
 clnt_dg_upcallsdone(struct socket *so, struct cu_socket *cs)
 {
 
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	while (cs->cs_upcallrefs > 0)
 		(void) msleep(&cs->cs_upcallrefs, SOCKBUF_MTX(&so->so_rcv), 0,

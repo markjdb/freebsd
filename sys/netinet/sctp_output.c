@@ -13000,7 +13000,7 @@ sctp_lower_sosend(struct socket *so,
 		} else {
 			max_len = 0;
 		}
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 	}
 
 skip_preblock:

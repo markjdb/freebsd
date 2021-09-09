@@ -1480,16 +1480,16 @@ sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	if (control != NULL)
 		clen = control->m_len;
 
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		error = EPIPE;
 		goto out;
 	}
 	if (so->so_error) {
 		error = so->so_error;
 		so->so_error = 0;
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		goto out;
 	}
 	if ((so->so_state & SS_ISCONNECTED) == 0) {
@@ -1502,7 +1502,7 @@ sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		    (so->so_proto->pr_flags & PR_IMPLOPCL) == 0) {
 			if ((so->so_state & SS_ISCONFIRMING) == 0 &&
 			    !(resid == 0 && clen != 0)) {
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				error = ENOTCONN;
 				goto out;
 			}
@@ -1511,7 +1511,7 @@ sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 				error = ENOTCONN;
 			else
 				error = EDESTADDRREQ;
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			goto out;
 		}
 	}
@@ -1524,7 +1524,7 @@ sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	if (flags & MSG_OOB)
 		space += 1024;
 	space -= clen;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	if (resid > space) {
 		error = EMSGSIZE;
 		goto out;
@@ -1689,16 +1689,16 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 
 restart:
 	do {
-		SOCKBUF_LOCK(&so->so_snd);
+		SOCK_SENDBUF_LOCK(so);
 		if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = EPIPE;
 			goto release;
 		}
 		if (so->so_error) {
 			error = so->so_error;
 			so->so_error = 0;
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			goto release;
 		}
 		if ((so->so_state & SS_ISCONNECTED) == 0) {
@@ -1712,12 +1712,12 @@ restart:
 			    (so->so_proto->pr_flags & PR_IMPLOPCL) == 0) {
 				if ((so->so_state & SS_ISCONFIRMING) == 0 &&
 				    !(resid == 0 && clen != 0)) {
-					SOCKBUF_UNLOCK(&so->so_snd);
+					SOCK_SENDBUF_UNLOCK(so);
 					error = ENOTCONN;
 					goto release;
 				}
 			} else if (addr == NULL) {
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				if (so->so_proto->pr_flags & PR_CONNREQUIRED)
 					error = ENOTCONN;
 				else
@@ -1730,7 +1730,7 @@ restart:
 			space += 1024;
 		if ((atomic && resid > so->so_snd.sb_hiwat) ||
 		    clen > so->so_snd.sb_hiwat) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = EMSGSIZE;
 			goto release;
 		}
@@ -1738,17 +1738,17 @@ restart:
 		    (atomic || space < so->so_snd.sb_lowat || space < clen)) {
 			if ((so->so_state & SS_NBIO) ||
 			    (flags & (MSG_NBIO | MSG_DONTWAIT)) != 0) {
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				error = EWOULDBLOCK;
 				goto release;
 			}
 			error = sbwait(so, SO_SND);
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			if (error)
 				goto release;
 			goto restart;
 		}
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 		space -= clen;
 		do {
 			if (uio == NULL) {
@@ -2005,7 +2005,7 @@ soreceive_generic(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		return (error);
 
 restart:
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	m = so->so_rcv.sb_mb;
 	/*
 	 * If we have less data than requested, block awaiting more (subject
@@ -2033,10 +2033,10 @@ restart:
 				else
 					so->so_rerror = 0;
 			}
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			goto release;
 		}
-		SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+		SOCK_RECVBUF_LOCK_ASSERT(so);
 		if (so->so_rcv.sb_state & SBS_CANTRCVMORE) {
 			if (m != NULL)
 				goto dontblock;
@@ -2046,7 +2046,7 @@ restart:
 #else
 			else {
 #endif
-				SOCKBUF_UNLOCK(&so->so_rcv);
+				SOCK_RECVBUF_UNLOCK(so);
 				goto release;
 			}
 		}
@@ -2058,24 +2058,24 @@ restart:
 		if ((so->so_state & (SS_ISCONNECTING | SS_ISCONNECTED |
 		    SS_ISDISCONNECTING | SS_ISDISCONNECTED)) == 0 &&
 		    (so->so_proto->pr_flags & PR_CONNREQUIRED) != 0) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			error = ENOTCONN;
 			goto release;
 		}
 		if (uio->uio_resid == 0) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			goto release;
 		}
 		if ((so->so_state & SS_NBIO) ||
 		    (flags & (MSG_DONTWAIT|MSG_NBIO))) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			error = EWOULDBLOCK;
 			goto release;
 		}
 		SBLASTRECORDCHK(&so->so_rcv);
 		SBLASTMBUFCHK(&so->so_rcv);
 		error = sbwait(so, SO_RCV);
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		if (error)
 			goto release;
 		goto restart;
@@ -2096,7 +2096,7 @@ dontblock:
 	 * By holding the high-level sblock(), we prevent simultaneous
 	 * readers from pulling off the front of the socket buffer.
 	 */
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 	if (uio->uio_td)
 		uio->uio_td->td_ru.ru_msgrcv++;
 	KASSERT(m == so->so_rcv.sb_mb, ("soreceive: m != so->so_rcv.sb_mb"));
@@ -2148,7 +2148,7 @@ dontblock:
 				memcpy(&tgr, CMSG_DATA(cmsg), sizeof(tgr));
 				if (__predict_false(tgr.tls_type ==
 				    TLS_RLTYPE_ALERT)) {
-					SOCKBUF_UNLOCK(&so->so_rcv);
+					SOCK_RECVBUF_UNLOCK(so);
 					error = ENXIO;
 					goto release;
 				}
@@ -2179,11 +2179,11 @@ dontblock:
 			cmn = cm->m_next;
 			cm->m_next = NULL;
 			if (pr->pr_domain->dom_externalize != NULL) {
-				SOCKBUF_UNLOCK(&so->so_rcv);
+				SOCK_RECVBUF_UNLOCK(so);
 				VNET_SO_ASSERT(so);
 				error = (*pr->pr_domain->dom_externalize)
 				    (cm, controlp, flags);
-				SOCKBUF_LOCK(&so->so_rcv);
+				SOCK_RECVBUF_LOCK(so);
 			} else if (controlp != NULL)
 				*controlp = cm;
 			else
@@ -2224,7 +2224,7 @@ dontblock:
 			}
 		}
 	}
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 	SBLASTRECORDCHK(&so->so_rcv);
 	SBLASTMBUFCHK(&so->so_rcv);
 
@@ -2244,7 +2244,7 @@ dontblock:
 		 * If the type of mbuf has changed since the last mbuf
 		 * examined ('type'), end the receive operation.
 		 */
-		SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+		SOCK_RECVBUF_LOCK_ASSERT(so);
 		if (m->m_type == MT_OOBDATA || m->m_type == MT_CONTROL) {
 			if (type != m->m_type)
 				break;
@@ -2267,17 +2267,17 @@ dontblock:
 		 * to the sockbuf when we block interrupts again.
 		 */
 		if (mp == NULL) {
-			SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+			SOCK_RECVBUF_LOCK_ASSERT(so);
 			SBLASTRECORDCHK(&so->so_rcv);
 			SBLASTMBUFCHK(&so->so_rcv);
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			if ((m->m_flags & M_EXTPG) != 0)
 				error = m_unmapped_uiomove(m, moff, uio,
 				    (int)len);
 			else
 				error = uiomove(mtod(m, char *) + moff,
 				    (int)len, uio);
-			SOCKBUF_LOCK(&so->so_rcv);
+			SOCK_RECVBUF_LOCK(so);
 			if (error) {
 				/*
 				 * The MT_SONAME mbuf has already been removed
@@ -2290,12 +2290,12 @@ dontblock:
 				if (pr->pr_flags & PR_ATOMIC &&
 				    ((flags & MSG_PEEK) == 0))
 					(void)sbdroprecord_locked(&so->so_rcv);
-				SOCKBUF_UNLOCK(&so->so_rcv);
+				SOCK_RECVBUF_UNLOCK(so);
 				goto release;
 			}
 		} else
 			uio->uio_resid -= len;
-		SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+		SOCK_RECVBUF_LOCK_ASSERT(so);
 		if (len == m->m_len - moff) {
 			if (m->m_flags & M_EOR)
 				flags |= MSG_EOR;
@@ -2341,16 +2341,16 @@ dontblock:
 							break;
 						}
 					} else {
-						SOCKBUF_UNLOCK(&so->so_rcv);
+						SOCK_RECVBUF_UNLOCK(so);
 						*mp = m_copym(m, 0, len,
 						    M_WAITOK);
-						SOCKBUF_LOCK(&so->so_rcv);
+						SOCK_RECVBUF_LOCK(so);
 					}
 				}
 				sbcut_locked(&so->so_rcv, len);
 			}
 		}
-		SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+		SOCK_RECVBUF_LOCK_ASSERT(so);
 		if (so->so_oobmark) {
 			if ((flags & MSG_PEEK) == 0) {
 				so->so_oobmark -= len;
@@ -2375,7 +2375,7 @@ dontblock:
 		 */
 		while (flags & MSG_WAITALL && m == NULL && uio->uio_resid > 0 &&
 		    !sosendallatonce(so) && nextrecord == NULL) {
-			SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+			SOCK_RECVBUF_LOCK_ASSERT(so);
 			if (so->so_error || so->so_rerror ||
 			    so->so_rcv.sb_state & SBS_CANTRCVMORE)
 				break;
@@ -2384,10 +2384,10 @@ dontblock:
 			 * drained before blocking.
 			 */
 			if (pr->pr_flags & PR_WANTRCVD) {
-				SOCKBUF_UNLOCK(&so->so_rcv);
+				SOCK_RECVBUF_UNLOCK(so);
 				VNET_SO_ASSERT(so);
 				(*pr->pr_usrreqs->pru_rcvd)(so, flags);
-				SOCKBUF_LOCK(&so->so_rcv);
+				SOCK_RECVBUF_LOCK(so);
 			}
 			SBLASTRECORDCHK(&so->so_rcv);
 			SBLASTMBUFCHK(&so->so_rcv);
@@ -2398,7 +2398,7 @@ dontblock:
 			if (so->so_rcv.sb_mb == NULL) {
 				error = sbwait(so, SO_RCV);
 				if (error) {
-					SOCKBUF_UNLOCK(&so->so_rcv);
+					SOCK_RECVBUF_UNLOCK(so);
 					goto release;
 				}
 			}
@@ -2408,7 +2408,7 @@ dontblock:
 		}
 	}
 
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 	if (m != NULL && pr->pr_flags & PR_ATOMIC) {
 		flags |= MSG_TRUNC;
 		if ((flags & MSG_PEEK) == 0)
@@ -2437,19 +2437,19 @@ dontblock:
 		 */
 		if (!(flags & MSG_SOCALLBCK) &&
 		    (pr->pr_flags & PR_WANTRCVD)) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			VNET_SO_ASSERT(so);
 			(*pr->pr_usrreqs->pru_rcvd)(so, flags);
-			SOCKBUF_LOCK(&so->so_rcv);
+			SOCK_RECVBUF_LOCK(so);
 		}
 	}
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 	if (orig_resid == uio->uio_resid && orig_resid &&
 	    (flags & MSG_EOR) == 0 && (so->so_rcv.sb_state & SBS_CANTRCVMORE) == 0) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		goto restart;
 	}
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	if (flagsp != NULL)
 		*flagsp |= flags;
@@ -2529,7 +2529,7 @@ soreceive_stream(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	}
 
 restart:
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	/* Abort if socket has reported problems. */
 	if (so->so_error) {
@@ -2583,7 +2583,7 @@ restart:
 	goto restart;
 
 deliver:
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 	KASSERT(sbavail(sb) > 0, ("%s: sockbuf empty", __func__));
 	KASSERT(sb->sb_mb != NULL, ("%s: sb_mb == NULL", __func__));
 
@@ -2726,7 +2726,7 @@ soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	/*
 	 * Loop blocking while waiting for a datagram.
 	 */
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	while ((m = so->so_rcv.sb_mb) == NULL) {
 		KASSERT(sbavail(&so->so_rcv) == 0,
 		    ("soreceive_dgram: sb_mb NULL but sbavail %u",
@@ -2734,28 +2734,28 @@ soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		if (so->so_error) {
 			error = so->so_error;
 			so->so_error = 0;
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			return (error);
 		}
 		if (so->so_rcv.sb_state & SBS_CANTRCVMORE ||
 		    uio->uio_resid == 0) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			return (0);
 		}
 		if ((so->so_state & SS_NBIO) ||
 		    (flags & (MSG_DONTWAIT|MSG_NBIO))) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			return (EWOULDBLOCK);
 		}
 		SBLASTRECORDCHK(&so->so_rcv);
 		SBLASTMBUFCHK(&so->so_rcv);
 		error = sbwait(so, SO_RCV);
 		if (error) {
-			SOCKBUF_UNLOCK(&so->so_rcv);
+			SOCK_RECVBUF_UNLOCK(so);
 			return (error);
 		}
 	}
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	if (uio->uio_td)
 		uio->uio_td->td_ru.ru_msgrcv++;
@@ -2787,7 +2787,7 @@ soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	 */
 	SBLASTRECORDCHK(&so->so_rcv);
 	SBLASTMBUFCHK(&so->so_rcv);
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	if (pr->pr_flags & PR_ADDR) {
 		KASSERT(m->m_type == MT_SONAME,

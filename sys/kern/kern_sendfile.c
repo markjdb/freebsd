@@ -779,22 +779,22 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 		 * we were not careful here we would send off only one
 		 * sfbuf at a time.
 		 */
-		SOCKBUF_LOCK(&so->so_snd);
+		SOCK_SENDBUF_LOCK(so);
 		if (so->so_snd.sb_lowat < so->so_snd.sb_hiwat / 2)
 			so->so_snd.sb_lowat = so->so_snd.sb_hiwat / 2;
 retry_space:
 		if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
 			error = EPIPE;
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			goto done;
 		} else if (so->so_error) {
 			error = so->so_error;
 			so->so_error = 0;
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			goto done;
 		}
 		if ((so->so_state & SS_ISCONNECTED) == 0) {
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = ENOTCONN;
 			goto done;
 		}
@@ -804,7 +804,7 @@ retry_space:
 		    (space <= 0 ||
 		     space < so->so_snd.sb_lowat)) {
 			if (so->so_state & SS_NBIO) {
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				error = EAGAIN;
 				goto done;
 			}
@@ -821,12 +821,12 @@ retry_space:
 			 * then return bytes sent, otherwise return the error.
 			 */
 			if (error != 0) {
-				SOCKBUF_UNLOCK(&so->so_snd);
+				SOCK_SENDBUF_UNLOCK(so);
 				goto done;
 			}
 			goto retry_space;
 		}
-		SOCKBUF_UNLOCK(&so->so_snd);
+		SOCK_SENDBUF_UNLOCK(so);
 
 		/*
 		 * At the beginning of the first loop check if any headers

@@ -1965,7 +1965,7 @@ icmp6_rip6_input(struct mbuf **mp, int off)
 			ip6_savecontrol(inp, n, &opts);
 		/* strip intermediate headers */
 		m_adj(n, off);
-		SOCKBUF_LOCK(&inp->inp_socket->so_rcv);
+		SOCK_RECVBUF_LOCK(inp->inp_socket);
 		if (sbappendaddr_locked(&inp->inp_socket->so_rcv,
 		    (struct sockaddr *)&fromsa, n, opts) == 0) {
 			soroverflow_locked(inp->inp_socket);

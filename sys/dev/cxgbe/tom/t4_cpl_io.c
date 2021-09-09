@@ -2371,7 +2371,7 @@ t4_aiotx_task(void *context, int pending)
 	so = toep->aiotx_so;
 	CURVNET_SET(toep->vnet);
 	NET_EPOCH_ENTER(et);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	while (!TAILQ_EMPTY(&toep->aiotx_jobq) && sowriteable(so)) {
 		job = TAILQ_FIRST(&toep->aiotx_jobq);
 		TAILQ_REMOVE(&toep->aiotx_jobq, job, list);
@@ -2381,8 +2381,9 @@ t4_aiotx_task(void *context, int pending)
 		t4_aiotx_process_job(toep, so, job);
 	}
 	toep->aiotx_so = NULL;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	NET_EPOCH_EXIT(et);
+	CURVNET_RESTORE();
 
 	free_toepcb(toep);
 	sorele(so);
@@ -2393,7 +2394,7 @@ static void
 t4_aiotx_queue_toep(struct socket *so, struct toepcb *toep)
 {
 
-	SOCKBUF_LOCK_ASSERT(&toep->inp->inp_socket->so_snd);
+	SOCK_SENDBUF_LOCK_ASSERT(toep->inp->inp_socket);
 #ifdef VERBOSE_TRACES
 	CTR3(KTR_CXGBE, "%s: queueing aiotx task for tid %d, active = %s",
 	    __func__, toep->tid, toep->aiotx_so != NULL ? "true" : "false");
@@ -2446,7 +2447,7 @@ t4_aio_queue_aiotx(struct socket *so, struct kaiocb *job)
 	if (tls_tx_key(toep))
 		return (EOPNOTSUPP);
 
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 #ifdef VERBOSE_TRACES
 	CTR3(KTR_CXGBE, "%s: queueing %p for tid %u", __func__, job, toep->tid);
 #endif
@@ -2456,7 +2457,7 @@ t4_aio_queue_aiotx(struct socket *so, struct kaiocb *job)
 	TAILQ_INSERT_TAIL(&toep->aiotx_jobq, job, list);
 	if (sowriteable(so))
 		t4_aiotx_queue_toep(so, toep);
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	return (0);
 }
 

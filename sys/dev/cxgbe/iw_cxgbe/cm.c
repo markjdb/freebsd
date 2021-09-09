@@ -852,10 +852,10 @@ init_iwarp_socket(struct socket *so, void *arg)
 		so->so_state |= SS_NBIO;
 		SOLISTEN_UNLOCK(so);
 	} else {
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		soupcall_set(so, SO_RCV, c4iw_so_upcall, arg);
 		so->so_state |= SS_NBIO;
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 	}
 }
 
@@ -867,9 +867,9 @@ uninit_iwarp_socket(struct socket *so)
 		solisten_upcall_set(so, NULL, NULL);
 		SOLISTEN_UNLOCK(so);
 	} else {
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		soupcall_clear(so, SO_RCV);
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 	}
 }
 

@@ -231,7 +231,7 @@ rip_append(struct inpcb *inp, struct ip *ip, struct mbuf *m,
 	if ((inp->inp_flags & INP_CONTROLOPTS) ||
 	    (so->so_options & (SO_TIMESTAMP | SO_BINTIME)))
 		ip_savecontrol(inp, &opts, ip, n);
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	if (sbappendaddr_locked(&so->so_rcv,
 	    (struct sockaddr *)ripsrc, n, opts) == 0) {
 		soroverflow_locked(so);

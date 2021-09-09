@@ -1060,12 +1060,12 @@ ng_btsocket_rfcomm_sessions_task(void *ctx, int pending)
 				panic("%s: DLC list is not empty\n", __func__);
 
 			/* Close L2CAP socket */
-			SOCKBUF_LOCK(&s->l2so->so_rcv);
+			SOCK_RECVBUF_LOCK(s->l2so);
 			soupcall_clear(s->l2so, SO_RCV);
-			SOCKBUF_UNLOCK(&s->l2so->so_rcv);
-			SOCKBUF_LOCK(&s->l2so->so_snd);
+			SOCK_RECVBUF_UNLOCK(s->l2so);
+			SOCK_SENDBUF_LOCK(s->l2so);
 			soupcall_clear(s->l2so, SO_SND);
-			SOCKBUF_UNLOCK(&s->l2so->so_snd);
+			SOCK_SENDBUF_UNLOCK(s->l2so);
 			soclose(s->l2so);
 
 			mtx_unlock(&s->session_mtx);
@@ -1298,12 +1298,12 @@ ng_btsocket_rfcomm_session_create(ng_btsocket_rfcomm_session_p *sp,
 	LIST_INIT(&s->dlcs);
 
 	/* Prepare L2CAP socket */
-	SOCKBUF_LOCK(&l2so->so_rcv);
+	SOCK_RECVBUF_LOCK(l2so);
 	soupcall_set(l2so, SO_RCV, ng_btsocket_rfcomm_upcall, NULL);
-	SOCKBUF_UNLOCK(&l2so->so_rcv);
-	SOCKBUF_LOCK(&l2so->so_snd);
+	SOCK_RECVBUF_UNLOCK(l2so);
+	SOCK_SENDBUF_LOCK(l2so);
 	soupcall_set(l2so, SO_SND, ng_btsocket_rfcomm_upcall, NULL);
-	SOCKBUF_UNLOCK(&l2so->so_snd);
+	SOCK_SENDBUF_UNLOCK(l2so);
 	l2so->so_state |= SS_NBIO;
 	s->l2so = l2so;
 
@@ -1384,12 +1384,12 @@ bad:
 	mtx_unlock(&s->session_mtx);
 
 	/* Return L2CAP socket back to its original state */
-	SOCKBUF_LOCK(&l2so->so_rcv);
+	SOCK_RECVBUF_LOCK(l2so);
 	soupcall_clear(s->l2so, SO_RCV);
-	SOCKBUF_UNLOCK(&l2so->so_rcv);
-	SOCKBUF_LOCK(&l2so->so_snd);
+	SOCK_RECVBUF_UNLOCK(l2so);
+	SOCK_SENDBUF_LOCK(l2so);
 	soupcall_clear(s->l2so, SO_SND);
-	SOCKBUF_UNLOCK(&l2so->so_snd);
+	SOCK_SENDBUF_UNLOCK(l2so);
 	l2so->so_state &= ~SS_NBIO;
 
 	mtx_destroy(&s->session_mtx);

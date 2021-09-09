@@ -956,12 +956,12 @@ icl_cxgbei_setsockopt(struct icl_conn *ic, struct socket *so, int sspace,
 	error = soreserve(so, ss, rs);
 	if (error != 0)
 		return (error);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	so->so_snd.sb_flags |= SB_AUTOSIZE;
-	SOCKBUF_UNLOCK(&so->so_snd);
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_SENDBUF_UNLOCK(so);
+	SOCK_RECVBUF_LOCK(so);
 	so->so_rcv.sb_flags |= SB_AUTOSIZE;
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	/*
 	 * Disable Nagle.

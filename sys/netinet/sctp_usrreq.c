@@ -874,9 +874,9 @@ sctp_shutdown(struct socket *so)
 	if (!((inp->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) ||
 	    (inp->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL))) {
 		/* Restore the flags that the soshutdown took away. */
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		so->so_rcv.sb_state &= ~SBS_CANTRCVMORE;
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		/* This proc will wakeup for read and do nothing (I hope) */
 		SCTP_INP_RUNLOCK(inp);
 		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EOPNOTSUPP);
@@ -7301,21 +7301,21 @@ sctp_accept(struct socket *so, struct sockaddr **addr)
 		inp->sctp_flags &= ~SCTP_PCB_FLAGS_DONT_WAKE;
 		if (inp->sctp_flags & SCTP_PCB_FLAGS_WAKEOUTPUT) {
 			inp->sctp_flags &= ~SCTP_PCB_FLAGS_WAKEOUTPUT;
-			SOCKBUF_LOCK(&inp->sctp_socket->so_snd);
+			SOCK_SENDBUF_LOCK(inp->sctp_socket);
 			if (sowriteable(inp->sctp_socket)) {
 				sowwakeup_locked(inp->sctp_socket);
 			} else {
-				SOCKBUF_UNLOCK(&inp->sctp_socket->so_snd);
+				SOCK_SENDBUF_UNLOCK(inp->sctp_socket);
 			}
 		}
 		if (inp->sctp_flags & SCTP_PCB_FLAGS_WAKEINPUT) {
 			inp->sctp_flags &= ~SCTP_PCB_FLAGS_WAKEINPUT;
-			SOCKBUF_LOCK(&inp->sctp_socket->so_rcv);
+			SOCK_RECVBUF_LOCK(inp->sctp_socket);
 			if (soreadable(inp->sctp_socket)) {
 				sctp_defered_wakeup_cnt++;
 				sorwakeup_locked(inp->sctp_socket);
 			} else {
-				SOCKBUF_UNLOCK(&inp->sctp_socket->so_rcv);
+				SOCK_RECVBUF_UNLOCK(inp->sctp_socket);
 			}
 		}
 	}

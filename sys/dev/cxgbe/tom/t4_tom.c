@@ -1115,7 +1115,7 @@ select_rcv_wnd(struct socket *so)
 {
 	unsigned long wnd;
 
-	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	wnd = sbspace(&so->so_rcv);
 	if (wnd < MIN_RCV_WND)
@@ -1465,21 +1465,21 @@ init_conn_params(struct vi_info *vi , struct offload_settings *s,
 		else
 			cp->ecn = 0;
 
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 		wnd = max(select_rcv_wnd(so), MIN_RCV_WND);
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		cp->opt0_bufsize = min(wnd >> 10, M_RCV_BUFSIZ);
 
 		if (tt->sndbuf > 0)
 			cp->sndbuf = tt->sndbuf;
 		else {
-			SOCKBUF_LOCK(&so->so_snd);
+			SOCK_SENDBUF_LOCK(so);
 			if (so->so_snd.sb_flags & SB_AUTOSIZE &&
 			    V_tcp_do_autosndbuf)
 				cp->sndbuf = 256 * 1024;
 			else
 				cp->sndbuf = so->so_snd.sb_hiwat;
-			SOCKBUF_UNLOCK(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
 		}
 	}
 

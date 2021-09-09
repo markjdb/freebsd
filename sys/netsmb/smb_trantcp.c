@@ -154,9 +154,9 @@ nb_connect_in(struct nbpcb *nbp, struct sockaddr_in *to, struct thread *td)
 	if (error)
 		return error;
 	nbp->nbp_tso = so;
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	soupcall_set(so, SO_RCV, nb_upcall, nbp);
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 	so->so_rcv.sb_timeo = (5 * SBT_1S);
 	so->so_snd.sb_timeo = (5 * SBT_1S);
 	error = soreserve(so, nbp->nbp_sndbuf, nbp->nbp_rcvbuf);
@@ -164,12 +164,12 @@ nb_connect_in(struct nbpcb *nbp, struct sockaddr_in *to, struct thread *td)
 		goto bad;
 	nb_setsockopt_int(so, SOL_SOCKET, SO_KEEPALIVE, 1);
 	nb_setsockopt_int(so, IPPROTO_TCP, TCP_NODELAY, 1);
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	so->so_rcv.sb_flags &= ~SB_NOINTR;
-	SOCKBUF_UNLOCK(&so->so_rcv);
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_RECVBUF_UNLOCK(so);
+	SOCK_SENDBUF_LOCK(so);
 	so->so_snd.sb_flags &= ~SB_NOINTR;
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 	error = soconnect(so, (struct sockaddr*)to, td);
 	if (error)
 		goto bad;
