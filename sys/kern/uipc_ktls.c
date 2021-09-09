@@ -2325,7 +2325,7 @@ ktls_decrypt(struct socket *so)
 
 	hdr = (struct tls_record_layer *)tls_header;
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	KASSERT(sb->sb_flags & SB_TLS_RX_RUNNING,
 	    ("%s: socket %p not running", __func__, so));
 
@@ -2362,7 +2362,7 @@ ktls_decrypt(struct socket *so)
 			 * out of sync.  The connection isn't
 			 * recoverable at this point, so abort it.
 			 */
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			counter_u64_add(ktls_offload_corrupted_records, 1);
 
 			CURVNET_SET(so->so_vnet);
@@ -2388,7 +2388,7 @@ ktls_decrypt(struct socket *so)
 		seqno = sb->sb_tls_seqno;
 		sb->sb_tls_seqno++;
 		SBCHECK(sb);
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 
 		/* get crypto state for this TLS record */
 		state = ktls_mbuf_crypto_state(data, 0, tls_len);
@@ -2434,7 +2434,7 @@ ktls_decrypt(struct socket *so)
 		if (error) {
 			counter_u64_add(ktls_offload_failed_crypto, 1);
 
-			SOCKBUF_LOCK(sb);
+			SOCK_RECVBUF_LOCK(so);
 			if (sb->sb_tlsdcc == 0) {
 				/*
 				 * sbcut/drop/flush discarded these
@@ -2458,7 +2458,7 @@ ktls_decrypt(struct socket *so)
 
 			m_freem(data);
 
-			SOCKBUF_LOCK(sb);
+			SOCK_RECVBUF_LOCK(so);
 			continue;
 		}
 
@@ -2472,7 +2472,7 @@ ktls_decrypt(struct socket *so)
 		control = sbcreatecontrol(&tgr, sizeof(tgr),
 		    TLS_GET_RECORD, IPPROTO_TCP, M_WAITOK);
 
-		SOCKBUF_LOCK(sb);
+		SOCK_RECVBUF_LOCK(so);
 		if (sb->sb_tlsdcc == 0) {
 			/* sbcut/drop/flush discarded these mbufs. */
 			MPASS(sb->sb_tlscc == 0);
@@ -2545,7 +2545,7 @@ ktls_decrypt(struct socket *so)
 	sorwakeup_locked(so);
 
 deref:
-	SOCKBUF_UNLOCK_ASSERT(sb);
+	SOCK_RECVBUF_UNLOCK_ASSERT(so);
 
 	CURVNET_SET(so->so_vnet);
 	sorele(so);

@@ -17064,7 +17064,7 @@ again:
 			kern_prefetch(end_rsm, &prefetch_rsm);
 		prefetch_rsm = 1;
 	}
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	/*
 	 * If snd_nxt == snd_max and we have transmitted a FIN, the
 	 * sb_offset will be > 0 even if so_snd.sb_cc is 0, resulting in a
@@ -17589,7 +17589,7 @@ dontupdate:
 	 * No reason to send a segment, just return.
 	 */
 just_return:
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 just_return_nolock:
 	{
 		int app_limited = CTF_JR_SENT_DATA;
@@ -17862,7 +17862,7 @@ send:
 		mark = 1;
 		len = rack->r_ctl.rc_pace_max_segs;
 	}
-	SOCKBUF_LOCK_ASSERT(sb);
+	SOCK_SENDBUF_LOCK_ASSERT(so);
 	if (len > 0) {
 		if (len >= segsiz)
 			tp->t_flags2 |= TF2_PLPMTU_MAXSEGSNT;
@@ -18151,7 +18151,7 @@ send:
 			m = m_gethdr(M_NOWAIT, MT_DATA);
 
 		if (m == NULL) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = ENOBUFS;
 			sack_rxmit = 0;
 			goto out;
@@ -18197,7 +18197,7 @@ send:
 				tso = 0;
 			}
 			if (m->m_next == NULL) {
-				SOCKBUF_UNLOCK(sb);
+				SOCK_SENDBUF_UNLOCK(so);
 				(void)m_free(m);
 				error = ENOBUFS;
 				sack_rxmit = 0;
@@ -18241,9 +18241,9 @@ send:
 			add_flag |= RACK_HAD_PUSH;
 		}
 
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 	} else {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 		if (tp->t_flags & TF_ACKNOW)
 			KMOD_TCPSTAT_INC(tcps_sndacks);
 		else if (flags & (TH_SYN | TH_FIN | TH_RST))
@@ -18266,7 +18266,7 @@ send:
 			m->m_data += max_linkhdr;
 		m->m_len = hdrlen;
 	}
-	SOCKBUF_UNLOCK_ASSERT(sb);
+	SOCK_SENDBUF_UNLOCK_ASSERT(so);
 	m->m_pkthdr.rcvif = (struct ifnet *)0;
 #ifdef MAC
 	mac_inpcb_create_mbuf(inp, m);
@@ -18858,7 +18858,7 @@ nomore:
 		rack->r_early = 0;
 		rack->r_late = 0;
 		rack->r_ctl.rc_agg_early = 0;
-		SOCKBUF_UNLOCK_ASSERT(sb);	/* Check gotos. */
+		SOCK_SENDBUF_UNLOCK_ASSERT(so);	/* Check gotos. */
 		/*
 		 * Failures do not advance the seq counter above. For the
 		 * case of ENOBUFS we will fall out and retry in 1ms with

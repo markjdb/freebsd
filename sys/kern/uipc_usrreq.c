@@ -1641,7 +1641,7 @@ uipc_ready_scan(struct socket *so, struct mbuf *m, int count, int *errorp)
 	}
 	mb = NULL;
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	if (sb->sb_fnrdy != NULL) {
 		for (mb = sb->sb_mb, n = mb->m_nextpkt; mb != NULL;) {
 			if (mb == m) {
@@ -1656,7 +1656,7 @@ uipc_ready_scan(struct socket *so, struct mbuf *m, int count, int *errorp)
 			}
 		}
 	}
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 	SOCK_UNLOCK(so);
 	return (mb != NULL);
 }

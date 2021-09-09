@@ -449,7 +449,7 @@ t4_rcvd_locked(struct toedev *tod, struct tcpcb *tp)
 	int rx_credits;
 
 	INP_WLOCK_ASSERT(inp);
-	SOCKBUF_LOCK_ASSERT(sb);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	rx_credits = sbspace(sb) > tp->rcv_wnd ? sbspace(sb) - tp->rcv_wnd : 0;
 	if (rx_credits > 0 &&
@@ -468,11 +468,10 @@ t4_rcvd(struct toedev *tod, struct tcpcb *tp)
 {
 	struct inpcb *inp = tp->t_inpcb;
 	struct socket *so = inp->inp_socket;
-	struct sockbuf *sb = &so->so_rcv;
 
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	t4_rcvd_locked(tod, tp);
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 }
 
 /*
@@ -719,7 +718,7 @@ t4_push_frames(struct adapter *sc, struct toepcb *toep, int drop)
 		max_imm = max_imm_payload(tx_credits, 0);
 		max_nsegs = max_dsgl_nsegs(tx_credits, 0);
 
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		sowwakeup = drop;
 		if (drop) {
 			sbdrop_locked(sb, drop);
@@ -741,7 +740,7 @@ t4_push_frames(struct adapter *sc, struct toepcb *toep, int drop)
 				if (m->m_epg_tls != NULL) {
 					toep->flags |= TPF_KTLS;
 					if (plen == 0) {
-						SOCKBUF_UNLOCK(sb);
+						SOCK_SENDBUF_UNLOCK(so);
 						t4_push_ktls(sc, toep, 0);
 						return;
 					}
@@ -770,8 +769,7 @@ t4_push_frames(struct adapter *sc, struct toepcb *toep, int drop)
 							    toep);
 						sowwakeup_locked(so);
 					} else
-						SOCKBUF_UNLOCK(sb);
-					SOCKBUF_UNLOCK_ASSERT(sb);
+						SOCK_SENDBUF_UNLOCK(so);SOCK_SENDBUF_UNLOCK_ASSERT(so);
 					return;
 				}
 				break;
@@ -813,8 +811,7 @@ t4_push_frames(struct adapter *sc, struct toepcb *toep, int drop)
 				t4_aiotx_queue_toep(so, toep);
 			sowwakeup_locked(so);
 		} else
-			SOCKBUF_UNLOCK(sb);
-		SOCKBUF_UNLOCK_ASSERT(sb);
+			SOCK_SENDBUF_UNLOCK(so);SOCK_SENDBUF_UNLOCK_ASSERT(so);
 
 		/* nothing to send */
 		if (plen == 0) {
@@ -891,10 +888,10 @@ t4_push_frames(struct adapter *sc, struct toepcb *toep, int drop)
 		tp->snd_nxt += plen;
 		tp->snd_max += plen;
 
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		KASSERT(sb_sndptr, ("%s: sb_sndptr is NULL", __func__));
 		sb->sb_sndptr = sb_sndptr;
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 
 		toep->flags |= TPF_TX_DATA_SENT;
 		if (toep->tx_credits < MIN_OFLD_TX_CREDITS)
@@ -1188,7 +1185,7 @@ t4_push_pdus(struct adapter *sc, struct toepcb *toep, int drop)
 		 * stay zero.
 		 */
 		if (__predict_false(sbused(sb)) > 0) {
-			SOCKBUF_LOCK(sb);
+			SOCK_SENDBUF_LOCK(so);
 			sbu = sbused(sb);
 			if (sbu > 0) {
 				/*
@@ -1736,13 +1733,13 @@ do_rx_data(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 		DDP_LOCK(toep);
 	so = inp_inpcbtosocket(inp);
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 
 	if (__predict_false(sb->sb_state & SBS_CANTRCVMORE)) {
 		CTR3(KTR_CXGBE, "%s: tid %u, excess rx (%d bytes)",
 		    __func__, tid, len);
 		m_freem(m);
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		if (ulp_mode(toep) == ULP_MODE_TCPDDP)
 			DDP_UNLOCK(toep);
 		INP_WUNLOCK(inp);
@@ -1824,7 +1821,7 @@ do_rx_data(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 		ddp_queue_toep(toep);
 	}
 	sorwakeup_locked(so);
-	SOCKBUF_UNLOCK_ASSERT(sb);
+	SOCK_RECVBUF_UNLOCK_ASSERT(so);
 	if (ulp_mode(toep) == ULP_MODE_TCPDDP)
 		DDP_UNLOCK(toep);
 
@@ -1937,7 +1934,7 @@ do_fw4_ack(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 		struct sockbuf *sb = &so->so_snd;
 		int sbu;
 
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		sbu = sbused(sb);
 		if (ulp_mode(toep) == ULP_MODE_ISCSI) {
 			if (__predict_false(sbu > 0)) {
@@ -1962,7 +1959,7 @@ do_fw4_ack(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 				t4_aiotx_queue_toep(so, toep);
 			sowwakeup_locked(so);	/* unlocks so_snd */
 		}
-		SOCKBUF_UNLOCK_ASSERT(sb);
+		SOCK_SENDBUF_UNLOCK_ASSERT(so);
 	}
 
 	INP_WUNLOCK(inp);
@@ -2199,7 +2196,7 @@ t4_aiotx_process_job(struct toepcb *toep, struct socket *so, struct kaiocb *job)
 	bool moretocome, sendmore;
 
 	sb = &so->so_snd;
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 	m = NULL;
 
 #ifdef MAC
@@ -2214,9 +2211,9 @@ t4_aiotx_process_job(struct toepcb *toep, struct socket *so, struct kaiocb *job)
 	MPASS(error == 0);
 
 sendanother:
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 		SOCK_IO_SEND_UNLOCK(so);
 		if ((so->so_options & SO_NOSIGPIPE) == 0) {
 			PROC_LOCK(job->userproc);
@@ -2229,12 +2226,12 @@ sendanother:
 	if (so->so_error) {
 		error = so->so_error;
 		so->so_error = 0;
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 		SOCK_IO_SEND_UNLOCK(so);
 		goto out;
 	}
 	if ((so->so_state & SS_ISCONNECTED) == 0) {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 		SOCK_IO_SEND_UNLOCK(so);
 		error = ENOTCONN;
 		goto out;
@@ -2247,13 +2244,13 @@ sendanother:
 		 * buffer.  Instead, requeue the request.
 		 */
 		if (!aio_set_cancel_function(job, t4_aiotx_cancel)) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_SENDBUF_UNLOCK(so);
 			SOCK_IO_SEND_UNLOCK(so);
 			error = ECANCELED;
 			goto out;
 		}
 		TAILQ_INSERT_HEAD(&toep->aiotx_jobq, job, list);
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 		SOCK_IO_SEND_UNLOCK(so);
 		goto out;
 	}
@@ -2276,7 +2273,7 @@ sendanother:
 
 	if (!TAILQ_EMPTY(&toep->aiotx_jobq))
 		moretocome = true;
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 	MPASS(len != 0);
 
 	m = alloc_aiotx_mbuf(job, len);
@@ -2332,9 +2329,9 @@ sendanother:
 	 */
 	if (job->aio_sent < job->uaiocb.aio_nbytes &&
 	    !(so->so_state & SS_NBIO)) {
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		if (!aio_set_cancel_function(job, t4_aiotx_cancel)) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = ECANCELED;
 			goto out;
 		}
@@ -2357,7 +2354,7 @@ out:
 		aiotx_free_job(job);
 	}
 	m_freem(m);
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 }
 
 static void
@@ -2411,7 +2408,6 @@ static void
 t4_aiotx_cancel(struct kaiocb *job)
 {
 	struct socket *so;
-	struct sockbuf *sb;
 	struct tcpcb *tp;
 	struct toepcb *toep;
 
@@ -2419,12 +2415,11 @@ t4_aiotx_cancel(struct kaiocb *job)
 	tp = so_sototcpcb(so);
 	toep = tp->t_toe;
 	MPASS(job->uaiocb.aio_lio_opcode == LIO_WRITE);
-	sb = &so->so_snd;
 
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	if (!aio_cancel_cleared(job))
 		TAILQ_REMOVE(&toep->aiotx_jobq, job, list);
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 
 	job->aio_error = (void *)(intptr_t)ECANCELED;
 	aiotx_free_job(job);

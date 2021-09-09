@@ -1151,7 +1151,7 @@ send:
 		m->m_data += max_linkhdr;
 		m->m_len = hdrlen;
 	}
-	SOCKBUF_UNLOCK_ASSERT(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK_ASSERT(so);
 	m->m_pkthdr.rcvif = (struct ifnet *)0;
 #ifdef MAC
 	mac_inpcb_create_mbuf(tp->t_inpcb, m);
@@ -1684,7 +1684,7 @@ timer:
 			} else
 				tp->snd_nxt -= len;
 		}
-		SOCKBUF_UNLOCK_ASSERT(&so->so_snd);	/* Check gotos. */
+		SOCK_SENDBUF_UNLOCK_ASSERT(so);	/* Check gotos. */
 		switch (error) {
 		case EACCES:
 		case EPERM:

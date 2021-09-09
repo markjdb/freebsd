@@ -672,7 +672,7 @@ hvs_trans_soreceive(struct socket *so, struct sockaddr **paddr,
 	}
 
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 
 	cbarg.uio = uio;
 	cbarg.sb = sb;
@@ -774,7 +774,7 @@ hvs_trans_soreceive(struct socket *so, struct sockaddr **paddr,
 	}
 
 out:
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 	SOCK_IO_RECV_UNLOCK(so);
 
 	/* We recieved a FIN in this call */
@@ -829,7 +829,7 @@ hvs_trans_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	}
 
 	sb = &so->so_snd;
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 
 	if ((sb->sb_state & SBS_CANTSENDMORE) ||
 	    so->so_error == ESHUTDOWN) {
@@ -886,7 +886,7 @@ hvs_trans_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	}
 
 out:
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 	SOCK_IO_SEND_UNLOCK(so);
 
 	return (error);
@@ -1025,9 +1025,9 @@ hvs_trans_shutdown(struct socket *so)
 		if (so->so_state & SS_ISCONNECTED) {
 			/* Send a FIN to peer */
 			sb = &so->so_snd;
-			SOCKBUF_LOCK(sb);
+			SOCK_SENDBUF_LOCK(so);
 			(void) hvsock_send_data(pcb->chan, NULL, 0, sb);
-			SOCKBUF_UNLOCK(sb);
+			SOCK_SENDBUF_UNLOCK(so);
 
 			soisdisconnecting(so);
 		}

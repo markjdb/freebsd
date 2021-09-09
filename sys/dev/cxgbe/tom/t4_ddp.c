@@ -545,7 +545,7 @@ handle_ddp_data(struct toepcb *toep, __be32 ddp_report, __be32 rcv_nxt, int len)
 	/* receive buffer autosize */
 	MPASS(toep->vnet == so->so_vnet);
 	CURVNET_SET(toep->vnet);
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	if (sb->sb_flags & SB_AUTOSIZE &&
 	    V_tcp_do_autorcvbuf &&
 	    sb->sb_hiwat < V_tcp_autorcvbuf_max &&
@@ -558,7 +558,7 @@ handle_ddp_data(struct toepcb *toep, __be32 ddp_report, __be32 rcv_nxt, int len)
 		if (!sbreserve_locked(so, SO_RCV, newsize, NULL))
 			sb->sb_flags &= ~SB_AUTOSIZE;
 	}
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 	CURVNET_RESTORE();
 
 	job->msgrcv = 1;
@@ -1753,11 +1753,11 @@ restart:
 	job = TAILQ_FIRST(&toep->ddp.aiojobq);
 	so = job->fd_file->f_data;
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 
 	/* We will never get anything unless we are or were connected. */
 	if (!(so->so_state & (SS_ISCONNECTED|SS_ISDISCONNECTED))) {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		ddp_complete_all(toep, ENOTCONN);
 		return;
 	}
@@ -1771,7 +1771,7 @@ restart:
 		toep->ddp.waiting_count--;
 		TAILQ_REMOVE(&toep->ddp.aiojobq, job, list);
 		if (!aio_clear_cancel_function(job)) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			goto restart;
 		}
 
@@ -1782,13 +1782,13 @@ restart:
 		 */
 		copied = job->aio_received;
 		if (copied != 0) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			aio_complete(job, copied, 0);
 			goto restart;
 		}
 		error = so->so_error;
 		so->so_error = 0;
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		aio_complete(job, -1, error);
 		goto restart;
 	}
@@ -1799,7 +1799,7 @@ restart:
 	 * to complete.  Once they have completed, return EOF reads.
 	 */
 	if (sb->sb_state & SBS_CANTRCVMORE && sbavail(sb) == 0) {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		if (toep->ddp.active_count != 0)
 			return;
 		ddp_complete_all(toep, 0);
@@ -1811,7 +1811,7 @@ restart:
 	 * data, try to enable DDP.
 	 */
 	if (sbavail(sb) == 0 && (toep->ddp.flags & DDP_ON) == 0) {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 
 		/*
 		 * Wait for the card to ACK that DDP is enabled before
@@ -1828,7 +1828,7 @@ restart:
 			enable_ddp(sc, toep);
 		return;
 	}
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	/*
 	 * If another thread is queueing a buffer for DDP, let it
@@ -1852,11 +1852,11 @@ restart:
 		goto restart;
 	}
 
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	if (so->so_error && sbavail(sb) == 0) {
 		copied = job->aio_received;
 		if (copied != 0) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			recycle_pageset(toep, ps);
 			aio_complete(job, copied, 0);
 			toep->ddp.queueing = NULL;
@@ -1865,7 +1865,7 @@ restart:
 
 		error = so->so_error;
 		so->so_error = 0;
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		recycle_pageset(toep, ps);
 		aio_complete(job, -1, error);
 		toep->ddp.queueing = NULL;
@@ -1873,7 +1873,7 @@ restart:
 	}
 
 	if (sb->sb_state & SBS_CANTRCVMORE && sbavail(sb) == 0) {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		recycle_pageset(toep, ps);
 		if (toep->ddp.active_count != 0) {
 			/*
@@ -1951,11 +1951,11 @@ sbcopy:
 			 * Our caller has a reference on the 'toep' that
 			 * keeps it stable.
 			 */
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			DDP_UNLOCK(toep);
 			INP_WLOCK(inp);
 			DDP_LOCK(toep);
-			SOCKBUF_LOCK(sb);
+			SOCK_RECVBUF_LOCK(so);
 
 			/*
 			 * If the socket has been closed, we should detect
@@ -1972,7 +1972,7 @@ sbcopy:
 			 * is being shut down, so complete the
 			 * request.
 			 */
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			recycle_pageset(toep, ps);
 			aio_complete(job, copied, 0);
 			toep->ddp.queueing = NULL;
@@ -1985,7 +1985,7 @@ sbcopy:
 		 * arrive on the socket buffer.
 		 */
 		if ((toep->ddp.flags & (DDP_ON | DDP_SC_REQ)) != DDP_ON) {
-			SOCKBUF_UNLOCK(sb);
+			SOCK_RECVBUF_UNLOCK(so);
 			recycle_pageset(toep, ps);
 			aio_ddp_requeue_one(toep, job);
 			toep->ddp.queueing = NULL;
@@ -2000,7 +2000,7 @@ sbcopy:
 		if (sbavail(sb) != 0)
 			goto sbcopy;
 	}
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	if (prep_pageset(sc, toep, ps) == 0) {
 		recycle_pageset(toep, ps);

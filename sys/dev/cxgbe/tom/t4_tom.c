@@ -237,17 +237,17 @@ offload_socket(struct socket *so, struct toepcb *toep)
 
 	/* Update socket */
 	sb = &so->so_snd;
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	sb->sb_flags |= SB_NOCOALESCE;
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	sb->sb_flags |= SB_NOCOALESCE;
 	if (inp->inp_vflag & INP_IPV6)
 		so->so_proto = &toe6_protosw;
 	else
 		so->so_proto = &toe_protosw;
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 
 	/* Update TCP PCB */
 	tp->tod = &td->tod;
@@ -287,14 +287,14 @@ undo_offload_socket(struct socket *so)
 	INP_WLOCK_ASSERT(inp);
 
 	sb = &so->so_snd;
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	sb->sb_flags &= ~SB_NOCOALESCE;
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	sb->sb_flags &= ~SB_NOCOALESCE;
 	restore_so_proto(so, inp->inp_vflag & INP_IPV6);
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 
 	tp->tod = NULL;
 	tp->t_toe = NULL;

@@ -698,7 +698,7 @@ t4_push_ktls(struct adapter *sc, struct toepcb *toep, int drop)
 	for (;;) {
 		tx_credits = min(toep->tx_credits, MAX_OFLD_TX_CREDITS);
 
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		sowwakeup = drop;
 		if (drop) {
 			sbdrop_locked(sb, drop);
@@ -715,8 +715,7 @@ t4_push_ktls(struct adapter *sc, struct toepcb *toep, int drop)
 			if (sowwakeup)
 				sowwakeup_locked(so);
 			else
-				SOCKBUF_UNLOCK(sb);
-			SOCKBUF_UNLOCK_ASSERT(sb);
+				SOCK_SENDBUF_UNLOCK(so);SOCK_SENDBUF_UNLOCK_ASSERT(so);
 			t4_close_conn(sc, toep);
 			return;
 		}
@@ -729,8 +728,7 @@ t4_push_ktls(struct adapter *sc, struct toepcb *toep, int drop)
 			if (sowwakeup)
 				sowwakeup_locked(so);
 			else
-				SOCKBUF_UNLOCK(sb);
-			SOCKBUF_UNLOCK_ASSERT(sb);
+				SOCK_SENDBUF_UNLOCK(so);SOCK_SENDBUF_UNLOCK_ASSERT(so);
 #ifdef VERBOSE_TRACES
 			CTR2(KTR_CXGBE, "%s: tid %d no ready data to send",
 			    __func__, toep->tid);
@@ -762,8 +760,7 @@ t4_push_ktls(struct adapter *sc, struct toepcb *toep, int drop)
 			if (sowwakeup)
 				sowwakeup_locked(so);
 			else
-				SOCKBUF_UNLOCK(sb);
-			SOCKBUF_UNLOCK_ASSERT(sb);
+				SOCK_SENDBUF_UNLOCK(so);SOCK_SENDBUF_UNLOCK_ASSERT(so);
 #ifdef VERBOSE_TRACES
 			CTR5(KTR_CXGBE,
 	    "%s: tid %d mbuf %p requires %d credits, but only %d available",
@@ -794,8 +791,7 @@ t4_push_ktls(struct adapter *sc, struct toepcb *toep, int drop)
 		if (sowwakeup)
 			sowwakeup_locked(so);
 		else
-			SOCKBUF_UNLOCK(sb);
-		SOCKBUF_UNLOCK_ASSERT(sb);
+			SOCK_SENDBUF_UNLOCK(so);SOCK_SENDBUF_UNLOCK_ASSERT(so);
 
 		if (__predict_false(toep->flags & TPF_FIN_SENT))
 			panic("%s: excess tx.", __func__);
@@ -849,9 +845,9 @@ t4_push_ktls(struct adapter *sc, struct toepcb *toep, int drop)
 		tp->snd_nxt += m->m_len;
 		tp->snd_max += m->m_len;
 
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		sb->sb_sndptr = m;
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 
 		toep->flags |= TPF_TX_DATA_SENT;
 		if (toep->tx_credits < MIN_OFLD_TLSTX_CREDITS(toep))
@@ -1067,7 +1063,7 @@ do_rx_tls_cmp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 	m = tls_data;
 
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 
 	if (__predict_false(sb->sb_state & SBS_CANTRCVMORE)) {
 		struct epoch_tracker et;
@@ -1076,7 +1072,7 @@ do_rx_tls_cmp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 		    __func__, tid, pdu_length);
 		m_freem(m);
 		m_freem(control);
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		INP_WUNLOCK(inp);
 
 		CURVNET_SET(toep->vnet);
@@ -1125,7 +1121,7 @@ do_rx_tls_cmp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 	}
 
 	sorwakeup_locked(so);
-	SOCKBUF_UNLOCK_ASSERT(sb);
+	SOCK_RECVBUF_UNLOCK_ASSERT(so);
 
 	INP_WUNLOCK(inp);
 	CURVNET_RESTORE();
@@ -1151,7 +1147,7 @@ do_rx_data_tls(const struct cpl_rx_data *cpl, struct toepcb *toep,
 	so = inp_inpcbtosocket(inp);
 	tp = intotcpcb(inp);
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	CURVNET_SET(toep->vnet);
 
 	tp->rcv_nxt += len;
@@ -1230,7 +1226,7 @@ out:
 	}
 
 	sorwakeup_locked(so);
-	SOCKBUF_UNLOCK_ASSERT(sb);
+	SOCK_RECVBUF_UNLOCK_ASSERT(so);
 
 	INP_WUNLOCK(inp);
 	CURVNET_RESTORE();

@@ -542,14 +542,14 @@ do_rx_iscsi_ddp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 
 	so = inp->inp_socket;
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 
 	icc = toep->ulpcb;
 	if (__predict_false(icc == NULL || sb->sb_state & SBS_CANTRCVMORE)) {
 		CTR5(KTR_CXGBE,
 		    "%s: tid %u, excess rx (%d bytes), icc %p, sb_state 0x%x",
 		    __func__, tid, pdu_len, icc, sb->sb_state);
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		INP_WUNLOCK(inp);
 
 		CURVNET_SET(so->so_vnet);
@@ -585,7 +585,7 @@ do_rx_iscsi_ddp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 		icc->rx_active = true;
 		wakeup(&icc->rx_active);
 	}
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 	INP_WUNLOCK(inp);
 
 	toep->ulpcb2 = NULL;
@@ -797,12 +797,12 @@ do_rx_iscsi_cmp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 
 	so = inp->inp_socket;
 	sb = &so->so_rcv;
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 	if (__predict_false(sb->sb_state & SBS_CANTRCVMORE)) {
 		CTR5(KTR_CXGBE,
 		    "%s: tid %u, excess rx (%d bytes), icc %p, sb_state 0x%x",
 		    __func__, tid, pdu_len, icc, sb->sb_state);
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		INP_WUNLOCK(inp);
 
 		CURVNET_SET(so->so_vnet);
@@ -828,7 +828,7 @@ do_rx_iscsi_cmp(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 		icc->rx_active = true;
 		wakeup(&icc->rx_active);
 	}
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 	INP_WUNLOCK(inp);
 
 	toep->ulpcb2 = NULL;

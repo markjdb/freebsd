@@ -12206,7 +12206,7 @@ again:
 	len = 0;
 	rsm = NULL;
 	if (flags & TH_RST) {
-		SOCKBUF_LOCK(sb);
+		SOCK_SENDBUF_LOCK(so);
 		goto send;
 	}
 recheck_resend:
@@ -12274,7 +12274,7 @@ recheck_resend:
 			} else {
 				/* Retransmitting SYN */
 				rsm = NULL;
-				SOCKBUF_LOCK(sb);
+				SOCK_SENDBUF_LOCK(so);
 				goto send;
 			}
 		} else
@@ -12374,7 +12374,7 @@ recheck_resend:
 			kern_prefetch(end_rsm, &prefetch_rsm);
 		prefetch_rsm = 1;
 	}
-	SOCKBUF_LOCK(sb);
+	SOCK_SENDBUF_LOCK(so);
 	/*
 	 * If snd_nxt == snd_max and we have transmitted a FIN, the
 	 * sb_offset will be > 0 even if so_snd.sb_cc is 0, resulting in a
@@ -12792,7 +12792,7 @@ recheck_resend:
 	 * No reason to send a segment, just return.
 	 */
 just_return:
-	SOCKBUF_UNLOCK(sb);
+	SOCK_SENDBUF_UNLOCK(so);
 just_return_nolock:
 	if (tot_len)
 		slot = bbr_get_pacing_delay(bbr, bbr->r_ctl.rc_bbr_hptsi_gain, tot_len, cts, 0);
@@ -12900,7 +12900,7 @@ send:
 			len--;
 		}
 	}
-	SOCKBUF_LOCK_ASSERT(sb);
+	SOCK_SENDBUF_LOCK_ASSERT(so);
 	if (len > 0) {
 		if ((tp->snd_una == tp->snd_max) &&
 		    (bbr_calc_time(cts, bbr->r_ctl.rc_went_idle_time) >= bbr_rtt_probe_time)) {
@@ -13177,7 +13177,7 @@ send:
 		if (m == NULL) {
 			BBR_STAT_INC(bbr_failed_mbuf_aloc);
 			bbr_log_enobuf_jmp(bbr, len, cts, __LINE__, len, 0, 0);
-			SOCKBUF_UNLOCK(sb);
+			SOCK_SENDBUF_UNLOCK(so);
 			error = ENOBUFS;
 			sack_rxmit = 0;
 			goto out;
@@ -13221,7 +13221,7 @@ send:
 					 * is the only thing to do.
 					 */
 					BBR_STAT_INC(bbr_offset_drop);
-					SOCKBUF_UNLOCK(sb);
+					SOCK_SENDBUF_UNLOCK(so);
 					(void)m_free(m);
 					return (-EFAULT); /* tcp_drop() */
 				}
@@ -13281,7 +13281,7 @@ send:
 				tso = 0;
 			}
 			if (m->m_next == NULL) {
-				SOCKBUF_UNLOCK(sb);
+				SOCK_SENDBUF_UNLOCK(so);
 				(void)m_free(m);
 				error = ENOBUFS;
 				sack_rxmit = 0;
@@ -13317,9 +13317,9 @@ send:
 		    !(flags & TH_SYN)) {
 			flags |= TH_PUSH;
 		}
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 	} else {
-		SOCKBUF_UNLOCK(sb);
+		SOCK_SENDBUF_UNLOCK(so);
 		if (tp->t_flags & TF_ACKNOW)
 			KMOD_TCPSTAT_INC(tcps_sndacks);
 		else if (flags & (TH_SYN | TH_FIN | TH_RST))
@@ -13345,7 +13345,7 @@ send:
 			m->m_data += max_linkhdr;
 		m->m_len = hdrlen;
 	}
-	SOCKBUF_UNLOCK_ASSERT(sb);
+	SOCK_SENDBUF_UNLOCK_ASSERT(so);
 	m->m_pkthdr.rcvif = (struct ifnet *)0;
 #ifdef MAC
 	mac_inpcb_create_mbuf(inp, m);
@@ -13865,7 +13865,7 @@ nomore:
 		 * Everything else will just have to retransmit with the timer
 		 * (no pacer).
 		 */
-		SOCKBUF_UNLOCK_ASSERT(sb);
+		SOCK_SENDBUF_UNLOCK_ASSERT(so);
 		BBR_STAT_INC(bbr_saw_oerr);
 		/* Clear all delay/early tracks */
 		bbr->r_ctl.rc_hptsi_agg_delay = 0;

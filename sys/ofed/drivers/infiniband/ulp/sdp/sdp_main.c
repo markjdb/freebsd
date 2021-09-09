@@ -1268,7 +1268,7 @@ sdp_sorecv(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	error = SOCK_IO_RECV_LOCK(so, SBLOCKWAIT(flags));
 	if (error)
 		return (error);
-	SOCKBUF_LOCK(sb);
+	SOCK_RECVBUF_LOCK(so);
 
 	/* Easy one, no space to copyout anything. */
 	if (uio->uio_resid == 0) {
@@ -1389,9 +1389,9 @@ deliver:
 		}
 	} else {
 		/* NB: Must unlock socket buffer as uiomove may sleep. */
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		error = m_mbuftouio(uio, sb->sb_mb, len);
-		SOCKBUF_LOCK(sb);
+		SOCK_RECVBUF_LOCK(so);
 		if (error)
 			goto out;
 	}
@@ -1407,11 +1407,11 @@ deliver:
 			sbdrop_locked(sb, len);
 
 		/* Notify protocol that we drained some data. */
-		SOCKBUF_UNLOCK(sb);
+		SOCK_RECVBUF_UNLOCK(so);
 		SDP_WLOCK(ssk);
 		sdp_do_posts(ssk);
 		SDP_WUNLOCK(ssk);
-		SOCKBUF_LOCK(sb);
+		SOCK_RECVBUF_LOCK(so);
 	}
 
 	/*
@@ -1423,7 +1423,7 @@ deliver:
 out:
 	SBLASTRECORDCHK(sb);
 	SBLASTMBUFCHK(sb);
-	SOCKBUF_UNLOCK(sb);
+	SOCK_RECVBUF_UNLOCK(so);
 	SOCK_IO_RECV_UNLOCK(so);
 	return (error);
 }
