@@ -2342,10 +2342,10 @@ pmap_init_pv_table(void)
 		highest = start + (s / sizeof(*pvd)) - 1;
 
 		for (j = 0; j < s; j += PAGE_SIZE) {
-			vm_page_t m = vm_page_alloc_domain(NULL, 0,
-			    domain, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ);
+			vm_page_t m = vm_page_alloc_noobj_domain(domain,
+			    VM_ALLOC_NORMAL);
 			if (m == NULL)
-				panic("vm_page_alloc_domain failed for %lx\n", (vm_offset_t)pvd + j);
+				panic("failed to allocate PV table page");
 			pmap_qenter((vm_offset_t)pvd + j, &m, 1);
 		}
 
@@ -4311,15 +4311,11 @@ pmap_alloc_pt_page(pmap_t pmap, vm_pindex_t pindex, int flags)
 {
 	vm_page_t m;
 
-	m = vm_page_alloc(NULL, pindex, flags | VM_ALLOC_NOOBJ);
+	m = vm_page_alloc_noobj(flags);
 	if (__predict_false(m == NULL))
 		return (NULL);
-
+	m->pindex = pindex;
 	pmap_pt_page_count_adj(pmap, 1);
-
-	if ((flags & VM_ALLOC_ZERO) != 0 && (m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
-
 	return (m);
 }
 
@@ -5479,8 +5475,7 @@ retry:
 		}
 	}
 	/* No free items, allocate another chunk */
-	m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
-	    VM_ALLOC_WIRED);
+	m = vm_page_alloc_noobj(VM_ALLOC_NORMAL | VM_ALLOC_WIRED);
 	if (m == NULL) {
 		if (lockp == NULL) {
 			PV_STAT(counter_u64_add(pc_chunk_tryfail, 1));
@@ -5583,8 +5578,7 @@ retry:
 			break;
 	}
 	for (reclaimed = false; avail < needed; avail += _NPCPV) {
-		m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
-		    VM_ALLOC_WIRED);
+		m = vm_page_alloc_noobj(VM_ALLOC_NORMAL | VM_ALLOC_WIRED);
 		if (m == NULL) {
 			m = reclaim_pv_chunk(pmap, lockp);
 			if (m == NULL)
@@ -11393,12 +11387,10 @@ pmap_kasan_enter_alloc_4k(void)
 {
 	vm_page_t m;
 
-	m = vm_page_alloc(NULL, 0, VM_ALLOC_INTERRUPT | VM_ALLOC_NOOBJ |
-	    VM_ALLOC_WIRED | VM_ALLOC_ZERO);
+	m = vm_page_alloc_noobj(VM_ALLOC_INTERRUPT | VM_ALLOC_WIRED |
+	    VM_ALLOC_ZERO);
 	if (m == NULL)
 		panic("%s: no memory to grow shadow map", __func__);
-	if ((m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
 	return (m);
 }
 
@@ -11463,12 +11455,10 @@ pmap_kmsan_enter_alloc_4k(void)
 {
 	vm_page_t m;
 
-	m = vm_page_alloc(NULL, 0, VM_ALLOC_INTERRUPT | VM_ALLOC_NOOBJ |
-	    VM_ALLOC_WIRED | VM_ALLOC_ZERO);
+	m = vm_page_alloc_noobj(VM_ALLOC_INTERRUPT | VM_ALLOC_WIRED |
+	    VM_ALLOC_ZERO);
 	if (m == NULL)
 		panic("%s: no memory to grow shadow map", __func__);
-	if ((m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
 	return (m);
 }
 
