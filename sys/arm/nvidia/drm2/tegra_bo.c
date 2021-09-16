@@ -103,11 +103,10 @@ tegra_bo_alloc_contig(size_t npages, u_long alignment, vm_memattr_t memattr,
 	low = 0;
 	high = -1UL;
 	boundary = 0;
-	pflags = VM_ALLOC_NORMAL  | VM_ALLOC_NOOBJ | VM_ALLOC_NOBUSY |
-	    VM_ALLOC_WIRED | VM_ALLOC_ZERO;
+	pflags = VM_ALLOC_NORMAL | VM_ALLOC_WIRED | VM_ALLOC_ZERO;
 	tries = 0;
 retry:
-	m = vm_page_alloc_contig(NULL, 0, pflags, npages, low, high, alignment,
+	m = vm_page_alloc_noobj_contig(pflags, npages, low, high, alignment,
 	    boundary, memattr);
 	if (m == NULL) {
 		if (tries < 3) {
@@ -121,8 +120,6 @@ retry:
 	}
 
 	for (i = 0; i < npages; i++, m++) {
-		if ((m->flags & PG_ZERO) == 0)
-			pmap_zero_page(m);
 		m->valid = VM_PAGE_BITS_ALL;
 		(*ret_page)[i] = m;
 	}
