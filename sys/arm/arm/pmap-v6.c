@@ -3062,7 +3062,7 @@ retry:
 	 * global lock.  If "pv_vafree" is currently non-empty, it will
 	 * remain non-empty until pmap_pte2list_alloc() completes.
 	 */
-	if (pv_vafree == 0 || (m = vm_page_alloc_obj(VM_ALLOC_NORMAL |
+	if (pv_vafree == 0 || (m = vm_page_alloc_noobj(VM_ALLOC_NORMAL |
 	    VM_ALLOC_WIRED)) == NULL) {
 		if (try) {
 			pv_entry_count--;
