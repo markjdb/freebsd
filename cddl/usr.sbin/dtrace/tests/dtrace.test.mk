@@ -26,6 +26,8 @@ CLEANFILES+=	${TESTWRAPPER}.sh
 
 .PATH:	${TESTSRC}
 
+MK_PIE=		no
+
 PROGS=		${CFILES:T:S/.c$/.exe/g}
 .for prog in ${PROGS}
 SRCS.${prog}+= ${prog:S/.exe$/.c/}
