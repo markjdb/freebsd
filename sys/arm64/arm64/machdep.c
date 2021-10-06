@@ -105,7 +105,12 @@ static void set_fpcontext(struct thread *td, mcontext_t *mcp);
 
 enum arm64_bus arm64_bus_method = ARM64_BUS_NONE;
 
-struct pcpu __pcpu[MAXCPU];
+/*
+ * XXX: The .bss is assumed to be in the boot CPU NUMA domain. If not we
+ * could relocate this, but will need to keep the same virtual address as
+ * it's reverenced by the EARLY_COUNTER macro.
+ */
+struct pcpu pcpu0;
 
 static struct trapframe proc0_tf;
 
@@ -733,7 +738,10 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 static void
 init_proc0(vm_offset_t kstack)
 {
-	struct pcpu *pcpup = &__pcpu[0];
+	struct pcpu *pcpup;
+
+	pcpup = cpuid_to_pcpu[0];
+	MPASS(pcpup != NULL);
 
 	proc_linkup0(&proc0, &thread0);
 	thread0.td_kstack = kstack;
@@ -1081,7 +1089,7 @@ initarm(struct arm64_bootparams *abp)
 		    EXFLAG_NOALLOC);
 
 	/* Set the pcpu data, this is needed by pmap_bootstrap */
-	pcpup = &__pcpu[0];
+	pcpup = &pcpu0;
 	pcpu_init(pcpup, 0, sizeof(struct pcpu));
 
 	/*
