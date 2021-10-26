@@ -431,7 +431,7 @@ init_turnstile0(void *dummy)
 #else
 	    NULL,
 #endif
-	    turnstile_init, turnstile_fini, UMA_ALIGN_CACHE, UMA_ZONE_NOFREE);
+	    turnstile_init, turnstile_fini, UMA_ALIGN_CACHE, 0);
 	thread0.td_turnstile = turnstile_alloc();
 }
 SYSINIT(turnstile0, SI_SUB_LOCK, SI_ORDER_ANY, init_turnstile0, NULL);
