@@ -480,9 +480,9 @@ int	pmap_pkru_set(pmap_t pmap, vm_offset_t sva, vm_offset_t eva,
 void	pmap_thread_init_invl_gen(struct thread *td);
 int	pmap_vmspace_copy(pmap_t dst_pmap, pmap_t src_pmap);
 
-#ifdef KASAN
+#if defined(KASAN) || defined(KMSAN)
 void	pmap_san_bootstrap(void);
-void	pmap_kasan_enter(vm_offset_t);
+void	pmap_san_enter(vm_offset_t);
 #endif
 
 #endif /* _KERNEL */
