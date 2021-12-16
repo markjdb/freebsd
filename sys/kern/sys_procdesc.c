@@ -100,7 +100,7 @@ static fo_stat_t	procdesc_stat;
 static fo_close_t	procdesc_close;
 static fo_fill_kinfo_t	procdesc_fill_kinfo;
 
-static struct fileops procdesc_ops = {
+static const struct fileops procdesc_ops = {
 	.fo_read = invfo_rdwr,
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,

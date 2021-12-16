@@ -245,10 +245,10 @@ struct xfile {
 
 #ifdef _KERNEL
 
-extern struct fileops vnops;
-extern struct fileops badfileops;
-extern struct fileops path_fileops;
-extern struct fileops socketops;
+extern const struct fileops vnops;
+extern const struct fileops badfileops;
+extern const struct fileops path_fileops;
+extern const struct fileops socketops;
 extern int maxfiles;		/* kernel limit on number of open files */
 extern int maxfilesperproc;	/* per process limit on number of open files */
 

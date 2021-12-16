@@ -66,7 +66,7 @@ static fo_stat_t	eventfd_stat;
 static fo_close_t	eventfd_close;
 static fo_fill_kinfo_t	eventfd_fill_kinfo;
 
-static struct fileops eventfdops = {
+static const struct fileops eventfdops = {
 	.fo_read = eventfd_read,
 	.fo_write = eventfd_write,
 	.fo_truncate = invfo_truncate,
