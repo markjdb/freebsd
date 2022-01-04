@@ -58,7 +58,7 @@ __FBSDID("$FreeBSD$");
  * data.  However, the "unknown" entry must be first because it is referenced
  * using subscript 0 in mii_fdt_contype_to_name().
  */
-static struct contype_names {
+static const struct contype_names {
 	mii_contype_t type;
 	const char   *name;
 } fdt_contype_names[] = {
