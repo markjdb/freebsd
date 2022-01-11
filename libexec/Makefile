@@ -10,6 +10,7 @@ SUBDIR=	${_atf} \
 	${_dma} \
 	flua \
 	getty \
+	kgdb \
 	${_mail.local} \
 	${_makewhatis.local} \
 	${_mknetid} \
