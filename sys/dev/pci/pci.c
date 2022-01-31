@@ -4571,16 +4571,12 @@ pci_suspend_child(device_t dev, device_t child)
 
 	if (pci_do_power_suspend) {
 		/*
-		 * Make sure this device's interrupt handler is not invoked
-		 * in the case the device uses a shared interrupt that can
-		 * be raised by some other device.
-		 * This is applicable only to regular (legacy) PCI interrupts
-		 * as MSI/MSI-X interrupts are never shared.
+		 * XXXMJ
 		 */
-		rle = resource_list_find(&dinfo->resources,
-		    SYS_RES_IRQ, 0);
-		if (rle != NULL && rle->res != NULL)
-			(void)bus_suspend_intr(child, rle->res);
+		STAILQ_FOREACH(rle, &dinfo->resources, link) {
+			if (rle->type == SYS_RES_IRQ && rle->res != NULL)
+				(void)bus_suspend_intr(child, rle->res);
+		}
 		pci_set_power_child(dev, child, PCI_POWERSTATE_D3);
 	}
 
@@ -4601,17 +4597,18 @@ pci_resume_child(device_t dev, device_t child)
 	if (!device_is_attached(child))
 		pci_cfg_save(child, dinfo, 1);
 
-	bus_generic_resume_child(dev, child);
-
 	/*
-	 * Allow interrupts only after fully resuming the driver and hardware.
+	 * XXXMJ
 	 */
 	if (pci_do_power_suspend) {
 		/* See pci_suspend_child for details. */
-		rle = resource_list_find(&dinfo->resources, SYS_RES_IRQ, 0);
-		if (rle != NULL && rle->res != NULL)
-			(void)bus_resume_intr(child, rle->res);
+		STAILQ_FOREACH(rle, &dinfo->resources, link) {
+			if (rle->type == SYS_RES_IRQ && rle->res != NULL)
+				(void)bus_resume_intr(child, rle->res);
+		}
 	}
+
+	bus_generic_resume_child(dev, child);
 
 	return (0);
 }
