@@ -193,7 +193,6 @@ struct sysentvec {
 #define	SVC_ALL		0x00000004	/* dump everything */
 
 #ifdef _KERNEL
-extern struct sysentvec aout_sysvec;
 extern struct sysent sysent[];
 extern const char *syscallnames[];
 
@@ -331,7 +330,8 @@ int shared_page_alloc(int size, int align);
 int shared_page_fill(int size, int align, const void *data);
 void shared_page_write(int base, int size, const void *data);
 void exec_sysvec_init(void *param);
-void exec_sysvec_init_secondary(struct sysentvec *sv, struct sysentvec *sv2);
+void exec_sysvec_init_secondary(const struct sysentvec *sv,
+    struct sysentvec *sv2);
 void exec_inittk(void);
 
 void exit_onexit(struct proc *p);

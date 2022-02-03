@@ -382,7 +382,7 @@ exec_sysvec_init(void *param)
 }
 
 void
-exec_sysvec_init_secondary(struct sysentvec *sv, struct sysentvec *sv2)
+exec_sysvec_init_secondary(const struct sysentvec *sv, struct sysentvec *sv2)
 {
 	MPASS((sv2->sv_flags & SV_ABI_MASK) == (sv->sv_flags & SV_ABI_MASK));
 	MPASS((sv2->sv_flags & SV_TIMEKEEP) == (sv->sv_flags & SV_TIMEKEEP));

@@ -424,7 +424,7 @@ struct l_rt_sigframe {
 	l_handler_t		sf_handler;
 };
 
-extern struct sysentvec linux_sysvec;
+extern const struct sysentvec linux_sysvec;
 
 /*
  * arch specific open/fcntl flags

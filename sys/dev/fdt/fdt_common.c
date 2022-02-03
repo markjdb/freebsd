@@ -524,8 +524,10 @@ fdt_get_reserved_mem(struct mem_region *reserved, int *mreserved)
 
 	i = 0;
 	for (child = OF_child(root); child != 0; child = OF_peer(child)) {
-		if (!OF_hasprop(child, "no-map"))
+		if (!OF_hasprop(child, "no-map")) {
+			printf("%s:%d\n", __func__, __LINE__);
 			continue;
+		}
 
 		rv = OF_getprop(child, "reg", reg, sizeof(reg));
 		if (rv <= 0)

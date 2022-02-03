@@ -73,7 +73,7 @@ static int	aout_fixup(uintptr_t *stack_base, struct image_params *imgp);
 
 #define	AOUT32_PS_STRINGS	(AOUT32_USRSTACK - sizeof(struct ps_strings))
 
-struct sysentvec aout_sysvec = {
+static const struct sysentvec aout_sysvec = {
 	.sv_size	= SYS_MAXSYSCALL,
 	.sv_table	= sysent,
 	.sv_transtrap	= NULL,
@@ -124,7 +124,7 @@ extern u_long ia32_maxssiz;
 
 static int aout_szsigcode;
 
-struct sysentvec aout_sysvec = {
+static const struct sysentvec aout_sysvec = {
 	.sv_size	= FREEBSD32_SYS_MAXSYSCALL,
 	.sv_table	= freebsd32_sysent,
 	.sv_transtrap	= NULL,

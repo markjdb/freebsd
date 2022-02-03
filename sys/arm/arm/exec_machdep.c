@@ -261,12 +261,12 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 void
 sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 {
+	const struct sysentvec *sysent;
 	struct thread *td;
 	struct proc *p;
 	struct trapframe *tf;
 	struct sigframe *fp, frame;
 	struct sigacts *psp;
-	struct sysentvec *sysent;
 	int onstack;
 	int sig;
 	int code;

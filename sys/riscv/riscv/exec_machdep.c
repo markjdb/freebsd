@@ -348,8 +348,8 @@ sys_sigreturn(struct thread *td, struct sigreturn_args *uap)
 void
 sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 {
+	const struct sysentvec *sysent;
 	struct sigframe *fp, frame;
-	struct sysentvec *sysent;
 	struct trapframe *tf;
 	struct sigacts *psp;
 	struct thread *td;

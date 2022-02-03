@@ -1110,7 +1110,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	vm_map_t map;
 	char *interp;
 	Elf_Brandinfo *brand_info;
-	struct sysentvec *sv;
+	const struct sysentvec *sv;
 	u_long addr, baddr, et_dyn_addr, entry, proghdr;
 	u_long maxalign, maxsalign, mapsz, maxv, maxv1, anon_loc;
 	uint32_t fctl0;

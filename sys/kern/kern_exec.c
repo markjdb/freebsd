@@ -1096,8 +1096,8 @@ exec_onexec_old(struct thread *td)
 void
 exec_free_abi_mappings(struct proc *p)
 {
+	const struct sysentvec *sv;
 	struct vmspace *vmspace;
-	struct sysentvec *sv;
 
 	vmspace = p->p_vmspace;
 	if (refcount_load(&vmspace->vm_refcnt) != 1)
@@ -1116,7 +1116,7 @@ exec_free_abi_mappings(struct proc *p)
  * page.
  */
 int
-exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
+exec_new_vmspace(struct image_params *imgp, const struct sysentvec *sv)
 {
 	int error;
 	struct proc *p = imgp->proc;
@@ -1194,8 +1194,8 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 int
 exec_map_stack(struct image_params *imgp)
 {
+	const struct sysentvec *sv;
 	struct rlimit rlim_stack;
-	struct sysentvec *sv;
 	struct proc *p;
 	vm_map_t map;
 	struct vmspace *vmspace;
@@ -1610,7 +1610,7 @@ exec_copyout_strings(struct image_params *imgp, uintptr_t *stack_base)
 	uintptr_t destp, ustringp;
 	struct ps_strings *arginfo;
 	struct proc *p;
-	struct sysentvec *sysent;
+	const struct sysentvec *sysent;
 	size_t execpath_len;
 	int error, szsigcode;
 	char canary[sizeof(long) * 8];

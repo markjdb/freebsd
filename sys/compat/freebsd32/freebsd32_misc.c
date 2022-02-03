@@ -3417,7 +3417,7 @@ syscall32_helper_unregister(struct syscall_helper_data *sd)
 int
 freebsd32_copyout_strings(struct image_params *imgp, uintptr_t *stack_base)
 {
-	struct sysentvec *sysent;
+	const struct sysentvec *sysent;
 	int argc, envc, i;
 	uint32_t *vectp;
 	char *stringp;

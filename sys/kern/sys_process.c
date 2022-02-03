@@ -160,7 +160,7 @@ static struct regset *
 proc_find_regset(struct thread *td, int note)
 {
 	struct regset **regsetp, **regset_end, *regset;
-	struct sysentvec *sv;
+	const struct sysentvec *sv;
 
 	sv = td->td_proc->p_sysent;
 	regsetp = sv->sv_regset_begin;

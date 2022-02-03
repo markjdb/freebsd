@@ -63,7 +63,7 @@ static boolean_t elf32_arm_abi_supported(struct image_params *, int32_t *,
 u_long elf_hwcap;
 u_long elf_hwcap2;
 
-struct sysentvec elf32_freebsd_sysvec = {
+static struct sysentvec elf32_freebsd_sysvec = {
 	.sv_size	= SYS_MAXSYSCALL,
 	.sv_table	= sysent,
 	.sv_transtrap	= NULL,

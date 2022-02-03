@@ -71,7 +71,7 @@ struct image_params {
 	struct sf_buf *firstpage;	/* first page that we mapped */
 	void *ps_strings;		/* pointer to ps_string (user space) */
 	struct image_args *args;	/* system call arguments */
-	struct sysentvec *sysent;	/* system entry vector */
+	const struct sysentvec *sysent;	/* system entry vector */
 	void *argv;			/* pointer to argv (user space) */
 	void *envv;			/* pointer to envv (user space) */
 	char *execpath;
@@ -114,7 +114,7 @@ void	exec_cleanup(struct thread *td, struct vmspace *);
 int	exec_copyout_strings(struct image_params *, uintptr_t *);
 void	exec_free_args(struct image_args *);
 int	exec_map_stack(struct image_params *);
-int	exec_new_vmspace(struct image_params *, struct sysentvec *);
+int	exec_new_vmspace(struct image_params *, const struct sysentvec *);
 void	exec_setregs(struct thread *, struct image_params *, uintptr_t);
 int	exec_shell_imgact(struct image_params *);
 int	exec_copyin_args(struct image_args *, const char *, enum uio_seg,

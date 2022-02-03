@@ -63,7 +63,7 @@ static const char *riscv_machine_arch(struct proc *p);
 
 u_long elf_hwcap;
 
-struct sysentvec elf64_freebsd_sysvec = {
+static struct sysentvec elf64_freebsd_sysvec = {
 	.sv_size	= SYS_MAXSYSCALL,
 	.sv_table	= sysent,
 	.sv_transtrap	= NULL,
