@@ -58,12 +58,13 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/elf.h>
 #include <machine/md_var.h>
+#include <machine/pmap.h>
 
 static const char *riscv_machine_arch(struct proc *p);
 
 u_long elf_hwcap;
 
-struct sysentvec elf64_freebsd_sysvec = {
+static struct sysentvec elf64_freebsd_sv39_sysvec = {
 	.sv_size	= SYS_MAXSYSCALL,
 	.sv_table	= sysent,
 	.sv_transtrap	= NULL,
@@ -79,9 +80,9 @@ struct sysentvec elf64_freebsd_sysvec = {
 	.sv_imgact_try	= NULL,
 	.sv_minsigstksz	= MINSIGSTKSZ,
 	.sv_minuser	= VM_MIN_ADDRESS,
-	.sv_maxuser	= VM_MAXUSER_ADDRESS,
-	.sv_usrstack	= USRSTACK,
-	.sv_psstrings	= PS_STRINGS,
+	.sv_maxuser	= VM_MAX_USER_ADDRESS_SV39,
+	.sv_usrstack	= USRSTACK_SV39,
+	.sv_psstrings	= PS_STRINGS_SV39,
 	.sv_psstringssz	= sizeof(struct ps_strings),
 	.sv_stackprot	= VM_PROT_READ | VM_PROT_WRITE,
 	.sv_copyout_auxargs = __elfN(freebsd_copyout_auxargs),
@@ -94,7 +95,7 @@ struct sysentvec elf64_freebsd_sysvec = {
 	.sv_set_syscall_retval = cpu_set_syscall_retval,
 	.sv_fetch_syscall_args = cpu_fetch_syscall_args,
 	.sv_syscallnames = syscallnames,
-	.sv_shared_page_base = SHAREDPAGE,
+	.sv_shared_page_base = SHAREDPAGE_SV39,
 	.sv_shared_page_len = PAGE_SIZE,
 	.sv_schedtail	= NULL,
 	.sv_thread_detach = NULL,
@@ -106,7 +107,50 @@ struct sysentvec elf64_freebsd_sysvec = {
 	.sv_regset_begin = SET_BEGIN(__elfN(regset)),
 	.sv_regset_end  = SET_LIMIT(__elfN(regset)),
 };
-INIT_SYSENTVEC(elf64_sysvec, &elf64_freebsd_sysvec);
+
+static struct sysentvec elf64_freebsd_sv48_sysvec = {
+	.sv_size	= SYS_MAXSYSCALL,
+	.sv_table	= sysent,
+	.sv_transtrap	= NULL,
+	.sv_fixup	= __elfN(freebsd_fixup),
+	.sv_sendsig	= sendsig,
+	.sv_sigcode	= sigcode,
+	.sv_szsigcode	= &szsigcode,
+	.sv_name	= "FreeBSD ELF64",
+	.sv_coredump	= __elfN(coredump),
+	.sv_elf_core_osabi = ELFOSABI_FREEBSD,
+	.sv_elf_core_abi_vendor = FREEBSD_ABI_VENDOR,
+	.sv_elf_core_prepare_notes = __elfN(prepare_notes),
+	.sv_imgact_try	= NULL,
+	.sv_minsigstksz	= MINSIGSTKSZ,
+	.sv_minuser	= VM_MIN_ADDRESS,
+	.sv_maxuser	= VM_MAX_USER_ADDRESS_SV48,
+	.sv_usrstack	= USRSTACK_SV48,
+	.sv_psstrings	= PS_STRINGS_SV48,
+	.sv_psstringssz	= sizeof(struct ps_strings),
+	.sv_stackprot	= VM_PROT_READ | VM_PROT_WRITE,
+	.sv_copyout_auxargs = __elfN(freebsd_copyout_auxargs),
+	.sv_copyout_strings	= exec_copyout_strings,
+	.sv_setregs	= exec_setregs,
+	.sv_fixlimit	= NULL,
+	.sv_maxssiz	= NULL,
+	.sv_flags	= SV_ABI_FREEBSD | SV_LP64 | SV_SHP | SV_TIMEKEEP |
+	    SV_ASLR | SV_RNG_SEED_VER,
+	.sv_set_syscall_retval = cpu_set_syscall_retval,
+	.sv_fetch_syscall_args = cpu_fetch_syscall_args,
+	.sv_syscallnames = syscallnames,
+	.sv_shared_page_base = SHAREDPAGE_SV48,
+	.sv_shared_page_len = PAGE_SIZE,
+	.sv_schedtail	= NULL,
+	.sv_thread_detach = NULL,
+	.sv_trap	= NULL,
+	.sv_hwcap	= &elf_hwcap,
+	.sv_machine_arch = riscv_machine_arch,
+	.sv_onexec_old	= exec_onexec_old,
+	.sv_onexit	= exit_onexit,
+	.sv_regset_begin = SET_BEGIN(__elfN(regset)),
+	.sv_regset_end  = SET_LIMIT(__elfN(regset)),
+};
 
 static const char *
 riscv_machine_arch(struct proc *p)
@@ -118,20 +162,46 @@ riscv_machine_arch(struct proc *p)
 	return (MACHINE_ARCH);
 }
 
-static Elf64_Brandinfo freebsd_brand_info = {
+static Elf64_Brandinfo freebsd_sv39_brand_info = {
 	.brand		= ELFOSABI_FREEBSD,
 	.machine	= EM_RISCV,
 	.compat_3_brand	= "FreeBSD",
 	.emul_path	= NULL,
 	.interp_path	= "/libexec/ld-elf.so.1",
-	.sysvec		= &elf64_freebsd_sysvec,
+	.sysvec		= &elf64_freebsd_sv39_sysvec,
 	.interp_newpath	= NULL,
 	.brand_note	= &elf64_freebsd_brandnote,
 	.flags		= BI_CAN_EXEC_DYN | BI_BRAND_NOTE
 };
 
-SYSINIT(elf64, SI_SUB_EXEC, SI_ORDER_FIRST,
-    (sysinit_cfunc_t)elf64_insert_brand_entry, &freebsd_brand_info);
+static Elf64_Brandinfo freebsd_sv48_brand_info = {
+	.brand		= ELFOSABI_FREEBSD,
+	.machine	= EM_RISCV,
+	.compat_3_brand	= "FreeBSD",
+	.emul_path	= NULL,
+	.interp_path	= "/libexec/ld-elf.so.1",
+	.sysvec		= &elf64_freebsd_sv48_sysvec,
+	.interp_newpath	= NULL,
+	.brand_note	= &elf64_freebsd_brandnote,
+	.flags		= BI_CAN_EXEC_DYN | BI_BRAND_NOTE
+};
+
+static void
+elf64_register_sysvec(void *arg __unused)
+{
+	switch (pmap_mode) {
+	case PMAP_MODE_SV48:
+		elf64_insert_brand_entry(&freebsd_sv48_brand_info);
+		exec_sysvec_init(&elf64_freebsd_sv48_sysvec);
+		break;
+	case PMAP_MODE_SV39:
+		elf64_insert_brand_entry(&freebsd_sv39_brand_info);
+		exec_sysvec_init(&elf64_freebsd_sv39_sysvec);
+		break;
+	}
+}
+SYSINIT(elf64_register_sysvec, SI_SUB_EXEC, SI_ORDER_SECOND,
+    elf64_register_sysvec, NULL);
 
 static bool debug_kld;
 SYSCTL_BOOL(_debug, OID_AUTO, kld_reloc, CTLFLAG_RW, &debug_kld, 0,
