@@ -152,9 +152,9 @@
 #define	SATP_PPN_S	0
 #define	SATP_PPN_M	(0xfffffffffff << SATP_PPN_S)
 #define	SATP_ASID_S	44
-#define	SATP_ASID_M	(0xffff << SATP_ASID_S)
+#define	SATP_ASID_M	(0xffffUL << SATP_ASID_S)
 #define	SATP_MODE_S	60
-#define	SATP_MODE_M	(0xf << SATP_MODE_S)
+#define	SATP_MODE_M	(0xfUL << SATP_MODE_S)
 #define	SATP_MODE_SV39	(8ULL << SATP_MODE_S)
 #define	SATP_MODE_SV48	(9ULL << SATP_MODE_S)
 
