@@ -94,6 +94,13 @@ typedef struct pmap_statistics *pmap_statistics_t;
 #ifdef _KERNEL
 struct thread;
 
+enum pmap_mode {
+	PMAP_MODE_SV39,
+	PMAP_MODE_SV48,
+};
+
+extern enum pmap_mode pmap_mode;
+
 /*
  * Updates to kernel_vm_end are synchronized by the kernel_map's system mutex.
  */
