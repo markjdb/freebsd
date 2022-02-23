@@ -182,8 +182,8 @@ link_elf_ctf_get(linker_file_t lf, linker_ctf_t *lc)
 		goto out;
 	}
 
-	/* Check if version 2. */
-	if (cth.cth_version != CTF_VERSION_2) {
+	if (cth.cth_version != CTF_VERSION_2 &&
+	    cth.cth_version != CTF_VERSION_3) {
 		printf("%s(%d): module %s CTF format version is %d "
 		    "(2 expected)\n",
 		    __func__, __LINE__, lf->pathname, cth.cth_version);

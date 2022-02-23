@@ -23,8 +23,6 @@
  * Use is subject to license terms.
  */
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 /*
  * Given a file containing sections with stabs data, convert the stabs data to
  * CTF data, and replace the stabs sections with a CTF section.
