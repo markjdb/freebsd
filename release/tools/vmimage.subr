@@ -39,10 +39,46 @@ cleanup() {
 }
 
 vm_create_base() {
-	# Creates the UFS root filesystem for the virtual machine disk,
-	# written to the formatted disk image with mkimg(1).
+	local tmppool
+
+	# Creates the root filesystem for the virtual machine disk,
+	# later written to the formatted disk image with mkimg(1).
 
 	mkdir -p ${DESTDIR}
+
+	if [ "${VMFS}" = zfs ]; then
+		tmppool=release.$(jot -r 1 1000000000)
+
+                rm -f ${VMBASE}
+		truncate -s ${VMSIZE} ${VMBASE}
+		ZFSMD=$(mdconfig -f ${VMBASE})
+
+		kldload -n zfs
+		zpool create -O compress=zstd -O atime=off -t $tmppool \
+			-R $DESTDIR zroot /dev/$ZFSMD
+
+		while read dataset opts; do
+			zfs create $opts ${tmppool}/$dataset
+		done <<__EOF__
+ROOT            -o mountpoint=none
+ROOT/default    -o mountpoint=/
+tmp             -o mountpoint=/tmp -o exec=on -o setuid=off
+usr             -o mountpoint=/usr -o canmount=off
+usr/home
+usr/ports       -o setuid=off
+usr/src
+usr/obj
+var             -o mountpoint=/var -o canmount=off
+var/audit       -o setuid=off -o exec=off
+var/crash       -o setuid=off -o exec=off
+var/log         -o setuid=off -o exec=off
+var/mail        -o atime=on
+var/tmp         -o setuid=off
+__EOF__
+
+		zpool set bootfs=${tmppool}/ROOT/default ${tmppool}
+		zpool set autoexpand=on ${tmppool}
+	fi
 
 	return 0
 }
@@ -70,8 +106,10 @@ vm_install_base() {
 
 	echo '# Custom /etc/fstab for FreeBSD VM images' \
 		> ${DESTDIR}/etc/fstab
-	echo "/dev/${ROOTLABEL}/rootfs   /       ufs     rw      1       1" \
-		>> ${DESTDIR}/etc/fstab
+	if [ "${VMFS}" = ufs ]; then
+		echo "/dev/${ROOTLABEL}/rootfs   /       ufs     rw      1       1" \
+			>> ${DESTDIR}/etc/fstab
+	fi
 	if [ -z "${NOSWAP}" ]; then
 		echo '/dev/gpt/swapfs  none    swap    sw      0       0' \
 			>> ${DESTDIR}/etc/fstab
@@ -93,6 +131,11 @@ vm_install_base() {
 	umount_loop ${DESTDIR}/dev
 
 	cp /etc/resolv.conf ${DESTDIR}/etc/resolv.conf
+
+        if [ "${VMFS}" = zfs ]; then
+		echo "kern.geom.label.disk_ident.enable=0" >> ${DESTDIR}/boot/loader.conf
+		echo "zfs_load=YES" >> ${DESTDIR}/boot/loader.conf
+        fi
 
 	return 0
 }
@@ -169,6 +212,21 @@ vm_extra_pkg_rmcache() {
 	return 0
 }
 
+buildfs() {
+	local md tmppool
+
+	if [ "${VMFS}" = ufs ]; then
+		makefs ${MAKEFSARGS} -o label=rootfs -o version=2 -o softupdates=1 \
+			-s ${VMSIZE} ${VMBASE} ${DESTDIR}
+	else
+		tmppool=$(zpool list -H | awk '{if ($NF == "'${DESTDIR}'") print $1}')
+		md=$(mdconfig -lv | awk '{if ($NF == "'${VMBASE}'") print $1}')
+
+		zpool export $tmppool
+		mdconfig -d -u ${md#md}
+	fi
+}
+
 umount_loop() {
 	DIR=$1
 	i=0
@@ -188,6 +246,8 @@ umount_loop() {
 }
 
 vm_create_disk() {
+	local BOOTFILES BOOTPARTSOFFSET FSPARTTYPE GPTBOOTFILE
+
 	echo "Creating image...  Please wait."
 	echo
 
@@ -199,6 +259,13 @@ vm_create_disk() {
 		BOOTPARTSOFFSET=":${VM_BOOTPARTSOFFSET}"
 	fi
 
+	if [ "${VMFS}" = ufs ]; then
+		FSPARTTYPE=freebsd-ufs
+		GPTBOOTFILE=i386/gptboot/gptboot
+	else
+		FSPARTTYPE=freebsd-zfs
+		GPTBOOTFILE=i386/gptzfsboot/gptzfsboot
+	fi
 
 	BOOTFILES="$(env TARGET=${TARGET} TARGET_ARCH=${TARGET_ARCH} \
 		WITH_UNIFIED_OBJDIR=yes \
@@ -209,14 +276,14 @@ vm_create_disk() {
 		amd64:amd64 | i386:i386)
 			ESP=yes
 			BOOTPARTS="-b ${BOOTFILES}/i386/pmbr/pmbr \
-				   -p freebsd-boot/bootfs:=${BOOTFILES}/i386/gptboot/gptboot${BOOTPARTSOFFSET}"
-			ROOTFSPART="-p freebsd-ufs/rootfs:=${VMBASE}"
+				   -p freebsd-boot/bootfs:=${BOOTFILES}/${GPTBOOTFILE}${BOOTPARTSOFFSET}"
+			ROOTFSPART="-p ${FSPARTTYPE}/rootfs:=${VMBASE}"
 			MAKEFSARGS="-B little"
 			;;
 		arm64:aarch64 | riscv:riscv64*)
 			ESP=yes
 			BOOTPARTS=
-			ROOTFSPART="-p freebsd-ufs/rootfs:=${VMBASE}"
+			ROOTFSPART="-p ${FSPARTTYPE}/rootfs:=${VMBASE}"
 			MAKEFSARGS="-B little"
 			;;
 		powerpc:powerpc*)
@@ -248,8 +315,7 @@ vm_create_disk() {
 	fi
 
 	echo "Building filesystem...  Please wait."
-	makefs ${MAKEFSARGS} -o label=rootfs -o version=2 -o softupdates=1 \
-	    -s ${VMSIZE} ${VMBASE} ${DESTDIR}
+	buildfs
 
 	echo "Building final disk image...  Please wait."
 	mkimg -s ${PARTSCHEME} -f ${VMFORMAT} \
