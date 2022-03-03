@@ -13,7 +13,8 @@ SRCS=	cd9660.c \
 	makefs.c \
 	msdos.c \
 	mtree.c \
-	walk.c
+	walk.c \
+	zfs.c
 MAN=	makefs.8
 
 NO_WCAST_ALIGN=
@@ -39,4 +40,17 @@ LIBADD=		netbsd util sbuf
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
+# XXXMJ conditional on ZFS support
+LIBADD+= nvpair zfs zpool
+
 .include <bsd.prog.mk>
+
+ZFSTOP= ${SRCTOP}/sys/contrib/openzfs
+
+CFLAGS.zfs.c+=	-I${ZFSTOP}/include \
+		-I${ZFSTOP}/lib/libspl/include \
+		-I${ZFSTOP}/lib/libspl/include/os/freebsd \
+		-include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h \
+		-include ${SRCTOP}/sys/modules/zfs/zfs_config.h \
+		-DIN_BASE \
+		-DHAVE_ISSETUGID
