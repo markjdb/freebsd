@@ -387,17 +387,6 @@ zfs_znode_dmu_fini(znode_t *zp)
 	zp->z_sa_hdl = NULL;
 }
 
-static void
-zfs_vnode_forget(vnode_t *vp)
-{
-
-	/* copied from insmntque_stddtr */
-	vp->v_data = NULL;
-	vp->v_op = &dead_vnodeops;
-	vgone(vp);
-	vput(vp);
-}
-
 /*
  * Construct a new znode/vnode and initialize.
  *
@@ -483,13 +472,26 @@ zfs_znode_alloc(zfsvfs_t *zfsvfs, dmu_buf_t *db, int blksz,
 	SA_ADD_BULK_ATTR(bulk, count, SA_ZPL_GID(zfsvfs), NULL,
 	    &zp->z_gid, 8);
 
+	/*
+	 * Acquire vnode lock before making it available to the world.
+	 */
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	VN_LOCK_AREC(vp);
+	if (vp->v_type != VFIFO)
+		VN_LOCK_ASHARE(vp);
+
 	if (sa_bulk_lookup(zp->z_sa_hdl, bulk, count) != 0 || zp->z_gen == 0 ||
 	    (dmu_objset_projectquota_enabled(zfsvfs->z_os) &&
 	    (zp->z_pflags & ZFS_PROJID) &&
 	    sa_lookup(zp->z_sa_hdl, SA_ZPL_PROJID(zfsvfs), &projid, 8) != 0)) {
 		if (hdl == NULL)
 			sa_handle_destroy(zp->z_sa_hdl);
-		zfs_vnode_forget(vp);
+
+		vp->v_data = NULL;
+		vp->v_op = &dead_vnodeops;
+		vgone(vp);
+		vput(vp);
+
 		zp->z_vnode = NULL;
 		zfs_znode_free_kmem(zp);
 		return (NULL);
@@ -527,14 +529,6 @@ zfs_znode_alloc(zfsvfs_t *zfsvfs, dmu_buf_t *db, int blksz,
 	zfsvfs->z_nr_znodes++;
 	zp->z_zfsvfs = zfsvfs;
 	mutex_exit(&zfsvfs->z_znodes_lock);
-
-	/*
-	 * Acquire vnode lock before making it available to the world.
-	 */
-	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-	VN_LOCK_AREC(vp);
-	if (vp->v_type != VFIFO)
-		VN_LOCK_ASHARE(vp);
 
 	return (zp);
 }

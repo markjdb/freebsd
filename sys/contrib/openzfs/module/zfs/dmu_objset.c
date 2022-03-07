@@ -1318,6 +1318,7 @@ dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
 	dmu_objset_create_arg_t doca;
 	dsl_crypto_params_t tmp_dcp = { 0 };
 
+	printf("%s:%d\n", __func__, __LINE__);
 	doca.doca_name = name;
 	doca.doca_cred = CRED();
 	doca.doca_proc = curproc;
