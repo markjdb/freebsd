@@ -44,7 +44,7 @@ __FBSDID("$FreeBSD$");
 
 static ossl_cipher_process_t ossl_aes_cbc;
 
-struct ossl_cipher ossl_cipher_aes_cbc = {
+const struct ossl_cipher ossl_cipher_aes_cbc = {
 	.type = CRYPTO_AES_CBC,
 	.blocksize = AES_BLOCK_LEN,
 	.ivsize = AES_BLOCK_LEN,
@@ -66,7 +66,7 @@ ossl_aes_cbc(struct ossl_session_cipher *s, struct cryptop *crp,
 	unsigned char *out, *outseg;
 	size_t plen, seglen, inlen, outlen;
 	struct ossl_cipher_context key;
-	struct ossl_cipher *cipher;
+	const struct ossl_cipher *cipher;
 	int blocklen, error;
 	bool encrypt;
 

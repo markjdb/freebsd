@@ -42,7 +42,7 @@
 
 static ossl_cipher_process_t ossl_chacha20;
 
-struct ossl_cipher ossl_cipher_chacha20 = {
+const struct ossl_cipher ossl_cipher_chacha20 = {
 	.type = CRYPTO_CHACHA20,
 	.blocksize = CHACHA_BLK_SIZE,
 	.ivsize = CHACHA_CTR_SIZE,

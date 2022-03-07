@@ -62,7 +62,7 @@ HASH_INIT(void *c_)
 
 #include "ossl_hash.h"
 
-struct auth_hash ossl_hash_sha1 = {
+const struct auth_hash ossl_hash_sha1 = {
 	.type = CRYPTO_SHA1,
 	.name = "OpenSSL-SHA1",
 	.hashsize = SHA1_HASH_LEN,

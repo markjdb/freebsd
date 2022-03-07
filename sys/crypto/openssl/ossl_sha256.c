@@ -95,7 +95,7 @@ ossl_sha256_init(void *c_)
 
 #include "ossl_hash.h"
 
-struct auth_hash ossl_hash_sha224 = {
+const struct auth_hash ossl_hash_sha224 = {
 	.type = CRYPTO_SHA2_224,
 	.name = "OpenSSL-SHA2-224",
 	.hashsize = SHA2_224_HASH_LEN,
@@ -106,7 +106,7 @@ struct auth_hash ossl_hash_sha224 = {
 	.Final = HASH_FINAL,
 };
 
-struct auth_hash ossl_hash_sha256 = {
+const struct auth_hash ossl_hash_sha256 = {
 	.type = CRYPTO_SHA2_256,
 	.name = "OpenSSL-SHA2-256",
 	.hashsize = SHA2_256_HASH_LEN,

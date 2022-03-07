@@ -165,7 +165,7 @@ ossl_poly1305_final(uint8_t *digest, void *vctx)
 	Poly1305_Final(vctx, digest);
 }
 
-struct auth_hash ossl_hash_poly1305 = {
+const struct auth_hash ossl_hash_poly1305 = {
 	.type = CRYPTO_POLY1305,
 	.name = "OpenSSL-Poly1305",
 	.hashsize = POLY1305_HASH_LEN,

@@ -232,7 +232,7 @@ ossl_sha512_update(void *c_, const void *_data, unsigned int len)
     return 0;
 }
 
-struct auth_hash ossl_hash_sha384 = {
+const struct auth_hash ossl_hash_sha384 = {
 	.type = CRYPTO_SHA2_384,
 	.name = "OpenSSL-SHA2-384",
 	.hashsize = SHA2_384_HASH_LEN,
@@ -243,7 +243,7 @@ struct auth_hash ossl_hash_sha384 = {
 	.Final = ossl_sha512_final,
 };
 
-struct auth_hash ossl_hash_sha512 = {
+const struct auth_hash ossl_hash_sha512 = {
 	.type = CRYPTO_SHA2_512,
 	.name = "OpenSSL-SHA2-512",
 	.hashsize = SHA2_512_HASH_LEN,

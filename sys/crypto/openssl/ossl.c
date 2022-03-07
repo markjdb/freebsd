@@ -102,7 +102,7 @@ ossl_detach(device_t dev)
 	return (0);
 }
 
-static struct auth_hash *
+static const struct auth_hash *
 ossl_lookup_hash(const struct crypto_session_params *csp)
 {
 
@@ -129,7 +129,7 @@ ossl_lookup_hash(const struct crypto_session_params *csp)
 	}
 }
 
-static struct ossl_cipher*
+static const struct ossl_cipher*
 ossl_lookup_cipher(const struct crypto_session_params *csp)
 {
 
@@ -198,7 +198,7 @@ static void
 ossl_newsession_hash(struct ossl_session *s,
     const struct crypto_session_params *csp)
 {
-	struct auth_hash *axf;
+	const struct auth_hash *axf;
 
 	axf = ossl_lookup_hash(csp);
 	s->hash.axf = axf;
@@ -231,7 +231,7 @@ static int
 ossl_newsession_cipher(struct ossl_session *s,
     const struct crypto_session_params *csp)
 {
-	struct ossl_cipher *cipher;
+	const struct ossl_cipher *cipher;
 	int error = 0;
 
 	cipher = ossl_lookup_cipher(csp);
@@ -290,7 +290,7 @@ ossl_process_hash(struct ossl_session *s, struct cryptop *crp,
 {
 	struct ossl_hash_context ctx;
 	char digest[HASH_MAX_LEN];
-	struct auth_hash *axf;
+	const struct auth_hash *axf;
 	int error;
 
 	axf = s->hash.axf;

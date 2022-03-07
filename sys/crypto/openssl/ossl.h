@@ -62,14 +62,14 @@ struct ossl_cipher_context {
 struct ossl_session_hash {
 	struct ossl_hash_context ictx;
 	struct ossl_hash_context octx;
-	struct auth_hash *axf;
+	const struct auth_hash *axf;
 	u_int mlen;
 };
 
 struct ossl_session_cipher {
 	struct ossl_cipher_context dec_ctx;
 	struct ossl_cipher_context enc_ctx;
-	struct ossl_cipher *cipher;
+	const struct ossl_cipher *cipher;
 };
 
 struct ossl_session {
@@ -77,14 +77,14 @@ struct ossl_session {
 	struct ossl_session_hash hash;
 };
 
-extern struct auth_hash ossl_hash_poly1305;
-extern struct auth_hash ossl_hash_sha1;
-extern struct auth_hash ossl_hash_sha224;
-extern struct auth_hash ossl_hash_sha256;
-extern struct auth_hash ossl_hash_sha384;
-extern struct auth_hash ossl_hash_sha512;
+extern const struct auth_hash ossl_hash_poly1305;
+extern const struct auth_hash ossl_hash_sha1;
+extern const struct auth_hash ossl_hash_sha224;
+extern const struct auth_hash ossl_hash_sha256;
+extern const struct auth_hash ossl_hash_sha384;
+extern const struct auth_hash ossl_hash_sha512;
 
-extern struct ossl_cipher ossl_cipher_aes_cbc;
-extern struct ossl_cipher ossl_cipher_chacha20;
+extern const struct ossl_cipher ossl_cipher_aes_cbc;
+extern const struct ossl_cipher ossl_cipher_chacha20;
 
 #endif /* !__OSSL_H__ */
