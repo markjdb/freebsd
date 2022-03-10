@@ -125,7 +125,7 @@
  * Upper region:    0xffffffffffffffff  Top of virtual memory
  *
  *                  0xfffffeffffffffff  End of DMAP
- *                  0xfffffd0000000000  Start of DMAP
+ *                  0xfffffa0000000000  Start of DMAP
  *
  *                  0xffff009fffffffff  End of KASAN shadow map
  *                  0xffff008000000000  Start of KASAN shadow map
