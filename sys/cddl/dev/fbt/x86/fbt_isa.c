@@ -231,7 +231,9 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	for (hash = fbt_probetab[FBT_ADDR2NDX(instr)]; hash != NULL;
 	    hash = hash->fbtp_hashnext) {
 		if (hash->fbtp_patchpoint == fbt->fbtp_patchpoint) {
-			fbt->fbtp_tracenext = hash->fbtp_tracenext;
+			while (hash->fbtp_tracenext != NULL)
+				hash = hash->fbtp_tracenext;
+			fbt->fbtp_tracenext = NULL;
 			hash->fbtp_tracenext = fbt;
 			break;
 		}
@@ -344,8 +346,19 @@ again:
 
 	fbt->fbtp_savedval = *instr;
 	fbt->fbtp_patchval = FBT_PATCHVAL;
-	fbt->fbtp_hashnext = fbt_probetab[FBT_ADDR2NDX(instr)];
-	fbt_probetab[FBT_ADDR2NDX(instr)] = fbt;
+	for (hash = fbt_probetab[FBT_ADDR2NDX(instr)]; hash != NULL;
+	    hash = hash->fbtp_hashnext) {
+		if (hash->fbtp_patchpoint == fbt->fbtp_patchpoint) {
+			fbt->fbtp_tracenext = hash;
+			fbt->fbtp_hashnext = fbt_probetab[FBT_ADDR2NDX(instr)];
+			fbt_probetab[FBT_ADDR2NDX(instr)] = fbt;
+			break;
+		}
+	}
+	if (hash == NULL) {
+		fbt->fbtp_hashnext = fbt_probetab[FBT_ADDR2NDX(instr)];
+		fbt_probetab[FBT_ADDR2NDX(instr)] = fbt;
+	}
 
 	lf->fbt_nentries++;
 
