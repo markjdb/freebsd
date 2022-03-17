@@ -1766,9 +1766,11 @@ static int
 link_elf_each_function_nameval(linker_file_t file,
     linker_function_nameval_callback_t callback, void *opaque)
 {
-	linker_symval_t symval;
+	linker_symval_t symval, symval1;
+	c_linker_sym_t sym;
 	elf_file_t ef = (elf_file_t)file;
 	const Elf_Sym *symp;
+	long diff;
 	int i, error;
 
 	/* Exhaustive search */
@@ -1777,9 +1779,22 @@ link_elf_each_function_nameval(linker_file_t file,
 		    (ELF_ST_TYPE(symp->st_info) == STT_FUNC ||
 		    ELF_ST_TYPE(symp->st_info) == STT_GNU_IFUNC)) {
 			error = link_elf_debug_symbol_values(file,
-			    (c_linker_sym_t) symp, &symval);
-			if (error == 0)
+			    (c_linker_sym_t)symp, &symval);
+			if (error == 0) {
+				if (ELF_ST_TYPE(symp->st_info) ==
+				    STT_GNU_IFUNC) {
+					error = link_elf_search_symbol(file,
+					    symval.value, &sym, &diff);
+					if (error == 0 && diff == 0) {
+						error = link_elf_debug_symbol_values(file,
+						    sym, &symval1);
+						if (error == 0)
+							symval.size =
+							    symval1.size;
+					}
+				}
 				error = callback(file, i, &symval, opaque);
+			}
 			if (error != 0)
 				return (error);
 		}
