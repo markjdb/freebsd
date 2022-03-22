@@ -659,7 +659,7 @@ dmu_tx_dirty_buf(dmu_tx_t *tx, dmu_buf_impl_t *db)
 				match_offset = TRUE;
 				break;
 			case THT_NEWOBJECT:
-				match_object = TRUE;
+				match_object = match_offset = TRUE;
 				break;
 			default:
 				cmn_err(CE_PANIC, "bad txh_type %d",
