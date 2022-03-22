@@ -149,7 +149,9 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
 	char path[PATH_MAX];
 	const char *pool = "testpool";
+#if 0
 	const char *ds = "testpool/ROOT";
+#endif
 	objset_t *os;
 	dsl_dataset_t *rds;
 	dsl_pool_t *dp;
@@ -216,10 +218,12 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	dsl_dataset_rele(rds, FTAG);
 	dsl_pool_rele(dp, FTAG);
 
+#if 0
 	error = dmu_objset_create(ds, DMU_OST_ZFS, 0, NULL, objset_create_cb,
 	    NULL);
 	if (error != 0)
 		errc(1, error, "dmu_objset_create");
+#endif
 
 	spa_close(spa, FTAG);
 
