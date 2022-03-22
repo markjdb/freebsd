@@ -1,5 +1,8 @@
 #include <sys/zfs_context.h>
+#include <sys/dmu_objset.h>
 #include <sys/dnode.h>
+#include <sys/dsl_dataset.h>
+#include <sys/dsl_pool.h>
 #include <sys/sa.h>
 #include <sys/spa.h>
 #include <sys/zap.h>
@@ -31,7 +34,8 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 }
 
 static void
-objset_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
+objset_create_cb(objset_t *os, void *arg __unused, cred_t *cr __unused,
+    dmu_tx_t *tx)
 {
 	dmu_buf_t *db;
 	sa_attr_type_t *satab;
@@ -128,12 +132,27 @@ objset_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 	sa_handle_destroy(sahdl);
 }
 
+static int
+check(void *arg __unused, dmu_tx_t *tx __unused)
+{
+	return (0);
+}
+
+static void
+create(void *arg, dmu_tx_t *tx)
+{
+	objset_create_cb(arg, NULL, NULL, tx);
+}
+
 void
 zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
 	char path[PATH_MAX];
 	const char *pool = "testpool";
 	const char *ds = "testpool/ROOT";
+	objset_t *os;
+	dsl_dataset_t *rds;
+	dsl_pool_t *dp;
 	nvlist_t *cvdev, *rvdev, *props;
 	spa_t *spa;
 	int error, fd;
@@ -164,6 +183,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	props = fnvlist_alloc();
 
+	/* XXXMJ this opens zpool.cache? */
 	error = spa_create(pool, rvdev, props, NULL, NULL);
 	if (error != 0)
 		errc(1, error, "spa_create");
@@ -171,6 +191,30 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	error = spa_open(pool, &spa, FTAG);
 	if (error != 0)
 		errc(1, error, "spa_open");
+
+	error = dsl_pool_hold(pool, FTAG, &dp);
+	if (error != 0)
+		errc(1, error, "dsl_pool_hold");
+
+	error = dsl_dataset_hold(dp, "testpool", FTAG, &rds);
+	if (error != 0)
+		errc(1, error, "dsl_dataset_hold");
+
+	error = dmu_objset_from_ds(rds, &os);
+	if (error != 0)
+		errc(1, error, "dmu_objset_from_ds");
+
+	dmu_tx_t *tx = dmu_tx_create(os);
+
+	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	if (error != 0)
+		errc(1, error, "dmu_tx_assign");
+
+	objset_create_cb(os, NULL, NULL, tx);
+
+	dmu_tx_commit(tx);
+	dsl_dataset_rele(rds, FTAG);
+	dsl_pool_rele(dp, FTAG);
 
 	error = dmu_objset_create(ds, DMU_OST_ZFS, 0, NULL, objset_create_cb,
 	    NULL);
