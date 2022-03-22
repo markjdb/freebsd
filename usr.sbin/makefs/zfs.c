@@ -1,4 +1,5 @@
 #include <sys/zfs_context.h>
+#include <sys/dbuf.h>
 #include <sys/dmu_objset.h>
 #include <sys/dnode.h>
 #include <sys/dsl_dataset.h>
@@ -17,32 +18,98 @@
 
 #include "makefs.h"
 
+/* XXXMJ */
+static sa_handle_t *g_sahdl;
+static sa_attr_type_t *g_satab; 
+static uint64_t g_rootobj;
+
 void
-zfs_prep_opts(fsinfo_t *fsopts)
+zfs_prep_opts(fsinfo_t *fsopts __unused)
 {
 }
 
 int
-zfs_parse_opts(const char *option, fsinfo_t *fsopts)
+zfs_parse_opts(const char *option __unused, fsinfo_t *fsopts __unused)
 {
 	return (1);
 }
 
 void
-zfs_cleanup_opts(fsinfo_t *fsopts)
+zfs_cleanup_opts(fsinfo_t *fsopts __unused)
 {
+}
+
+static void
+mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t mode,
+    uint64_t size, uint64_t links, sa_handle_t **sahdlp, uint64_t *rootobjp)
+{
+	dmu_buf_t *db;
+	sa_bulk_attr_t *attrs;
+	sa_handle_t *sahdl;
+	uint64_t dnodesize, rootobj;
+	int error, i;
+
+	dnodesize = dmu_objset_dnodesize(os);
+
+	rootobj = zap_create_norm_dnsize(os, 0, DMU_OT_DIRECTORY_CONTENTS,
+	    DMU_OT_SA, DN_BONUS_SIZE(dnodesize), dnodesize, tx);
+
+	error = sa_buf_hold(os, rootobj, NULL, &db);
+	if (error != 0)
+		errc(1, error, "sa_buf_hold");
+
+	error = sa_handle_get_from_db(os, db, NULL, SA_HDL_SHARED, &sahdl);
+	if (error != 0)
+		errc(1, error, "sa_handle_get_from_db");
+
+	attrs = ecalloc(ZPL_END, sizeof(sa_bulk_attr_t));
+
+	uint64_t gen, pflags, time[2];
+	uint64_t gid, uid;
+
+	gen = 1; /* can't be 0 */
+	mode |= type;
+	pflags = 0; /* XXXMJ */
+	//links = 2;
+	//size = 2; /* "." and ".." */
+	time[0] = time[1] = 0;
+
+	gid = uid = 0; /* XXXMJ */
+
+	i = 0;
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_MODE], NULL, &mode, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_SIZE], NULL, &size, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_GEN], NULL, &gen, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_UID], NULL, &uid, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_GID], NULL, &gid, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_PARENT], NULL, &rootobj, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_FLAGS], NULL, &pflags, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_ATIME], NULL, time, 16);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_MTIME], NULL, time, 16);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_CTIME], NULL, time, 16);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_CRTIME], NULL, time, 16);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_LINKS], NULL, &links, 8); 
+
+	error = sa_replace_all_by_template(sahdl, attrs, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_replace_all_by_template");
+
+	if (sahdlp != NULL)
+		*sahdlp = sahdl;
+	if (rootobjp != NULL)
+		*rootobjp = rootobj;
+
+	free(attrs);
 }
 
 static void
 objset_create_cb(objset_t *os, void *arg __unused, cred_t *cr __unused,
     dmu_tx_t *tx)
 {
-	dmu_buf_t *db;
 	sa_attr_type_t *satab;
-	sa_bulk_attr_t *attrs;
 	sa_handle_t *sahdl;
-	uint64_t dnodesize, dqobj, rootobj, saobj, version;
-	int error, i;
+	uint64_t dqobj, rootobj, saobj, version;
+	int error;
 
 	error = zap_create_claim(os, MASTER_NODE_OBJ, DMU_OT_MASTER_NODE,
 	    DMU_OT_NONE, 0, tx);
@@ -74,81 +141,23 @@ objset_create_cb(objset_t *os, void *arg __unused, cred_t *cr __unused,
 
 	/* XXXMJ ACL IDs?? */
 
-	/* XXXMJ zfs_mknode start */
-
-	dnodesize = dmu_objset_dnodesize(os);
-	printf("dnodesize %lu\n", dnodesize);
-
-	rootobj = zap_create_norm_dnsize(os, 0, DMU_OT_DIRECTORY_CONTENTS,
-	    DMU_OT_SA, DN_BONUS_SIZE(dnodesize), dnodesize, tx);
-	printf("root obj %lu\n", rootobj);
-
-	error = sa_buf_hold(os, rootobj, NULL, &db);
-	if (error != 0)
-		errc(1, error, "sa_buf_hold");
-
-	error = sa_handle_get_from_db(os, db, NULL, SA_HDL_SHARED, &sahdl);
-	if (error != 0)
-		errc(1, error, "sa_handle_get_from_db");
-
-	attrs = ecalloc(ZPL_END, sizeof(sa_bulk_attr_t));
-
-	uint64_t gen, links, mode, pflags, size, time[2];
-	uint64_t gid, uid;
-
-	gen = 1; /* can't be 0 */
-	mode = S_IFDIR | 0755;
-	pflags = 0; /* XXXMJ */
-	links = 2;
-	size = 2; /* "." and ".." */
-	time[0] = time[1] = 0;
-
-	gid = uid = 0; /* XXXMJ */
-
-	i = 0;
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_MODE], NULL, &mode, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_SIZE], NULL, &size, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_GEN], NULL, &gen, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_UID], NULL, &uid, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_GID], NULL, &gid, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_PARENT], NULL, &rootobj, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_FLAGS], NULL, &pflags, 8);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_ATIME], NULL, time, 16);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_MTIME], NULL, time, 16);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_CTIME], NULL, time, 16);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_CRTIME], NULL, time, 16);
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_LINKS], NULL, &links, 8); 
-
-	error = sa_replace_all_by_template(sahdl, attrs, i, tx);
-	if (error != 0)
-		errc(1, error, "sa_replace_all_by_template");
-
-	/* XXXMJ zfs_mknode end */
+	mknode(os, satab, tx, S_IFDIR, 0755, 2 /* XXXMJ "." and ".." */, 2, &sahdl, &rootobj);
 
 	error = zap_add(os, MASTER_NODE_OBJ, ZFS_ROOT_OBJ, 8, 1, &rootobj, tx);
 	if (error != 0)
 		errc(1, error, "zap_add");
 
-	sa_handle_destroy(sahdl);
-}
-
-static int
-check(void *arg __unused, dmu_tx_t *tx __unused)
-{
-	return (0);
-}
-
-static void
-create(void *arg, dmu_tx_t *tx)
-{
-	objset_create_cb(arg, NULL, NULL, tx);
+	g_sahdl = sahdl;
+	g_satab = satab;
+	g_rootobj = rootobj;
 }
 
 void
-zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
+zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, fsinfo_t *fsopts __unused)
 {
 	char path[PATH_MAX];
 	const char *pool = "testpool";
+	const char *file = "foo.txt";
 #if 0
 	const char *ds = "testpool/ROOT";
 #endif
@@ -224,6 +233,108 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	if (error != 0)
 		errc(1, error, "dmu_objset_create");
 #endif
+
+	/* Create a file. */
+	tx = dmu_tx_create(os);
+
+	/* XXXMJ acls? */
+	dmu_tx_hold_sa_create(tx, ZFS_SA_BASE_ATTR_SIZE);
+
+	dmu_tx_hold_zap(tx, g_rootobj, TRUE, file);
+	dmu_tx_hold_sa(tx, g_sahdl, B_FALSE);
+
+	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	if (error != 0)
+		errc(1, error, "dmu_tx_assign");
+
+	sa_handle_t *sahdl;
+	uint64_t newid;
+	mknode(os, g_satab, tx, S_IFREG, 0333, 0, 0, &sahdl, &newid);
+
+	/* zfs_link_create BEGIN */
+	{
+	sa_bulk_attr_t bulk[5];
+	uint64_t links, nsize, pflags, value;
+	int i;
+
+	/* XXXMJ link count */
+
+	value = newid | ((uint64_t)S_IFREG << 48);
+	error = zap_add(os, g_rootobj, file, 8, 1, &value, tx);
+	if (error != 0)
+		errc(1, error, "zap_add");
+
+	pflags = 0;
+	links = 1;
+	i = 0;
+	SA_ADD_BULK_ATTR(bulk, i, g_satab[ZPL_LINKS], NULL, &links,
+	    sizeof(links));
+	SA_ADD_BULK_ATTR(bulk, i, g_satab[ZPL_PARENT], NULL, &g_rootobj,
+	    sizeof(g_rootobj));
+	SA_ADD_BULK_ATTR(bulk, i, g_satab[ZPL_FLAGS], NULL, &pflags,
+	    sizeof(pflags));
+
+	error = sa_bulk_update(sahdl, bulk, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_bulk_update");
+
+	nsize = 3;
+	i = 0;
+	SA_ADD_BULK_ATTR(bulk, i, g_satab[ZPL_SIZE], NULL, &nsize,
+	    sizeof(nsize));
+
+	error = sa_bulk_update(g_sahdl, bulk, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_bulk_update");
+	}
+	/* zfs_link_create END */
+
+	dmu_tx_commit(tx);
+
+	/* Write to the file. */
+	{
+	const char *str = "hello, world\n";
+	uint64_t nsize;
+
+	tx = dmu_tx_create(os);
+
+	dmu_tx_hold_sa(tx, sahdl, B_FALSE);
+	dmu_tx_hold_write(tx, newid, 0, strlen(str));
+
+	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	if (error != 0)
+		errc(1, error, "dmu_tx_assign");
+
+	dmu_write(os, newid, 0, strlen(str), str, tx);
+
+	nsize = strlen(str);
+	error = sa_update(sahdl, g_satab[ZPL_SIZE], &nsize, sizeof(nsize), tx);
+	if (error != 0)
+		errc(1, error, "sa_update");
+#if 0
+	dmu_write_by_dnode(DB_DNODE(db), 0, strlen(str), str, tx);
+
+	iov.iov_base = str;
+	iov.iov_len = strlen(str);
+
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_offset = 0;
+	uio.uio_resid = iov.iov_len;
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_rw = UIO_WRITE;
+	uio.uio_td = NULL;
+
+	error = dmu_write_uio_dbuf(sa_get_db(sahdl), &uio, strlen(str), tx);
+	if (error != 0)
+		errc(1, error, "dmu_write_uio_dbuf");
+#endif
+
+	dmu_tx_commit(tx);
+	}
+
+	sa_handle_destroy(g_sahdl);
+	sa_handle_destroy(sahdl);
 
 	spa_close(spa, FTAG);
 
