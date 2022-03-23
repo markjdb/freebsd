@@ -828,7 +828,6 @@ zfsvfs_init(zfsvfs_t *zfsvfs, objset_t *os)
 
 	uint64_t sa_obj = 0;
 	if (zfsvfs->z_use_sa) {
-		printf("%s:%d\n", __func__, __LINE__);
 		/* should either have both of these objects or none */
 		error = zap_lookup(os, MASTER_NODE_OBJ, ZFS_SA_ATTRS, 8, 1,
 		    &sa_obj);
