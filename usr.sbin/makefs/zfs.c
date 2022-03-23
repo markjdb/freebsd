@@ -23,20 +23,46 @@ static sa_handle_t *g_sahdl;
 static sa_attr_type_t *g_satab; 
 static uint64_t g_rootobj;
 
+typedef struct {
+	const char	*poolname;
+} zfs_opt_t;
+
 void
-zfs_prep_opts(fsinfo_t *fsopts __unused)
+zfs_prep_opts(fsinfo_t *fsopts)
 {
+	zfs_opt_t *zfs_opts = ecalloc(1, sizeof(*zfs_opts));
+
+	const option_t zfs_options[] = {
+		{ '\0', "poolname", &zfs_opts->poolname, OPT_STRPTR,
+		  0, 0, "ZFS pool name" },
+	};
+
+	fsopts->fs_specific = zfs_opts;
+	fsopts->fs_options = copy_opts(zfs_options);
 }
 
 int
-zfs_parse_opts(const char *option __unused, fsinfo_t *fsopts __unused)
+zfs_parse_opts(const char *option, fsinfo_t *fsopts)
 {
+	char buf[BUFSIZ];
+	option_t *zfs_options;
+	int rv;
+
+	zfs_options = fsopts->fs_options;
+
+	rv = set_option(zfs_options, option, buf, sizeof(buf));
+	if (rv == -1)
+		return (0);
+
 	return (1);
 }
 
 void
-zfs_cleanup_opts(fsinfo_t *fsopts __unused)
+zfs_cleanup_opts(fsinfo_t *fsopts)
 {
+	free(fsopts->fs_specific);
+	/* XXXMJ need to free strduped strings */
+	free(fsopts->fs_options);
 }
 
 static void
@@ -176,35 +202,37 @@ objset_create_cb(objset_t *os, void *arg __unused, cred_t *cr __unused,
 	g_rootobj = rootobj;
 }
 
-void
-zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, fsinfo_t *fsopts __unused)
+static int
+mkpool(const char *image, fsinfo_t *fsopts)
 {
 	char path[PATH_MAX];
-	const char *pool = "testpool";
-	const char *file = "foo.txt";
-#if 0
-	const char *ds = "testpool/ROOT";
-#endif
-	objset_t *os;
-	dsl_dataset_t *rds;
-	dsl_pool_t *dp;
 	nvlist_t *cvdev, *rvdev, *props;
-	spa_t *spa;
-	int error, fd;
+	zfs_opt_t *zfs_opts;
+	int error, oflags;
 
-	fd = open(image, O_RDWR | O_CREAT, 0644);
-	if (fd < 0)
-		err(1, "open(%s)", path);
-	if (ftruncate(fd, 1024 * 1024 * 1024ul /* XXXMJ */) != 0)
-		err(1, "ftruncate");
-	if (close(fd) != 0)
-		err(1, "close");
+	zfs_opts = fsopts->fs_specific;
+	if (zfs_opts->poolname == NULL) {
+		warnx("No pool name specified");
+		return (-1);
+	}
+
+	oflags = O_RDWR | O_CREAT;
+	if (fsopts->offset == 0)
+		oflags |= O_TRUNC;
+
+	fsopts->fd = open(image, oflags, 0666);
+	if (fsopts->fd == -1) {
+		warn("Can't open `%s' for writing", image);
+		return (-1);
+	}
+	if (ftruncate(fsopts->fd, fsopts->maxsize) != 0) {
+		warn("Failed to extend image file `%s'", image);
+		return (-1);
+	}
 
 	/* The path backing the vdev must be absolute. */
 	if (realpath(image, path) != path)
 		err(1, "realpath(%s)", image);
-
-	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
 
 	cvdev = fnvlist_alloc();
 	fnvlist_add_string(cvdev, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
@@ -217,21 +245,55 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 	    (const nvlist_t **)&cvdev, 1);
 
 	props = fnvlist_alloc();
+	fnvlist_add_string(props, "cachefile", "none");
+	fnvlist_add_string(props, "altroot", "/");
 
 	/* XXXMJ this opens zpool.cache? */
-	error = spa_create(pool, rvdev, props, NULL, NULL);
-	if (error != 0)
-		errc(1, error, "spa_create");
+	error = spa_create(zfs_opts->poolname, rvdev, props, NULL, NULL);
+	if (error != 0) {
+		warnc(error, "spa_create");
+		return (-1);
+	}
 
-	error = spa_open(pool, &spa, FTAG);
+	fnvlist_free(props);
+	fnvlist_free(rvdev);
+
+	return (0);
+}
+
+void
+zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, fsinfo_t *fsopts)
+{
+	const char *file = "foo.txt";
+	const char *poolname;
+	zfs_opt_t *zfs_opts;
+#if 0
+	const char *ds = "testpool/ROOT";
+#endif
+	objset_t *os;
+	dsl_dataset_t *rds;
+	dsl_pool_t *dp;
+	spa_t *spa;
+	int error;
+
+	zfs_opts = fsopts->fs_specific;
+
+	poolname = zfs_opts->poolname;
+
+	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
+
+	if (mkpool(image, fsopts) != 0)
+		return;
+
+	error = spa_open(poolname, &spa, FTAG);
 	if (error != 0)
 		errc(1, error, "spa_open");
 
-	error = dsl_pool_hold(pool, FTAG, &dp);
+	error = dsl_pool_hold(poolname, FTAG, &dp);
 	if (error != 0)
 		errc(1, error, "dsl_pool_hold");
 
-	error = dsl_dataset_hold(dp, "testpool", FTAG, &rds);
+	error = dsl_dataset_hold(dp, poolname, FTAG, &rds);
 	if (error != 0)
 		errc(1, error, "dsl_dataset_hold");
 
@@ -344,7 +406,10 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 
 	spa_close(spa, FTAG);
 
-	error = spa_export(pool, NULL, B_FALSE, B_FALSE);
+	error = spa_export(poolname, NULL, B_FALSE, B_FALSE);
 	if (error != 0)
 		errc(1, error, "spa_export");
+
+	/* XXXMJ this is rather slow and probably not necessary */
+	kernel_fini();
 }
