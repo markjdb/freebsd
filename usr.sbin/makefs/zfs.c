@@ -43,6 +43,8 @@ static void
 mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t mode,
     uint64_t size, uint64_t links, sa_handle_t **sahdlp, uint64_t *rootobjp)
 {
+	zfs_ace_hdr_t aces[3];
+	zfs_acl_phys_t acl_phys;
 	dmu_buf_t *db;
 	sa_bulk_attr_t *attrs;
 	sa_handle_t *sahdl;
@@ -64,17 +66,35 @@ mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t 
 
 	attrs = ecalloc(ZPL_END, sizeof(sa_bulk_attr_t));
 
-	uint64_t gen, pflags, time[2];
+	uint64_t aclcount, gen, pflags, time[2];
 	uint64_t gid, uid;
 
+	aclcount = 3;
 	gen = 1; /* can't be 0 */
 	mode |= type;
-	pflags = 0; /* XXXMJ */
-	//links = 2;
-	//size = 2; /* "." and ".." */
+	pflags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT /* XXXMJ dir only */| ZFS_NO_EXECS_DENIED |
+	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
 	time[0] = time[1] = 0;
 
 	gid = uid = 0; /* XXXMJ */
+	memset(&acl_phys, 0, sizeof(acl_phys));
+
+	memset(aces, 0, sizeof(aces));
+	aces[0].z_flags = ACE_OWNER;
+	aces[0].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+	aces[0].z_access_mask = ACE_READ_DATA | ACE_WRITE_ATTRIBUTES | ACE_WRITE_OWNER |
+	    ACE_WRITE_ACL | ACE_WRITE_NAMED_ATTRS | ACE_READ_ACL | ACE_READ_ATTRIBUTES |
+	    ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
+	aces[1].z_flags = ACE_GROUP | ACE_IDENTIFIER_GROUP;
+	aces[1].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+	aces[1].z_access_mask = ACE_READ_DATA |
+	    ACE_READ_ACL | ACE_READ_ATTRIBUTES |
+	    ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
+	aces[2].z_flags = ACE_EVERYONE;
+	aces[2].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+	aces[2].z_access_mask = ACE_READ_DATA |
+	    ACE_READ_ACL | ACE_READ_ATTRIBUTES |
+	    ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
 
 	i = 0;
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_MODE], NULL, &mode, 8);
@@ -82,6 +102,10 @@ mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t 
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_GEN], NULL, &gen, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_UID], NULL, &uid, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_GID], NULL, &gid, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_ZNODE_ACL], NULL, &acl_phys,
+	    sizeof(acl_phys));
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_DACL_COUNT], NULL, &aclcount, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_DACL_ACES], NULL, aces, sizeof(aces));
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_PARENT], NULL, &rootobj, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_FLAGS], NULL, &pflags, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_ATIME], NULL, time, 16);
@@ -249,7 +273,7 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 
 	sa_handle_t *sahdl;
 	uint64_t newid;
-	mknode(os, g_satab, tx, S_IFREG, 0333, 0, 0, &sahdl, &newid);
+	mknode(os, g_satab, tx, S_IFREG, 0666, 0, 0, &sahdl, &newid);
 
 	/* zfs_link_create BEGIN */
 	{
@@ -264,7 +288,7 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 	if (error != 0)
 		errc(1, error, "zap_add");
 
-	pflags = 0;
+	pflags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED | ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
 	links = 1;
 	i = 0;
 	SA_ADD_BULK_ATTR(bulk, i, g_satab[ZPL_LINKS], NULL, &links,
@@ -311,24 +335,6 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 	error = sa_update(sahdl, g_satab[ZPL_SIZE], &nsize, sizeof(nsize), tx);
 	if (error != 0)
 		errc(1, error, "sa_update");
-#if 0
-	dmu_write_by_dnode(DB_DNODE(db), 0, strlen(str), str, tx);
-
-	iov.iov_base = str;
-	iov.iov_len = strlen(str);
-
-	uio.uio_iov = &iov;
-	uio.uio_iovcnt = 1;
-	uio.uio_offset = 0;
-	uio.uio_resid = iov.iov_len;
-	uio.uio_segflg = UIO_SYSSPACE;
-	uio.uio_rw = UIO_WRITE;
-	uio.uio_td = NULL;
-
-	error = dmu_write_uio_dbuf(sa_get_db(sahdl), &uio, strlen(str), tx);
-	if (error != 0)
-		errc(1, error, "dmu_write_uio_dbuf");
-#endif
 
 	dmu_tx_commit(tx);
 	}
