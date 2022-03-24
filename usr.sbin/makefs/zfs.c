@@ -18,13 +18,20 @@
 
 #include "makefs.h"
 
-/* XXXMJ */
-static sa_handle_t *g_sahdl;
-static sa_attr_type_t *g_satab; 
-static uint64_t g_rootobj;
+typedef struct {
+	objset_t	*os;
+	sa_handle_t	*sahdl;
+	sa_attr_type_t	*satab;
+	uint64_t	rootdirobj;
+} zfs_fs_t;
 
 typedef struct {
+	/* Pool info. */
 	const char	*poolname;
+	spa_t		*spa;
+
+	/* Root filesystem info. */
+	zfs_fs_t	rootfs;
 } zfs_opt_t;
 
 void
@@ -60,8 +67,12 @@ zfs_parse_opts(const char *option, fsinfo_t *fsopts)
 void
 zfs_cleanup_opts(fsinfo_t *fsopts)
 {
+	zfs_opt_t *zfs_opts;
+
+	zfs_opts = fsopts->fs_specific;
+	free((void *)zfs_opts->poolname);
+
 	free(fsopts->fs_specific);
-	/* XXXMJ need to free strduped strings */
 	free(fsopts->fs_options);
 }
 
@@ -152,56 +163,9 @@ mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t 
 	free(attrs);
 }
 
-static void
-objset_create_cb(objset_t *os, void *arg __unused, cred_t *cr __unused,
-    dmu_tx_t *tx)
-{
-	sa_attr_type_t *satab;
-	sa_handle_t *sahdl;
-	uint64_t dqobj, rootobj, saobj, version;
-	int error;
-
-	error = zap_create_claim(os, MASTER_NODE_OBJ, DMU_OT_MASTER_NODE,
-	    DMU_OT_NONE, 0, tx);
-	if (error != 0)
-		errc(1, error, "zap_create_claim");
-
-	version = ZPL_VERSION;
-	error = zap_update(os, MASTER_NODE_OBJ, ZPL_VERSION_STR, 8, 1,
-	    &version, tx);
-	if (error != 0)
-		errc(1, error, "zap_update");
-
-	saobj = zap_create(os, DMU_OT_SA_MASTER_NODE, DMU_OT_NONE, 0, tx);
-
-	error = zap_add(os, MASTER_NODE_OBJ, ZFS_SA_ATTRS, 8, 1, &saobj, tx);
-	if (error != 0)
-		errc(1, error, "zap_add");
-
-	dqobj = zap_create(os, DMU_OT_UNLINKED_SET, DMU_OT_NONE, 0, tx);
-
-	error = zap_add(os, MASTER_NODE_OBJ, ZFS_UNLINKED_SET, 8, 1, &dqobj,
-	    tx);
-	if (error != 0)
-		errc(1, error, "zap_add");
-
-	error = sa_setup(os, saobj, zfs_attr_table, ZPL_END, &satab);
-	if (error != 0)
-		errc(1, error, "sa_setup");
-
-	/* XXXMJ ACL IDs?? */
-
-	mknode(os, satab, tx, S_IFDIR, 0755, 2 /* XXXMJ "." and ".." */, 2, &sahdl, &rootobj);
-
-	error = zap_add(os, MASTER_NODE_OBJ, ZFS_ROOT_OBJ, 8, 1, &rootobj, tx);
-	if (error != 0)
-		errc(1, error, "zap_add");
-
-	g_sahdl = sahdl;
-	g_satab = satab;
-	g_rootobj = rootobj;
-}
-
+/*
+ * Create the pool.
+ */
 static int
 mkpool(const char *image, fsinfo_t *fsopts)
 {
@@ -246,6 +210,7 @@ mkpool(const char *image, fsinfo_t *fsopts)
 
 	props = fnvlist_alloc();
 	fnvlist_add_string(props, "cachefile", "none");
+	/* XXXMJ hack to try and ensure that the cache file isn't written */
 	fnvlist_add_string(props, "altroot", "/");
 
 	/* XXXMJ this opens zpool.cache? */
@@ -261,39 +226,71 @@ mkpool(const char *image, fsinfo_t *fsopts)
 	return (0);
 }
 
-void
-zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, fsinfo_t *fsopts)
+static void
+mkfs(zfs_fs_t *fs, objset_t *os, dmu_tx_t *tx)
 {
-	const char *file = "foo.txt";
-	const char *poolname;
+	sa_attr_type_t *satab;
+	sa_handle_t *sahdl;
+	uint64_t dqobj, rootobj, saobj, version;
+	int error;
+
+	error = zap_create_claim(os, MASTER_NODE_OBJ, DMU_OT_MASTER_NODE,
+	    DMU_OT_NONE, 0, tx);
+	if (error != 0)
+		errc(1, error, "zap_create_claim");
+
+	version = ZPL_VERSION;
+	error = zap_update(os, MASTER_NODE_OBJ, ZPL_VERSION_STR, 8, 1,
+	    &version, tx);
+	if (error != 0)
+		errc(1, error, "zap_update");
+
+	saobj = zap_create(os, DMU_OT_SA_MASTER_NODE, DMU_OT_NONE, 0, tx);
+
+	error = zap_add(os, MASTER_NODE_OBJ, ZFS_SA_ATTRS, 8, 1, &saobj, tx);
+	if (error != 0)
+		errc(1, error, "zap_add");
+
+	dqobj = zap_create(os, DMU_OT_UNLINKED_SET, DMU_OT_NONE, 0, tx);
+
+	error = zap_add(os, MASTER_NODE_OBJ, ZFS_UNLINKED_SET, 8, 1, &dqobj,
+	    tx);
+	if (error != 0)
+		errc(1, error, "zap_add");
+
+	error = sa_setup(os, saobj, zfs_attr_table, ZPL_END, &satab);
+	if (error != 0)
+		errc(1, error, "sa_setup");
+
+	mknode(os, satab, tx, S_IFDIR, 0755, 2 /* XXXMJ "." and ".." */, 2, &sahdl, &rootobj);
+
+	error = zap_add(os, MASTER_NODE_OBJ, ZFS_ROOT_OBJ, 8, 1, &rootobj, tx);
+	if (error != 0)
+		errc(1, error, "zap_add");
+
+	fs->os = os;
+	fs->sahdl = sahdl;
+	fs->satab = satab;
+	fs->rootdirobj = rootobj;
+}
+
+static void
+mkrootfs(zfs_fs_t *fs, fsinfo_t *fsopts)
+{
 	zfs_opt_t *zfs_opts;
-#if 0
-	const char *ds = "testpool/ROOT";
-#endif
-	objset_t *os;
 	dsl_dataset_t *rds;
 	dsl_pool_t *dp;
-	spa_t *spa;
+	dmu_tx_t *tx;
+	objset_t *os;
 	int error;
 
 	zfs_opts = fsopts->fs_specific;
 
-	poolname = zfs_opts->poolname;
-
-	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
-
-	if (mkpool(image, fsopts) != 0)
-		return;
-
-	error = spa_open(poolname, &spa, FTAG);
-	if (error != 0)
-		errc(1, error, "spa_open");
-
-	error = dsl_pool_hold(poolname, FTAG, &dp);
+	error = dsl_pool_hold(zfs_opts->poolname, FTAG, &dp);
 	if (error != 0)
 		errc(1, error, "dsl_pool_hold");
 
-	error = dsl_dataset_hold(dp, poolname, FTAG, &rds);
+	error = dsl_dataset_hold(dp, zfs_opts->poolname, FTAG, &rds);
 	if (error != 0)
 		errc(1, error, "dsl_dataset_hold");
 
@@ -301,29 +298,132 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 	if (error != 0)
 		errc(1, error, "dmu_objset_from_ds");
 
-	dmu_tx_t *tx = dmu_tx_create(os);
+	tx = dmu_tx_create(os);
 
 	error = dmu_tx_assign(tx, TXG_NOWAIT);
 	if (error != 0)
 		errc(1, error, "dmu_tx_assign");
 
-	objset_create_cb(os, NULL, NULL, tx);
+	mkfs(fs, os, tx);
 
 	dmu_tx_commit(tx);
 	dsl_dataset_rele(rds, FTAG);
 	dsl_pool_rele(dp, FTAG);
+}
+
+static void
+fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
+{
+	dmu_tx_t *tx;
+	sa_handle_t *sahdl;
+	int error;
+
+	tx = dmu_tx_create(fs->os);
+
+	dmu_tx_hold_sa_create(tx, ZFS_SA_BASE_ATTR_SIZE);
+
+	dmu_tx_hold_zap(tx, fs->rootdirobj, TRUE, cur->name);
+	dmu_tx_hold_sa(tx, fs->sahdl, B_FALSE);
+
+	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	if (error != 0)
+		errc(1, error, "dmu_tx_assign");
+
+	uint64_t newid;
+	mknode(fs->os, fs->satab, tx, S_IFREG, 0666, 0, 0, &sahdl, &newid);
+
+	/* zfs_link_create BEGIN */
+	{
+	sa_bulk_attr_t bulk[5];
+	uint64_t links, nsize, pflags, value;
+	int i;
+
+	/* XXXMJ link count */
+
+	value = newid | ((uint64_t)S_IFREG << 48);
+	error = zap_add(fs->os, fs->rootdirobj, cur->name, 8, 1, &value, tx);
+	if (error != 0)
+		errc(1, error, "zap_add");
+
+	pflags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED | ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
+	links = 1;
+	i = 0;
+	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_LINKS], NULL, &links,
+	    sizeof(links));
+	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_PARENT], NULL, &fs->rootdirobj,
+	    sizeof(fs->rootdirobj));
+	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_FLAGS], NULL, &pflags,
+	    sizeof(pflags));
+
+	error = sa_bulk_update(sahdl, bulk, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_bulk_update");
+
+	nsize = 3;
+	i = 0;
+	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_SIZE], NULL, &nsize,
+	    sizeof(nsize));
+
+	error = sa_bulk_update(fs->sahdl, bulk, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_bulk_update");
+	}
+	/* zfs_link_create END */
+
+	dmu_tx_commit(tx);
+
+	/* Write to the file. */
+	{
+	const char *str = "hello, world\n";
+	uint64_t nsize;
+
+	tx = dmu_tx_create(fs->os);
+
+	dmu_tx_hold_sa(tx, sahdl, B_FALSE);
+	dmu_tx_hold_write(tx, newid, 0, strlen(str));
+
+	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	if (error != 0)
+		errc(1, error, "dmu_tx_assign");
+
+	dmu_write(fs->os, newid, 0, strlen(str), str, tx);
+
+	nsize = strlen(str);
+	error = sa_update(sahdl, fs->satab[ZPL_SIZE], &nsize, sizeof(nsize), tx);
+	if (error != 0)
+		errc(1, error, "sa_update");
+
+	dmu_tx_commit(tx);
+	}
+
+	sa_handle_destroy(sahdl);
+}
+
+void
+zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *fsopts)
+{
+	zfs_opt_t *zfs_opts;
+	int error;
+
+	zfs_opts = fsopts->fs_specific;
+
+	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
+
+	if (mkpool(image, fsopts) != 0)
+		return;
+
+	error = spa_open(zfs_opts->poolname, &zfs_opts->spa, FTAG);
+	if (error != 0)
+		errc(1, error, "spa_open");
+
+	mkrootfs(&zfs_opts->rootfs, fsopts);
+
+	fspopulate(&zfs_opts->rootfs, root->next, fsopts);
 
 #if 0
-	error = dmu_objset_create(ds, DMU_OST_ZFS, 0, NULL, objset_create_cb,
-	    NULL);
-	if (error != 0)
-		errc(1, error, "dmu_objset_create");
-#endif
-
 	/* Create a file. */
 	tx = dmu_tx_create(os);
 
-	/* XXXMJ acls? */
 	dmu_tx_hold_sa_create(tx, ZFS_SA_BASE_ATTR_SIZE);
 
 	dmu_tx_hold_zap(tx, g_rootobj, TRUE, file);
@@ -401,12 +501,14 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root __unused, f
 	dmu_tx_commit(tx);
 	}
 
-	sa_handle_destroy(g_sahdl);
 	sa_handle_destroy(sahdl);
+#endif
 
-	spa_close(spa, FTAG);
+	sa_handle_destroy(zfs_opts->rootfs.sahdl);
 
-	error = spa_export(poolname, NULL, B_FALSE, B_FALSE);
+	spa_close(zfs_opts->spa, FTAG);
+
+	error = spa_export(zfs_opts->poolname, NULL, B_FALSE, B_FALSE);
 	if (error != 0)
 		errc(1, error, "spa_export");
 
