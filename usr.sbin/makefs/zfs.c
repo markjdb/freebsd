@@ -42,6 +42,7 @@ zfs_prep_opts(fsinfo_t *fsopts)
 	const option_t zfs_options[] = {
 		{ '\0', "poolname", &zfs_opts->poolname, OPT_STRPTR,
 		  0, 0, "ZFS pool name" },
+		{ .name = NULL }
 	};
 
 	fsopts->fs_specific = zfs_opts;
@@ -318,6 +319,11 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 	sa_handle_t *sahdl;
 	int error;
 
+	if (cur == NULL)
+		return;
+	if ((cur->inode->st.st_mode & S_IFREG) == 0)
+		goto next;
+
 	tx = dmu_tx_create(fs->os);
 
 	dmu_tx_hold_sa_create(tx, ZFS_SA_BASE_ATTR_SIZE);
@@ -325,6 +331,7 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 	dmu_tx_hold_zap(tx, fs->rootdirobj, TRUE, cur->name);
 	dmu_tx_hold_sa(tx, fs->sahdl, B_FALSE);
 
+	/* XXXMJ should be using TXG_WAIT */
 	error = dmu_tx_assign(tx, TXG_NOWAIT);
 	if (error != 0)
 		errc(1, error, "dmu_tx_assign");
@@ -374,29 +381,49 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 
 	/* Write to the file. */
 	{
-	const char *str = "hello, world\n";
+	char path[PATH_MAX];
+	void *contents;
 	uint64_t nsize;
+	int fd;
+
+	snprintf(path, sizeof(path), "%s/%s/%s", cur->root, cur->path,
+	    cur->name);
+
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		err(1, "open(%s)", path);
+
+	nsize = cur->inode->st.st_size;
+	contents = mmap(NULL, (size_t)nsize, PROT_READ, MAP_SHARED, fd, 0);
+	if (contents == MAP_FAILED)
+		err(1, "mmap");
+
+	(void)close(fd);
 
 	tx = dmu_tx_create(fs->os);
 
 	dmu_tx_hold_sa(tx, sahdl, B_FALSE);
-	dmu_tx_hold_write(tx, newid, 0, strlen(str));
+	dmu_tx_hold_write(tx, newid, 0, nsize);
 
 	error = dmu_tx_assign(tx, TXG_NOWAIT);
 	if (error != 0)
 		errc(1, error, "dmu_tx_assign");
 
-	dmu_write(fs->os, newid, 0, strlen(str), str, tx);
+	dmu_write(fs->os, newid, 0, nsize, contents, tx);
 
-	nsize = strlen(str);
 	error = sa_update(sahdl, fs->satab[ZPL_SIZE], &nsize, sizeof(nsize), tx);
 	if (error != 0)
 		errc(1, error, "sa_update");
 
 	dmu_tx_commit(tx);
+
+	(void)munmap(contents, nsize);
 	}
 
 	sa_handle_destroy(sahdl);
+
+next:
+	fspopulate(fs, cur->next, fsopts);
 }
 
 void
