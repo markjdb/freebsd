@@ -22,11 +22,15 @@
 #include "makefs.h"
 
 typedef struct {
+	uint64_t	id;
+	sa_handle_t	*sahdl;
+} zfs_obj_t;
+
+typedef struct {
 	objset_t	*os;
 	dsl_dataset_t	*ds;
-	sa_handle_t	*sahdl;
 	sa_attr_type_t	*satab;
-	uint64_t	rootdirobj;
+	zfs_obj_t	rootdir;
 } zfs_fs_t;
 
 typedef struct {
@@ -87,26 +91,25 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 
 static void
 mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t mode,
-    uint64_t size, uint64_t links, sa_handle_t **sahdlp, uint64_t *rootobjp)
+    uint64_t size, uint64_t links, zfs_obj_t *obj)
 {
 	zfs_ace_hdr_t aces[3];
 	zfs_acl_phys_t acl_phys;
 	dmu_buf_t *db;
 	sa_bulk_attr_t *attrs;
-	sa_handle_t *sahdl;
-	uint64_t dnodesize, rootobj;
+	uint64_t dnodesize;
 	int error, i;
 
 	dnodesize = dmu_objset_dnodesize(os);
 
-	rootobj = zap_create_norm_dnsize(os, 0, DMU_OT_DIRECTORY_CONTENTS,
+	obj->id = zap_create_norm_dnsize(os, 0, DMU_OT_DIRECTORY_CONTENTS,
 	    DMU_OT_SA, DN_BONUS_SIZE(dnodesize), dnodesize, tx);
 
-	error = sa_buf_hold(os, rootobj, NULL, &db);
+	error = sa_buf_hold(os, obj->id, NULL, &db);
 	if (error != 0)
 		errc(1, error, "sa_buf_hold");
 
-	error = sa_handle_get_from_db(os, db, NULL, SA_HDL_SHARED, &sahdl);
+	error = sa_handle_get_from_db(os, db, NULL, SA_HDL_SHARED, &obj->sahdl);
 	if (error != 0)
 		errc(1, error, "sa_handle_get_from_db");
 
@@ -152,7 +155,7 @@ mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t 
 	    sizeof(acl_phys));
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_DACL_COUNT], NULL, &aclcount, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_DACL_ACES], NULL, aces, sizeof(aces));
-	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_PARENT], NULL, &rootobj, 8);
+	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_PARENT], NULL, &obj->id, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_FLAGS], NULL, &pflags, 8);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_ATIME], NULL, time, 16);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_MTIME], NULL, time, 16);
@@ -160,14 +163,9 @@ mknode(objset_t *os, sa_attr_type_t *satab, dmu_tx_t *tx, uint_t type, uint64_t 
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_CRTIME], NULL, time, 16);
 	SA_ADD_BULK_ATTR(attrs, i, satab[ZPL_LINKS], NULL, &links, 8); 
 
-	error = sa_replace_all_by_template(sahdl, attrs, i, tx);
+	error = sa_replace_all_by_template(obj->sahdl, attrs, i, tx);
 	if (error != 0)
 		errc(1, error, "sa_replace_all_by_template");
-
-	if (sahdlp != NULL)
-		*sahdlp = sahdl;
-	if (rootobjp != NULL)
-		*rootobjp = rootobj;
 
 	free(attrs);
 }
@@ -239,8 +237,7 @@ static void
 mkfs(zfs_fs_t *fs, objset_t *os, dmu_tx_t *tx)
 {
 	sa_attr_type_t *satab;
-	sa_handle_t *sahdl;
-	uint64_t dqobj, rootobj, saobj, version;
+	uint64_t dqobj, saobj, version;
 	int error;
 
 	error = zap_create_claim(os, MASTER_NODE_OBJ, DMU_OT_MASTER_NODE,
@@ -271,16 +268,15 @@ mkfs(zfs_fs_t *fs, objset_t *os, dmu_tx_t *tx)
 	if (error != 0)
 		errc(1, error, "sa_setup");
 
-	mknode(os, satab, tx, S_IFDIR, 0755, 2 /* XXXMJ "." and ".." */, 2, &sahdl, &rootobj);
+	mknode(os, satab, tx, S_IFDIR, 0755, 2 /* XXXMJ "." and ".." */, 2,
+	    &fs->rootdir);
 
-	error = zap_add(os, MASTER_NODE_OBJ, ZFS_ROOT_OBJ, 8, 1, &rootobj, tx);
+	error = zap_add(os, MASTER_NODE_OBJ, ZFS_ROOT_OBJ, 8, 1, &fs->rootdir.id, tx);
 	if (error != 0)
 		errc(1, error, "zap_add");
 
 	fs->os = os;
-	fs->sahdl = sahdl;
 	fs->satab = satab;
-	fs->rootdirobj = rootobj;
 }
 
 static void
@@ -322,9 +318,9 @@ mkrootfs(zfs_fs_t *fs, fsinfo_t *fsopts)
 static void
 fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 {
+	zfs_obj_t obj;
 	zfs_opt_t *zfs_opts;
 	dmu_tx_t *tx;
-	sa_handle_t *sahdl;
 	int error;
 
 	if (cur == NULL)
@@ -338,16 +334,16 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 
 	dmu_tx_hold_sa_create(tx, ZFS_SA_BASE_ATTR_SIZE);
 
-	dmu_tx_hold_zap(tx, fs->rootdirobj, TRUE, cur->name);
-	dmu_tx_hold_sa(tx, fs->sahdl, B_FALSE);
+	/* XXXMJ this is supposed to be the parent dir */
+	dmu_tx_hold_zap(tx, fs->rootdir.id, TRUE, cur->name);
+	dmu_tx_hold_sa(tx, fs->rootdir.sahdl, B_FALSE);
 
 	/* XXXMJ should be using TXG_WAIT */
 	error = dmu_tx_assign(tx, TXG_WAIT);
 	if (error != 0)
 		errc(1, error, "dmu_tx_assign");
 
-	uint64_t newid;
-	mknode(fs->os, fs->satab, tx, cur->type, 0666, 0, 0, &sahdl, &newid);
+	mknode(fs->os, fs->satab, tx, cur->type, 0666, 0, 0, &obj);
 
 	/* zfs_link_create BEGIN */
 	{
@@ -357,8 +353,9 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 
 	/* XXXMJ link count */
 
-	value = newid | ((uint64_t)cur->type << 48);
-	error = zap_add(fs->os, fs->rootdirobj, cur->name, 8, 1, &value, tx);
+	value = obj.id | ((uint64_t)cur->type << 48);
+	/* XXXMJ this is supposed to be the parent dir */
+	error = zap_add(fs->os, fs->rootdir.id, cur->name, 8, 1, &value, tx);
 	if (error != 0)
 		errc(1, error, "zap_add");
 
@@ -367,12 +364,12 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 	i = 0;
 	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_LINKS], NULL, &links,
 	    sizeof(links));
-	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_PARENT], NULL, &fs->rootdirobj,
-	    sizeof(fs->rootdirobj));
+	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_PARENT], NULL, &fs->rootdir.id,
+	    sizeof(fs->rootdir.id));
 	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_FLAGS], NULL, &pflags,
 	    sizeof(pflags));
 
-	error = sa_bulk_update(sahdl, bulk, i, tx);
+	error = sa_bulk_update(obj.sahdl, bulk, i, tx);
 	if (error != 0)
 		errc(1, error, "sa_bulk_update");
 
@@ -381,7 +378,7 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_SIZE], NULL, &nsize,
 	    sizeof(nsize));
 
-	error = sa_bulk_update(fs->sahdl, bulk, i, tx);
+	error = sa_bulk_update(fs->rootdir.sahdl, bulk, i, tx);
 	if (error != 0)
 		errc(1, error, "sa_bulk_update");
 	}
@@ -414,18 +411,18 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 
 		tx = dmu_tx_create(fs->os);
 
-		dmu_tx_hold_write(tx, newid, off, n);
-		dmu_tx_hold_sa(tx, sahdl, B_TRUE);
+		dmu_tx_hold_write(tx, obj.id, off, n);
+		dmu_tx_hold_sa(tx, obj.sahdl, B_TRUE);
 
 		error = dmu_tx_assign(tx, TXG_WAIT);
 		if (error != 0)
 			errc(1, error, "dmu_tx_assign");
 
 		if (n > 0)
-			dmu_write(fs->os, newid, off, n, zfs_opts->fbuf, tx);
+			dmu_write(fs->os, obj.id, off, n, zfs_opts->fbuf, tx);
 
 		nbytes += n;
-		error = sa_update(sahdl, fs->satab[ZPL_SIZE],
+		error = sa_update(obj.sahdl, fs->satab[ZPL_SIZE],
 		    &nbytes, sizeof(nbytes), tx);
 		if (error != 0)
 			errc(1, error, "sa_update");
@@ -436,9 +433,10 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 	(void)close(fd);
 	}
 
-	sa_handle_destroy(sahdl);
+	sa_handle_destroy(obj.sahdl);
 
 next:
+	/* XXXMJ this is not tail recursive */
 	fspopulate(fs, cur->next, fsopts);
 }
 
@@ -474,7 +472,7 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *
 	fspopulate(&zfs_opts->rootfs, root->next, fsopts);
 
 	/* XXXMJ fs cleanup routine */
-	sa_handle_destroy(zfs_opts->rootfs.sahdl);
+	sa_handle_destroy(zfs_opts->rootfs.rootdir.sahdl);
 	dsl_dataset_rele(zfs_opts->rootfs.ds, FTAG);
 
 	spa_close(zfs_opts->spa, FTAG);
