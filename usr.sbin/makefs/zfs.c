@@ -1,4 +1,7 @@
 #include <sys/zfs_context.h>
+#include <sys/multilist.h>
+#include <sys/arc.h>
+#include <sys/arc_impl.h>
 #include <sys/dbuf.h>
 #include <sys/dmu_objset.h>
 #include <sys/dnode.h>
@@ -20,6 +23,7 @@
 
 typedef struct {
 	objset_t	*os;
+	dsl_dataset_t	*ds;
 	sa_handle_t	*sahdl;
 	sa_attr_type_t	*satab;
 	uint64_t	rootdirobj;
@@ -32,6 +36,10 @@ typedef struct {
 
 	/* Root filesystem info. */
 	zfs_fs_t	rootfs;
+
+	/* Miscellaneous stuff. */
+	void		*fbuf;
+	size_t		fbufsz;
 } zfs_opt_t;
 
 void
@@ -279,7 +287,6 @@ static void
 mkrootfs(zfs_fs_t *fs, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
-	dsl_dataset_t *rds;
 	dsl_pool_t *dp;
 	dmu_tx_t *tx;
 	objset_t *os;
@@ -291,11 +298,11 @@ mkrootfs(zfs_fs_t *fs, fsinfo_t *fsopts)
 	if (error != 0)
 		errc(1, error, "dsl_pool_hold");
 
-	error = dsl_dataset_hold(dp, zfs_opts->poolname, FTAG, &rds);
+	error = dsl_dataset_hold(dp, zfs_opts->poolname, FTAG, &fs->ds);
 	if (error != 0)
 		errc(1, error, "dsl_dataset_hold");
 
-	error = dmu_objset_from_ds(rds, &os);
+	error = dmu_objset_from_ds(fs->ds, &os);
 	if (error != 0)
 		errc(1, error, "dmu_objset_from_ds");
 
@@ -308,21 +315,24 @@ mkrootfs(zfs_fs_t *fs, fsinfo_t *fsopts)
 	mkfs(fs, os, tx);
 
 	dmu_tx_commit(tx);
-	dsl_dataset_rele(rds, FTAG);
+
 	dsl_pool_rele(dp, FTAG);
 }
 
 static void
-fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
+fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts)
 {
+	zfs_opt_t *zfs_opts;
 	dmu_tx_t *tx;
 	sa_handle_t *sahdl;
 	int error;
 
 	if (cur == NULL)
 		return;
-	if ((cur->inode->st.st_mode & S_IFREG) == 0)
+	if (cur->type != S_IFREG)
 		goto next;
+
+	zfs_opts = fsopts->fs_specific;
 
 	tx = dmu_tx_create(fs->os);
 
@@ -332,12 +342,12 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 	dmu_tx_hold_sa(tx, fs->sahdl, B_FALSE);
 
 	/* XXXMJ should be using TXG_WAIT */
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, TXG_WAIT);
 	if (error != 0)
 		errc(1, error, "dmu_tx_assign");
 
 	uint64_t newid;
-	mknode(fs->os, fs->satab, tx, S_IFREG, 0666, 0, 0, &sahdl, &newid);
+	mknode(fs->os, fs->satab, tx, cur->type, 0666, 0, 0, &sahdl, &newid);
 
 	/* zfs_link_create BEGIN */
 	{
@@ -347,7 +357,7 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 
 	/* XXXMJ link count */
 
-	value = newid | ((uint64_t)S_IFREG << 48);
+	value = newid | ((uint64_t)cur->type << 48);
 	error = zap_add(fs->os, fs->rootdirobj, cur->name, 8, 1, &value, tx);
 	if (error != 0)
 		errc(1, error, "zap_add");
@@ -382,8 +392,9 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 	/* Write to the file. */
 	{
 	char path[PATH_MAX];
-	void *contents;
-	uint64_t nsize;
+	uint64_t nbytes, size;
+	ssize_t n;
+	off_t off;
 	int fd;
 
 	snprintf(path, sizeof(path), "%s/%s/%s", cur->root, cur->path,
@@ -393,31 +404,36 @@ fspopulate(zfs_fs_t *fs, fsnode *cur, fsinfo_t *fsopts __unused)
 	if (fd == -1)
 		err(1, "open(%s)", path);
 
-	nsize = cur->inode->st.st_size;
-	contents = mmap(NULL, (size_t)nsize, PROT_READ, MAP_SHARED, fd, 0);
-	if (contents == MAP_FAILED)
-		err(1, "mmap");
+	size = cur->inode->st.st_size;
+	nbytes = off = 0;
+
+	for (nbytes = off = 0; nbytes < size; off += n) {
+		n = read(fd, zfs_opts->fbuf, MIN(size - off, zfs_opts->fbufsz));
+		if (n < 0)
+			err(1, "read");
+
+		tx = dmu_tx_create(fs->os);
+
+		dmu_tx_hold_write(tx, newid, off, n);
+		dmu_tx_hold_sa(tx, sahdl, B_TRUE);
+
+		error = dmu_tx_assign(tx, TXG_WAIT);
+		if (error != 0)
+			errc(1, error, "dmu_tx_assign");
+
+		if (n > 0)
+			dmu_write(fs->os, newid, off, n, zfs_opts->fbuf, tx);
+
+		nbytes += n;
+		error = sa_update(sahdl, fs->satab[ZPL_SIZE],
+		    &nbytes, sizeof(nbytes), tx);
+		if (error != 0)
+			errc(1, error, "sa_update");
+
+		dmu_tx_commit(tx);
+	}
 
 	(void)close(fd);
-
-	tx = dmu_tx_create(fs->os);
-
-	dmu_tx_hold_sa(tx, sahdl, B_FALSE);
-	dmu_tx_hold_write(tx, newid, 0, nsize);
-
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
-	if (error != 0)
-		errc(1, error, "dmu_tx_assign");
-
-	dmu_write(fs->os, newid, 0, nsize, contents, tx);
-
-	error = sa_update(sahdl, fs->satab[ZPL_SIZE], &nsize, sizeof(nsize), tx);
-	if (error != 0)
-		errc(1, error, "sa_update");
-
-	dmu_tx_commit(tx);
-
-	(void)munmap(contents, nsize);
 	}
 
 	sa_handle_destroy(sahdl);
@@ -426,13 +442,23 @@ next:
 	fspopulate(fs, cur->next, fsopts);
 }
 
+extern uint64_t physmem;
+
 void
 zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
-	int error;
+	int argc, error;
+
+	/* Initialize ZFS debugging. */
+	argc = 0;
+	dprintf_setup(&argc, NULL);
 
 	zfs_opts = fsopts->fs_specific;
+
+	/* Empirically, a larger buffer doesn't help with throughput. */
+	zfs_opts->fbufsz = 2 * 1024 * 1024;
+	zfs_opts->fbuf = emalloc(zfs_opts->fbufsz);
 
 	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
 
@@ -447,13 +473,15 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *
 
 	fspopulate(&zfs_opts->rootfs, root->next, fsopts);
 
+	/* XXXMJ fs cleanup routine */
 	sa_handle_destroy(zfs_opts->rootfs.sahdl);
+	dsl_dataset_rele(zfs_opts->rootfs.ds, FTAG);
+
 	spa_close(zfs_opts->spa, FTAG);
 
 	error = spa_export(zfs_opts->poolname, NULL, B_FALSE, B_FALSE);
 	if (error != 0)
 		errc(1, error, "spa_export");
 
-	/* XXXMJ this is rather slow and probably not necessary */
 	kernel_fini();
 }
