@@ -1,3 +1,10 @@
+/*
+ * TODO
+ * - bound memory usage
+ * - ensure that makefs does not modify zpool.cache
+ * - reproducibility
+ */
+
 #include <sys/zfs_context.h>
 #include <sys/multilist.h>
 #include <sys/arc.h>
@@ -21,12 +28,15 @@
 
 #include "makefs.h"
 
+struct _zfs_fs;
+
 typedef struct {
 	uint64_t	id;
 	sa_handle_t	*sahdl;
+	struct _zfs_fs	*fs;
 } zfs_obj_t;
 
-typedef struct {
+typedef struct _zfs_fs {
 	objset_t	*os;
 	dsl_dataset_t	*ds;
 	sa_attr_type_t	*satab;
@@ -73,7 +83,6 @@ zfs_parse_opts(const char *option, fsinfo_t *fsopts)
 	rv = set_option(zfs_options, option, buf, sizeof(buf));
 	if (rv == -1)
 		return (0);
-
 	return (1);
 }
 
@@ -102,6 +111,7 @@ mknode(zfs_fs_t *fs, dmu_tx_t *tx, uint_t type, uint64_t mode,
 
 	dnodesize = dmu_objset_dnodesize(fs->os);
 
+	obj->fs = fs;
 	obj->id = zap_create_norm_dnsize(fs->os, 0, DMU_OT_DIRECTORY_CONTENTS,
 	    DMU_OT_SA, DN_BONUS_SIZE(dnodesize), dnodesize, tx);
 
@@ -168,6 +178,100 @@ mknode(zfs_fs_t *fs, dmu_tx_t *tx, uint_t type, uint64_t mode,
 		errc(1, error, "sa_replace_all_by_template");
 
 	free(attrs);
+}
+
+static void
+copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
+{
+	dmu_tx_t *tx;
+	zfs_opt_t *zfs_opts;
+	char path[PATH_MAX];
+	uint64_t nbytes, size;
+	ssize_t n;
+	off_t off;
+	int error, fd;
+
+	zfs_opts = fsopts->fs_specific;
+
+	snprintf(path, sizeof(path), "%s/%s/%s", cur->root, cur->path,
+	    cur->name);
+
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		err(1, "open(%s)", path);
+
+	size = cur->inode->st.st_size;
+	nbytes = off = 0;
+
+	/* XXXMJ investigate preserving file holes */
+	for (nbytes = off = 0; nbytes < size; off += n) {
+		printf("%s:%d off %lu\n", __func__, __LINE__, off);
+		n = read(fd, zfs_opts->fbuf, MIN(size - off, zfs_opts->fbufsz));
+		if (n < 0)
+			err(1, "read");
+
+		tx = dmu_tx_create(obj->fs->os);
+
+		dmu_tx_hold_write(tx, obj->id, off, n);
+		dmu_tx_hold_sa(tx, obj->sahdl, B_TRUE);
+
+		error = dmu_tx_assign(tx, TXG_WAIT);
+		if (error != 0)
+			errc(1, error, "dmu_tx_assign");
+
+		if (n > 0)
+			dmu_write(obj->fs->os, obj->id, off, n, zfs_opts->fbuf,
+			    tx);
+
+		nbytes += n;
+		error = sa_update(obj->sahdl, obj->fs->satab[ZPL_SIZE],
+		    &nbytes, sizeof(nbytes), tx);
+		if (error != 0)
+			errc(1, error, "sa_update");
+
+		dmu_tx_commit(tx);
+	}
+
+	(void)close(fd);
+}
+
+static void
+linkparent(dmu_tx_t *tx, fsnode *cur, zfs_obj_t *obj, zfs_obj_t *pobj,
+    fsinfo_t *fsopts)
+{
+	sa_bulk_attr_t bulk[5];
+	uint64_t links, nsize, pflags, value;
+	int error, i;
+
+	/* XXXMJ link count */
+
+	value = obj->id | ((uint64_t)cur->type << 48);
+	error = zap_add(obj->fs->os, pobj->id, cur->name, 8, 1, &value, tx);
+	if (error != 0)
+		errc(1, error, "zap_add");
+
+	pflags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED | ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
+	links = 1;
+	i = 0;
+	SA_ADD_BULK_ATTR(bulk, i, obj->fs->satab[ZPL_LINKS], NULL, &links,
+	    sizeof(links));
+	SA_ADD_BULK_ATTR(bulk, i, obj->fs->satab[ZPL_PARENT], NULL, &pobj->id,
+	    sizeof(pobj->id));
+	SA_ADD_BULK_ATTR(bulk, i, obj->fs->satab[ZPL_FLAGS], NULL, &pflags,
+	    sizeof(pflags));
+
+	error = sa_bulk_update(obj->sahdl, bulk, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_bulk_update");
+
+	nsize = 3;
+	i = 0;
+	SA_ADD_BULK_ATTR(bulk, i, obj->fs->satab[ZPL_SIZE], NULL, &nsize,
+	    sizeof(nsize));
+
+	error = sa_bulk_update(obj->sahdl, bulk, i, tx);
+	if (error != 0)
+		errc(1, error, "sa_bulk_update");
 }
 
 /*
@@ -317,11 +421,12 @@ fspopulate(fsnode *cur, zfs_obj_t *parent, fsinfo_t *fsopts)
 	zfs_obj_t obj;
 	zfs_opt_t *zfs_opts;
 	dmu_tx_t *tx;
+	uint64_t size;
 	int error;
 
 	if (cur == NULL)
 		return;
-	if (cur->type != S_IFREG)
+	if (cur->type != S_IFREG && cur->type != S_IFDIR)
 		goto next;
 
 	zfs_opts = fsopts->fs_specific;
@@ -338,96 +443,15 @@ fspopulate(fsnode *cur, zfs_obj_t *parent, fsinfo_t *fsopts)
 	if (error != 0)
 		errc(1, error, "dmu_tx_assign");
 
-	mknode(fs, tx, cur->type, 0666, 0, 0, &obj);
-
-	/* zfs_link_create BEGIN */
-	{
-	sa_bulk_attr_t bulk[5];
-	uint64_t links, nsize, pflags, value;
-	int i;
-
-	/* XXXMJ link count */
-
-	value = obj.id | ((uint64_t)cur->type << 48);
-	error = zap_add(fs->os, parent->id, cur->name, 8, 1, &value, tx);
-	if (error != 0)
-		errc(1, error, "zap_add");
-
-	pflags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED | ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
-	links = 1;
-	i = 0;
-	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_LINKS], NULL, &links,
-	    sizeof(links));
-	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_PARENT], NULL, &parent->id,
-	    sizeof(parent->id));
-	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_FLAGS], NULL, &pflags,
-	    sizeof(pflags));
-
-	error = sa_bulk_update(obj.sahdl, bulk, i, tx);
-	if (error != 0)
-		errc(1, error, "sa_bulk_update");
-
-	nsize = 3;
-	i = 0;
-	SA_ADD_BULK_ATTR(bulk, i, fs->satab[ZPL_SIZE], NULL, &nsize,
-	    sizeof(nsize));
-
-	error = sa_bulk_update(parent->sahdl, bulk, i, tx);
-	if (error != 0)
-		errc(1, error, "sa_bulk_update");
-	}
-	/* zfs_link_create END */
+	size = cur->type == S_IFDIR ? 2 : 0;
+	mknode(fs, tx, cur->type, cur->inode->st.st_mode, size, 0, &obj);
+	linkparent(tx, cur, &obj, parent, fsopts);
 
 	dmu_tx_commit(tx);
 
 	/* Write to the file. */
-	{
-	char path[PATH_MAX];
-	uint64_t nbytes, size;
-	ssize_t n;
-	off_t off;
-	int fd;
-
-	snprintf(path, sizeof(path), "%s/%s/%s", cur->root, cur->path,
-	    cur->name);
-
-	fd = open(path, O_RDONLY);
-	if (fd == -1)
-		err(1, "open(%s)", path);
-
-	size = cur->inode->st.st_size;
-	nbytes = off = 0;
-
-	/* XXXMJ investigate preserving file holes */
-	for (nbytes = off = 0; nbytes < size; off += n) {
-		printf("%s:%d off %lu\n", __func__, __LINE__, off);
-		n = read(fd, zfs_opts->fbuf, MIN(size - off, zfs_opts->fbufsz));
-		if (n < 0)
-			err(1, "read");
-
-		tx = dmu_tx_create(fs->os);
-
-		dmu_tx_hold_write(tx, obj.id, off, n);
-		dmu_tx_hold_sa(tx, obj.sahdl, B_TRUE);
-
-		error = dmu_tx_assign(tx, TXG_WAIT);
-		if (error != 0)
-			errc(1, error, "dmu_tx_assign");
-
-		if (n > 0)
-			dmu_write(fs->os, obj.id, off, n, zfs_opts->fbuf, tx);
-
-		nbytes += n;
-		error = sa_update(obj.sahdl, fs->satab[ZPL_SIZE],
-		    &nbytes, sizeof(nbytes), tx);
-		if (error != 0)
-			errc(1, error, "sa_update");
-
-		dmu_tx_commit(tx);
-	}
-
-	(void)close(fd);
-	}
+	if (cur->type == S_IFREG)
+		copyfile(cur, &obj, fsopts);
 
 	sa_handle_destroy(obj.sahdl);
 
@@ -435,8 +459,6 @@ next:
 	/* XXXMJ this is not tail recursive */
 	fspopulate(cur->next, parent, fsopts);
 }
-
-extern uint64_t physmem;
 
 void
 zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *fsopts)
