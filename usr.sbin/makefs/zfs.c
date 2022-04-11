@@ -200,6 +200,8 @@ copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
 	off_t off;
 	int error, fd;
 
+	assert(cur->type == S_IFREG);
+
 	zfs_opts = fsopts->fs_specific;
 
 	snprintf(path, sizeof(path), "%s/%s/%s", cur->root, cur->path,
@@ -245,14 +247,40 @@ copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
 }
 
 static void
+mksymlink(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
+{
+	dmu_tx_t *tx;
+	size_t len;
+	int error;
+
+	assert(cur->type == S_IFLNK);
+
+	len = strlen(cur->symlink);
+
+	tx = dmu_tx_create(obj->fs->os);
+
+	/* XXXMJ not sure whether this is needed */
+	dmu_tx_hold_sa(tx, obj->sahdl, B_TRUE);
+
+	error = dmu_tx_assign(tx, TXG_WAIT);
+	if (error != 0)
+		errc(1, error, "dmu_tx_assign");
+
+	error = sa_update(obj->sahdl, obj->fs->satab[ZPL_SYMLINK], cur->symlink,
+	    len, tx);
+	if (error != 0)
+		errc(1, error, "sa_update");
+
+	dmu_tx_commit(tx);
+}
+
+static void
 linkparent(dmu_tx_t *tx, fsnode *cur, zfs_obj_t *obj, zfs_obj_t *pobj,
     fsinfo_t *fsopts)
 {
 	sa_bulk_attr_t bulk[5];
 	uint64_t pflags, value;
 	int error, i;
-
-	/* XXXMJ link count */
 
 	value = obj->id | ((uint64_t)cur->type << 48);
 	error = zap_add(obj->fs->os, pobj->id, cur->name, 8, 1, &value, tx);
@@ -422,10 +450,7 @@ fspopulate(fsnode *cur, zfs_obj_t *parent, fsinfo_t *fsopts)
 
 	if (cur == NULL)
 		return;
-	if (strcmp(cur->name, ".") == 0)
-		goto next;
-	/* XXXMJ handle symlinks, fifos */
-	if (cur->type != S_IFREG && cur->type != S_IFDIR)
+	if (strcmp(cur->name, ".") == 0 && cur->type == S_IFDIR)
 		goto next;
 
 	zfs_opts = fsopts->fs_specific;
@@ -447,16 +472,21 @@ fspopulate(fsnode *cur, zfs_obj_t *parent, fsinfo_t *fsopts)
 
 	dmu_tx_commit(tx);
 
-	/* Write to the file. */
-	if (cur->type == S_IFREG)
+	switch (cur->type) {
+	case S_IFREG:
 		copyfile(cur, &obj, fsopts);
+		break;
+	case S_IFLNK:
+		mksymlink(cur, &obj, fsopts);
+		break;
+	case S_IFDIR:
+		fspopulate(cur->child, &obj, fsopts);
+		break;
+	}
 
 	sa_handle_destroy(obj.sahdl);
 
 next:
-	if (cur->type == S_IFDIR)
-		fspopulate(cur->child, &obj, fsopts);
-
 	/* XXXMJ this is not tail recursive */
 	fspopulate(cur->next, parent, fsopts);
 }
