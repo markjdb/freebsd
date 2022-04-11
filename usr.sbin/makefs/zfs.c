@@ -99,7 +99,7 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 }
 
 static void
-mknode(zfs_fs_t *fs, dmu_tx_t *tx, fsnode *cur, zfs_obj_t *obj)
+mknode(zfs_fs_t *fs, dmu_tx_t *tx, const fsnode *cur, zfs_obj_t *obj)
 {
 	zfs_ace_hdr_t aces[3];
 	zfs_acl_phys_t acl_phys;
@@ -190,7 +190,7 @@ mknode(zfs_fs_t *fs, dmu_tx_t *tx, fsnode *cur, zfs_obj_t *obj)
 }
 
 static void
-copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
+copyfile(const char *dir, const fsnode *cur, zfs_obj_t *obj, const fsinfo_t *fsopts)
 {
 	dmu_tx_t *tx;
 	zfs_opt_t *zfs_opts;
@@ -204,8 +204,7 @@ copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
 
 	zfs_opts = fsopts->fs_specific;
 
-	snprintf(path, sizeof(path), "%s/%s/%s", cur->root, cur->path,
-	    cur->name);
+	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
 
 	fd = open(path, O_RDONLY);
 	if (fd == -1)
@@ -216,7 +215,6 @@ copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
 
 	/* XXXMJ investigate preserving file holes */
 	for (nbytes = off = 0; nbytes < size; off += n) {
-		printf("%s:%d off %lu\n", __func__, __LINE__, off);
 		n = read(fd, zfs_opts->fbuf, MIN(size - off, zfs_opts->fbufsz));
 		if (n < 0)
 			err(1, "read");
@@ -247,7 +245,7 @@ copyfile(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
 }
 
 static void
-mksymlink(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
+mksymlink(const fsnode *cur, zfs_obj_t *obj, const fsinfo_t *fsopts __unused)
 {
 	dmu_tx_t *tx;
 	size_t len;
@@ -275,8 +273,8 @@ mksymlink(fsnode *cur, zfs_obj_t *obj, fsinfo_t *fsopts)
 }
 
 static void
-linkparent(dmu_tx_t *tx, fsnode *cur, zfs_obj_t *obj, zfs_obj_t *pobj,
-    fsinfo_t *fsopts)
+linkparent(dmu_tx_t *tx, const fsnode *cur, const zfs_obj_t *obj,
+    zfs_obj_t *pobj, const fsinfo_t *fsopts __unused)
 {
 	sa_bulk_attr_t bulk[5];
 	uint64_t pflags, value;
@@ -440,16 +438,23 @@ mkrootfs(zfs_fs_t *fs, fsnode *root, fsinfo_t *fsopts)
 }
 
 static void
-fspopulate(fsnode *cur, zfs_obj_t *parent, fsinfo_t *fsopts)
+fspopulate(const char *dir, const fsnode *cur, zfs_obj_t *parent,
+    const fsinfo_t *fsopts)
 {
+	char subdir[PATH_MAX];
 	zfs_fs_t *fs;
 	zfs_obj_t obj;
 	zfs_opt_t *zfs_opts;
 	dmu_tx_t *tx;
-	int error;
+	int error, n;
 
 	if (cur == NULL)
 		return;
+
+	assert(cur->type == S_IFREG || cur->type == S_IFDIR ||
+	    cur->type == S_IFLNK);
+
+	/* "." and ".." are synthesized by ZFS. */
 	if (strcmp(cur->name, ".") == 0 && cur->type == S_IFDIR)
 		goto next;
 
@@ -474,28 +479,32 @@ fspopulate(fsnode *cur, zfs_obj_t *parent, fsinfo_t *fsopts)
 
 	switch (cur->type) {
 	case S_IFREG:
-		copyfile(cur, &obj, fsopts);
+		copyfile(dir, cur, &obj, fsopts);
 		break;
 	case S_IFLNK:
 		mksymlink(cur, &obj, fsopts);
 		break;
 	case S_IFDIR:
-		fspopulate(cur->child, &obj, fsopts);
+		n = snprintf(subdir, sizeof(subdir), "%s/%s", dir, cur->name);
+		if (n >= PATH_MAX)
+			errx(1, "path too long");
+		fspopulate(subdir, cur->child, &obj, fsopts);
 		break;
 	}
 
 	sa_handle_destroy(obj.sahdl);
 
 next:
-	/* XXXMJ this is not tail recursive */
-	fspopulate(cur->next, parent, fsopts);
+	fspopulate(dir, cur->next, parent, fsopts);
 }
 
 void
-zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *fsopts)
+zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
 	int argc, error;
+
+	printf("%s:%d dir %s\n", __func__, __LINE__, dir);
 
 	/* Initialize ZFS debugging. */
 	argc = 0;
@@ -518,7 +527,7 @@ zfs_makefs(const char *image, const char *dir __unused, fsnode *root, fsinfo_t *
 
 	mkrootfs(&zfs_opts->rootfs, root, fsopts);
 
-	fspopulate(root->next, &zfs_opts->rootfs.rootdir, fsopts);
+	fspopulate(dir, root->next, &zfs_opts->rootfs.rootdir, fsopts);
 
 	/* XXXMJ fs cleanup routine */
 	sa_handle_destroy(zfs_opts->rootfs.rootdir.sahdl);
