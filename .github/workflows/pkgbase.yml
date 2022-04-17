@@ -1,0 +1,15 @@
+name: Build packages
+
+on:
+  push:
+    branches: [ ff/misc ]
+
+jobs:
+  pkgbase:
+    runs-on: freebsd-13.0
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build userspace
+        run: make -j4 buildworld
+      - name: Build a kernel
+        run: make -j4 buildkernel KERNCONF=GENERIC
