@@ -60,14 +60,10 @@ spinny &
 child=$!
 
 #
-# This is gutsy -- we're assuming that mtx_lock(9) will show up in the
-# output.  This is most likely _not_ to show up in the output if the 
-# platform does not support arbitrary resolution interval timers -- but
-# the above script was stress-tested down to 100 hertz and still ran
-# successfully on all platforms, so one is hopeful that this test will pass
-# even in that case.
+# This is gutsy -- we're assuming that vm_fault() will show up in the
+# output.
 #
-script | tee /dev/fd/2 | grep mtx_lock > /dev/null
+script | tee /dev/fd/2 | grep vm_fault > /dev/null
 status=$?
 
 kill $child
