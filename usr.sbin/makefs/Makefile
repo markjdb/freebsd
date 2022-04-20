@@ -14,7 +14,7 @@ SRCS=	cd9660.c \
 	msdos.c \
 	mtree.c \
 	walk.c \
-	zfs.c
+	zfs2.c
 MAN=	makefs.8
 
 NO_WCAST_ALIGN=
@@ -23,6 +23,7 @@ CSTD=	c11
 .include "${SRCDIR}/cd9660/Makefile.inc"
 .include "${SRCDIR}/ffs/Makefile.inc"
 .include "${SRCDIR}/msdos/Makefile.inc"
+.include "${SRCDIR}/zfs/Makefile.inc"
 
 CFLAGS+=-DHAVE_STRUCT_STAT_ST_FLAGS=1
 
@@ -54,3 +55,6 @@ CFLAGS.zfs.c+=	-I${ZFSTOP}/include \
 		-include ${SRCTOP}/sys/modules/zfs/zfs_config.h \
 		-DIN_BASE \
 		-DHAVE_ISSETUGID
+
+CFLAGS.zfs2.c+=	-I${SRCDIR}/zfs \
+		-I${SRCTOP}/sys/cddl/boot/zfs \
