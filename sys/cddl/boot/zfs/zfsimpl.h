@@ -60,8 +60,6 @@
  */
 
 #include <sys/queue.h>
-#include <sys/list.h>
-#include <bootstrap.h>
 
 #ifndef _ZFSIMPL_H_
 #define	_ZFSIMPL_H_
@@ -544,7 +542,8 @@ typedef struct vdev_boot_envblock {
  	zio_eck_t	vbe_zbt;
 } vdev_boot_envblock_t;
 
-CTASSERT(sizeof (vdev_boot_envblock_t) == VDEV_PAD_SIZE);
+_Static_assert(sizeof (vdev_boot_envblock_t) == VDEV_PAD_SIZE,
+    "incorrect vdev_boot_envblock size");
 
 typedef struct vdev_label {
 	char		vl_pad1[VDEV_PAD_SIZE];			/*  8K  */
@@ -1744,11 +1743,13 @@ typedef struct vdev_indirect_mapping_entry_phys {
 #define	DVA_MAPPING_SET_SRC_OFFSET(vimep, x)	\
 	BF64_SET_SB((vimep)->vimep_src, 0, 63, SPA_MINBLOCKSHIFT, 0, x)
 
+#if 0
 typedef struct vdev_indirect_mapping_entry {
 	vdev_indirect_mapping_entry_phys_t	vime_mapping;
 	uint32_t				vime_obsolete_count;
 	list_node_t				vime_node;
 } vdev_indirect_mapping_entry_t;
+#endif
 
 /*
  * This is stored in the bonus buffer of the mapping object, see comment of

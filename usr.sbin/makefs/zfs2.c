@@ -20,6 +20,10 @@ typedef struct {
 } zfs_obj_t;
 
 typedef struct _zfs_fs {
+	objset_phys_t	osphys;
+	dnode_phys_t	*dnodes;
+	u_long		dnodecount;
+	u_long		dnodenextfree;	/* dnode ID bump allocator */
 } zfs_fs_t;
 
 typedef struct {
@@ -34,6 +38,9 @@ typedef struct {
 
 	/* Root filesystem info. */
 	zfs_fs_t	rootfs;
+
+	/* I/O buffer. */
+	char		filebuf[SPA_OLDMAXBLOCKSIZE];
 } zfs_opt_t;
 
 void
@@ -133,6 +140,13 @@ space_alloc(zfs_opt_t *zfs_opts, off_t *lenp)
 	*lenp = len;
 
 	return ((off_t)loc << zfs_opts->ashift);
+}
+
+static dnode_phys_t *
+dnode_alloc(zfs_fs_t *fs)
+{
+	assert(fs->dnodenextfree < fs->dnodecount);
+	return (&fs->dnodes[fs->dnodenextfree++]);
 }
 
 static void
@@ -238,6 +252,128 @@ mkpool(fsinfo_t *fsopts)
 	/* XXXMJ write labels at the end */
 }
 
+static void
+fsnode_foreach(fsnode *root, const char *dir,
+    void (*cb)(fsnode *, const char *, void *), void *arg)
+{
+	char path[PATH_MAX];
+
+	assert(root->type == S_IFDIR);
+	snprintf(path, sizeof(path), "%s/%s", dir, root->path);
+
+	for (fsnode *cur = root; cur != NULL; cur = cur->next) {
+		assert(cur->type == S_IFREG || cur->type == S_IFDIR ||
+		    cur->type == S_IFLNK);
+
+		cb(cur, path, arg);
+		if (cur->type == S_IFDIR && cur->child != NULL)
+			fsnode_foreach(cur->child, path, cb, arg);
+	}
+}
+
+static void
+fsnode_foreach_count(fsnode *cur, const char *dir __unused, void *arg)
+{
+	long *countp;
+
+	countp = arg;
+	if (cur->type != S_IFDIR || strcmp(cur->name, ".") != 0)
+		(*countp)++;
+}
+
+struct fsnode_foreach_populate_arg {
+	fsinfo_t	*fsopts;
+	zfs_fs_t	*fs;
+	char		path[PATH_MAX];
+};
+
+static void
+fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
+{
+	struct fsnode_foreach_populate_arg *arg;
+	dnode_phys_t *dnode;
+	zfs_opt_t *zfs_opts;
+	char path[PATH_MAX];
+	ssize_t n;
+	off_t max, nblocks, off, size;
+	int fd, indblksz, indcount, indlevel;
+
+	if (cur->type != S_IFREG)
+		return;
+
+	arg = _arg;
+	zfs_opts = arg->fsopts->fs_specific;
+
+	dnode = dnode_alloc(arg->fs);
+
+	/*
+	 * Do we need indirect blocks?
+	 */
+	nblocks = howmany(cur->inode->st.st_size, SPA_OLDMAXBLOCKSIZE);
+	max = 1;
+	for (indlevel = 0;; indlevel++) {
+		if (nblocks <= 3 * max)
+			break;
+		max *= SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t);
+	}
+	indcount = indblksz = 0;
+
+	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
+
+	printf("%s:%d path %s\n", __func__, __LINE__, path);
+	printf("%s:%d size %lu nblocks %lu level %d\n", __func__, __LINE__, cur->inode->st.st_size, nblocks, indlevel);
+
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		err(1, "open(%s)", path);
+	size = cur->inode->st.st_size;
+	for (off = 0; off < size; off += n) {
+#if 0
+		/* XXXMJ check for short reads */
+		n = read(fd, zfs_opts->filebuf,
+		    MIN(size - off, sizeof(zfs_opts->filebuf)));
+		if (n < 0)
+			err(1, "reading from '%s'", path);
+#endif
+		n = size;
+	}
+
+	(void)close(fd);
+}
+
+static void
+mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
+{
+	struct fsnode_foreach_populate_arg poparg;
+	long dnodecount;
+
+	/* XXXMJ what else? */
+	fs->osphys.os_meta_dnode.dn_type = DMU_OT_DNODE;
+	fs->osphys.os_type = DMU_OST_ZFS;
+
+	/*
+	 * Figure out how many dnodes we need.  One for each ZPL object (file,
+	 * directory, etc.), one for the master dnode (always with ID 1), one
+	 * for the meta dnode (embedded in the object set, always with ID 0).
+	 *
+	 * XXXMJ SA table?
+	 */
+	dnodecount = 1;
+	fsnode_foreach(root, dir, fsnode_foreach_count, &dnodecount);
+	dnodecount++;
+	dnodecount++;
+
+	fs->dnodecount = dnodecount;
+	fs->dnodes = ecalloc(fs->dnodecount, sizeof(dnode_phys_t));
+	fs->dnodenextfree = MASTER_NODE_OBJ + 1;
+
+	poparg.fsopts = fsopts;
+	poparg.fs = fs;
+	fsnode_foreach(root, dir, fsnode_foreach_populate, &poparg);
+
+	/* XXXMJ allocate master node ZAP object */
+}
+
 void
 zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
@@ -281,6 +417,8 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	}
 
 	mkpool(fsopts);
+
+	mkfs(fsopts, &zfs_opts->rootfs, dir, root);
 
 out:
 	if (fsopts->fd != -1)
