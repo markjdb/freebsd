@@ -20,13 +20,6 @@
  */
 #define	INDIR_LEVELS	6
 
-struct _zfs_fs;
-
-typedef struct {
-	uint64_t	id;
-	struct _zfs_fs	*fs;
-} zfs_obj_t;
-
 typedef struct _zfs_fs {
 	objset_phys_t	osphys;
 	dnode_phys_t	*dnodes;
@@ -158,14 +151,27 @@ typedef struct zfs_zap {
 } zfs_zap_t;
 
 static void
-zap_add_dnid(zfs_zap_t *zap, const char *name, uint64_t id)
+zap_init(zfs_zap_t *zap)
+{
+	mzap_phys_t *zaphdr;
+
+	zaphdr = (mzap_phys_t *)&zap->zapblk[0];
+	zaphdr->mz_block_type = ZBT_MICRO;
+	zaphdr->mz_salt = 0; /* XXXMJ */
+	zaphdr->mz_normflags = 0;
+
+	zap->ent = &zaphdr->mz_chunk[0];
+}
+
+static void
+zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 {
 	mzap_ent_phys_t *ent;
 
 	ent = zap->ent;
 	zap->ent++;
 
-	ent->mze_value = id;
+	ent->mze_value = val;
 	ent->mze_cd = 0; /* XXXMJ */
 	assert(strlen(name) < sizeof(ent->mze_name));
 	strlcpy(ent->mze_name, name, sizeof(ent->mze_name));
@@ -296,6 +302,11 @@ mkpool(fsinfo_t *fsopts)
 	/* Allocate space for the MOS. */
 	off_t len = sizeof(objset_phys_t);
 	off_t loc = space_alloc(zfs_opts, &len);
+
+	/*
+	 * dnode 1 (DMU_POOL_DIRECTORY_OBJECT) in the MOS points to the root
+	 * dataset
+	 */
 
 	/* XXXMJ checksum will be wrong at this point. */
 	zio_cksum_t cksum;
@@ -498,6 +509,7 @@ struct fsnode_populate_dir_s {
 struct fsnode_foreach_populate_arg {
 	fsinfo_t	*fsopts;
 	zfs_fs_t	*fs;
+	uint64_t	rootdirid;
 	char		path[PATH_MAX];
 	SLIST_HEAD(, fsnode_populate_dir_s) dirs;
 };
@@ -511,7 +523,7 @@ fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
 	printf("%s:%d adding %s\n", __func__, __LINE__, name);
 
 	dir = SLIST_FIRST(&arg->dirs);
-	zap_add_dnid(&dir->zap, name, dnid);
+	zap_add_uint64(&dir->zap, name, dnid);
 }
 
 static void
@@ -544,19 +556,19 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	dnode->dn_type = DMU_OT_PLAIN_FILE_CONTENTS;
 	dnode->dn_indblkshift = (uint8_t)flsll(bpas->indblksz);
 	dnode->dn_nlevels = (uint8_t)bpas->levels;
-#if 0
+#if 0 /* XXXMJ */
 	dnode->dn_nblkptr = ?;
 #endif
 	dnode->dn_bonustype = DMU_OT_NONE;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_flags = 0; /* XXXMJ ??? */
-#if 0
+#if 0 /* XXXMJ */
 	dnode->dn_datablkszsec = ?;
 #endif
 	dnode->dn_bonuslen = 0;
 	dnode->dn_extra_slots = 0;
-#if 0
+#if 0 /* XXXMJ */
 	dnode->dn_maxblkid = ?;
 	dnode->dn_used = ?;
 #endif
@@ -623,7 +635,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir,
 
 	dnode = dnode_alloc(arg->fs, &dnid);
 	dnode->dn_type = DMU_OT_DIRECTORY_CONTENTS;
-#if 0
+#if 0 /* XXXMJ */
 	dnode->dn_indblkshift = ?;
 	dnode->dn_nlevels = ?;
 	dnode->dn_nblkptr = ?;
@@ -632,12 +644,12 @@ fsnode_populate_dir(fsnode *cur, const char *dir,
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_flags = 0; /* XXXMJ */
-#if 0
+#if 0 /* XXXMJ */
 	dnode->dn_datablkszsec = ?;
 #endif
 	dnode->dn_bonuslen = 0;
 	dnode->dn_extra_slots = 0;
-#if 0
+#if 0 /* XXXMJ */
 	dnode->dn_maxblkid = ?;
 	dnode->dn_used = ?;
 #endif
@@ -648,6 +660,8 @@ fsnode_populate_dir(fsnode *cur, const char *dir,
 	 */
 	if (cur->parent != NULL)
 		fsnode_populate_dirent(arg, cur->name, dnid);
+	else
+		arg->rootdirid = dnid;
 
 	int count = 0;
 	size_t maxlen = 0;
@@ -666,17 +680,12 @@ fsnode_populate_dir(fsnode *cur, const char *dir,
 		/* We can use a microzap! */
 		struct fsnode_populate_dir_s *zap = ecalloc(1, sizeof(*zap));
 
-		mzap_phys_t *zaphdr = (mzap_phys_t *)&zap->zap.zapblk[0];
-		zaphdr->mz_block_type = ZBT_MICRO;
-		zaphdr->mz_salt = 0; /* XXXMJ */
-		zaphdr->mz_normflags = 0;
+		zap_init(&zap->zap);
 
-		/* XXXMJ use mz_chunk */
-		/* XXXMJ allocation could be done later. */
+		/* XXXMJ space allocation could be done later. */
 		blksz = (count + 1) * MZAP_ENT_LEN;
 		zap->zap.loc = space_alloc(zfs_opts, &blksz);
 		zap->zap.blksz = blksz;
-		zap->zap.ent = (mzap_ent_phys_t *)&zap->zap.zapblk[sizeof(mzap_phys_t)];
 
 		SLIST_INSERT_HEAD(&arg->dirs, zap, next);
 	} else {
@@ -709,7 +718,8 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 		dirs = SLIST_FIRST(&arg->dirs);
 		SLIST_REMOVE_HEAD(&arg->dirs, next);
 
-		printf("%s:%d writing ZAP for %s\n", __func__, __LINE__, cur->name);
+		/* XXXMJ need to set up the directory dnode here */
+
 		vdev_pwrite(arg->fsopts, dirs->zap.zapblk, dirs->zap.blksz,
 		    dirs->zap.loc);
 
@@ -729,15 +739,16 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 
 	/*
 	 * Figure out how many dnodes we need.  One for each ZPL object (file,
-	 * directory, etc.), one for the master dnode (always with ID 1), one
+	 * directory, etc.), one for the master object (always with ID 1), one
 	 * for the meta dnode (embedded in the object set, always with ID 0).
-	 *
-	 * XXXMJ SA table?
 	 */
-	dnodecount = 1;
+	dnodecount = 0;
 	fsnode_foreach(root, dir, fsnode_foreach_count, &dnodecount);
-	dnodecount++;
-	dnodecount++;
+	dnodecount++; /* meta dnode */
+	dnodecount++; /* master object */
+	dnodecount++; /* root directory */
+	dnodecount++; /* delete queue */
+	dnodecount++; /* system attributes */
 
 	/*
 	 * XXXMJ allocating them all up front like this might be too painful for
@@ -756,7 +767,27 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	assert(!SLIST_EMPTY(&poparg.dirs));
 	fsnode_foreach(root, dir, fsnode_foreach_populate, &poparg);
 
-	/* XXXMJ allocate master node ZAP object */
+	/*
+	 * Allocate and populate the master node object.  This is a ZAP object
+	 * containing various dataset properties and the object IDs of the root
+	 * directory and delete queue.
+	 */
+	zfs_zap_t masterzap;
+	zap_init(&masterzap);
+
+	/* XXXMJ add a variant that can check that the object ID is valid */
+	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
+	/* XXXMJ DMU_OT_UNLINKED_SET */
+	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, 0 /* XXXMJ */);
+	/* XXXMJ DMU_OT_SA_MASTER_NODE */
+	zap_add_uint64(&masterzap, "SA_ATTRS", 0 /* XXXMJ */);
+	/* XXXMJ create a shares (ZFS_SHARES_DIR) directory? */
+
+	zap_add_uint64(&masterzap, "version", 5 /* ZPL_VERSION_SA */);
+	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
+	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
+	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
+	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
 
 	/* XXXMJ write dnode array */
 }
