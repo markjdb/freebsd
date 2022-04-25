@@ -95,6 +95,32 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 	free(fsopts->fs_options);
 }
 
+static int
+spacemap_init(zfs_opt_t *zfs_opts, off_t size)
+{
+	off_t nbits;
+
+	assert(size >= VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE);
+
+	nbits = (size - VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE) >>
+	    zfs_opts->ashift;
+	if (nbits > INT_MAX) {
+		/*
+		 * With the smallest block size of 512B, the limit on the image
+		 * size is 2TB.
+		 */
+		warnx("image size %ju is too large", (uintmax_t)size);
+		return (-1);
+	}
+	zfs_opts->spacemapbits = (int)nbits;
+	zfs_opts->spacemap = bit_alloc(zfs_opts->spacemapbits);
+	if (zfs_opts->spacemap == NULL) {
+		warn("bitstring allocation failed");
+		return (-1);
+	}
+	return (0);
+}
+
 /*
  * Find a chunk of contiguous free space of length *lenp, according to the
  * following rules:
@@ -154,7 +180,7 @@ objset_init(zfs_objset_t *os, uint64_t type, uint64_t dnodecount)
 	os->osphys.os_meta_dnode.dn_type = DMU_OT_DNODE;
 	os->osphys.os_type = type;
 
-	os->dnodecount = dnodecount;
+	os->dnodecount = dnodecount + 1;
 	os->dnodes = ecalloc(os->dnodecount, sizeof(dnode_phys_t));
 	/* Object zero is always meta dnode. */
 	os->dnodenextfree = 1;
@@ -311,10 +337,15 @@ mkpool(fsinfo_t *fsopts)
 	 * XXXMJ dnode count:
 	 * - object directory
 	 * - DSL directory
+	 * - DSL dataset
 	 * - space maps
 	 * - ?
 	 */
-	objset_init(&zfs_opts->mos, DMU_OST_META, 0 /* XXXMJ wrong */);
+	uint64_t dnodecount = 0;
+	dnodecount++; /* object directory */
+	dnodecount++; /* DSL directory */
+	dnodecount++; /* DSL root dataset */
+	objset_init(&zfs_opts->mos, DMU_OST_META, dnodecount);
 
 	uint64_t dnid, dsldirid, dslid;
 	dnode_phys_t *objdirdn = objset_dnode_alloc(&zfs_opts->mos, &dnid);
@@ -323,7 +354,7 @@ mkpool(fsinfo_t *fsopts)
 
 	dnode_phys_t *dsldirdn = objset_dnode_alloc(&zfs_opts->mos, &dsldirid);
 	objdirdn->dn_type = DMU_OT_DSL_DIR;
-	objdirdn->dn_bonustype = DMU_OT_DSL_DIR; /* XXXMJ ? */
+	objdirdn->dn_bonustype = DMU_OT_DSL_DIR;
 
 	dsl_dir_phys_t *dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
 
@@ -340,7 +371,9 @@ mkpool(fsinfo_t *fsopts)
 
 	dsldir->dd_head_dataset_obj = dslid;
 
-	/* XXXMJ fill out block pointer to child dataset */
+	/* XXXMJ fill out block pointer to child dataset object set */
+	zio_cksum_t cksum;
+	blkptr_set(&ds->ds_bp, 0, 0, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
 	/*
 	 * dnode 1 (DMU_POOL_DIRECTORY_OBJECT) in the MOS points to the root
@@ -357,6 +390,38 @@ mkpool(fsinfo_t *fsopts)
 	    &cksum);
 #endif
 	/* XXXMJ write labels at the end */
+}
+
+static void
+mkpool2(fsinfo_t *fsopts)
+{
+	zfs_opt_t *zfs_opts;
+	bitstr_t *spacemap;
+	int bits;
+
+	zfs_opts = fsopts->fs_specific;
+	spacemap = zfs_opts->spacemap;
+	bits = zfs_opts->spacemapbits;
+
+	/*
+	 * Figure out how many space map entries we need.  We have yet to
+	 * allocate blocks for the space map itself.
+	 */
+	int loc = 0, loc1, nent;
+	int allocbits = 0;
+	off_t smbytes = 0;
+	for (nent = 0; loc != -1; nent++) {
+		bit_ffs_at(spacemap, loc, bits, &loc);
+		if (loc == -1)
+			break;
+		loc1 = loc;
+		bit_ffc_at(spacemap, loc, bits, &loc);
+		if (loc == -1)
+			allocbits += bits - loc1;
+		else
+			allocbits += loc - loc1;
+		smbytes += 2;
+	}
 }
 
 static void
@@ -773,14 +838,11 @@ static void
 mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
 	struct fsnode_foreach_populate_arg poparg;
-	zfs_opt_t *zfs_opts;
 	dnode_phys_t *masterobj;
 	uint64_t dnodecount, moid;
 
-	zfs_opts = fsopts->fs_specific;
-
-	/* XXXMJ not sure about this */
 #if 0
+	/* XXXMJ not sure about this */
 	fs->dnode = objset_dnode_alloc(&zfs_opts->mos, &fs->dnodeid);
 	fs->dnode->dn_type = DMU_OT_OBJSET;
 #endif
@@ -806,6 +868,8 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	objset_init(&fs->os, DMU_OST_ZFS, dnodecount);
 	masterobj = objset_dnode_alloc(&fs->os, &moid);
 	assert(moid == MASTER_NODE_OBJ);
+	masterobj->dn_type = DMU_OT_MASTER_NODE;
+	masterobj->dn_bonustype = DMU_OT_NONE;
 
 	poparg.fsopts = fsopts;
 	poparg.fs = fs;
@@ -844,7 +908,7 @@ void
 zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
-	off_t nbits, size;
+	off_t size;
 	int oflags;
 
 	zfs_opts = fsopts->fs_specific;
@@ -858,7 +922,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 		warn("Can't open `%s' for writing", image);
 		goto out;
 	}
-	size = rounddown2(fsopts->maxsize, 1ul << zfs_opts->ashift);
+	size = rounddown2(fsopts->maxsize, 1 << zfs_opts->ashift);
 	if (size < SPA_MINDEVSIZE) {
 		warnx("maximum image size %ju is too small",
 		    (uintmax_t)size);
@@ -868,24 +932,15 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 		warn("Failed to extend image file `%s'", image);
 		goto out;
 	}
-	nbits = (size - VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE) >>
-	    zfs_opts->ashift;
-	if (nbits > INT_MAX) {
-		warnx("image size %ju is too large",
-		    (uintmax_t)size);
+	if (spacemap_init(zfs_opts, size) != 0)
 		goto out;
-	}
-	zfs_opts->spacemapbits = (int)nbits;
-	zfs_opts->spacemap = bit_alloc(zfs_opts->spacemapbits);
-	if (zfs_opts->spacemap == NULL) {
-		warn("bitstring allocation failed");
-		goto out;
-	}
 
+	printf("%s:%d\n", __func__, __LINE__);
 	mkpool(fsopts);
 
 	mkfs(fsopts, &zfs_opts->rootfs, dir, root);
 
+	mkpool2(fsopts);
 out:
 	if (fsopts->fd != -1)
 		(void)close(fsopts->fd);
