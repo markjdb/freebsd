@@ -13,6 +13,7 @@
 #include "zfs/libzfs.h"
 
 #include "fletcher.c"
+#include "sha256.c"
 
 /*
  * XXXMJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
@@ -22,9 +23,11 @@
 
 typedef struct {
 	objset_phys_t	osphys;
+	off_t		osloc;
 	dnode_phys_t	*dnodes;	/* dnode array */
 	uint64_t	dnodenextfree;	/* dnode ID bump allocator */
 	uint64_t	dnodecount;	/* total number of dnodes */
+	off_t		dnodeloc;
 } zfs_objset_t;
 
 typedef struct {
@@ -37,6 +40,7 @@ typedef struct {
 	/* Pool parameters. */
 	const char	*poolname;
 	int		ashift;
+	off_t		size;
 
 	/* Pool info. */
 	zfs_objset_t	mos;		/* meta object set */
@@ -95,10 +99,66 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 	free(fsopts->fs_options);
 }
 
-static int
-spacemap_init(zfs_opt_t *zfs_opts, off_t size)
+static void
+vdev_pwrite(fsinfo_t *fsopts, void *buf, size_t len, off_t off)
 {
-	off_t nbits;
+	ssize_t n;
+
+	/* XXXMJ check that [off,off+len) is in bounds */
+
+	off += VDEV_LABEL_START_SIZE;
+	do {
+		n = pwrite(fsopts->fd, buf, len, off);
+		if (n < 0)
+			err(1, "writing image");
+		len -= n;
+		off += n;
+	} while (len > 0);
+}
+
+/*
+ * Set the embedded checksum in the vdev metadata and write the label at the
+ * specified index.
+ */
+static void
+vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
+{
+	zfs_opt_t *zfs_opts;
+	zio_cksum_t cksum;
+	zio_eck_t *eck;
+	ssize_t n;
+	off_t loff;
+
+	assert(ind >= 0 && ind < VDEV_LABELS);
+
+	zfs_opts = fsopts->fs_specific;
+
+	if (ind < 2)
+		loff = ind * sizeof(vdev_label_t);
+	else
+		loff = zfs_opts->size - (VDEV_LABELS - ind) * sizeof(vdev_label_t);
+
+	/* Set the verifier checksum. */
+	eck = &label->vl_vdev_phys.vp_zbt;
+	eck->zec_magic = ZEC_MAGIC; 
+	ZIO_SET_CHECKSUM(&eck->zec_cksum,
+	    loff + __offsetof(vdev_label_t, vl_vdev_phys), 0, 0, 0);
+	zio_checksum_SHA256(&label->vl_vdev_phys, sizeof(vdev_phys_t), NULL,
+	    &cksum);
+	eck->zec_cksum = cksum;
+
+	n = pwrite(fsopts->fd, label, sizeof(*label), loff);
+	if (n < 0)
+		err(1, "writing vdev label");
+	assert(n == sizeof(*label));
+}
+
+static int
+spacemap_init(zfs_opt_t *zfs_opts)
+{
+	off_t nbits, size;
+
+	size = zfs_opts->size;
 
 	assert(size >= VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE);
 
@@ -174,8 +234,11 @@ space_alloc(zfs_opt_t *zfs_opts, off_t *lenp)
 }
 
 static void
-objset_init(zfs_objset_t *os, uint64_t type, uint64_t dnodecount)
+objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
+    uint64_t dnodecount)
 {
+	off_t blksz;
+
 	/* XXXMJ what else? */
 	os->osphys.os_meta_dnode.dn_type = DMU_OT_DNODE;
 	os->osphys.os_type = type;
@@ -184,6 +247,22 @@ objset_init(zfs_objset_t *os, uint64_t type, uint64_t dnodecount)
 	os->dnodes = ecalloc(os->dnodecount, sizeof(dnode_phys_t));
 	/* Object zero is always meta dnode. */
 	os->dnodenextfree = 1;
+
+	/* Allocate space on the vdev for the objset and dnode array. */
+	blksz = sizeof(objset_phys_t);
+	os->osloc = space_alloc(zfs_opts, &blksz);
+
+	blksz = sizeof(dnode_phys_t) * os->dnodecount;
+	os->dnodeloc = space_alloc(zfs_opts, &blksz);
+}
+
+static void
+objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
+{
+	/* XXXMJ update block pointers */
+	vdev_pwrite(fsopts, &os->osphys, sizeof(objset_phys_t), os->osloc);
+	vdev_pwrite(fsopts, os->dnodes, sizeof(dnode_phys_t) * os->dnodecount,
+	    os->dnodeloc);
 }
 
 static dnode_phys_t *
@@ -230,27 +309,12 @@ zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 }
 
 static void
-vdev_pwrite(fsinfo_t *fsopts, void *buf, size_t len, off_t off)
-{
-	ssize_t n;
-
-	/* XXXMJ check that [off,off+len) is in bounds */
-
-	off += VDEV_LABEL_START_SIZE;
-	do {
-		n = pwrite(fsopts->fd, buf, len, off);
-		if (n < 0)
-			err(1, "writing image");
-		len -= n;
-		off += n;
-	} while (len > 0);
-}
-
-static void
 blkptr_set(blkptr_t *bp, off_t off, off_t size, enum zio_checksum cksumt,
     zio_cksum_t *cksum)
 {
 	dva_t *dva;
+
+	/* XXXMJ assert size is a power of 2? */
 
 	BP_ZERO(bp);
 	BP_SET_LSIZE(bp, size);
@@ -265,73 +329,20 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, enum zio_checksum cksumt,
 	bp->blk_cksum = *cksum;
 }
 
+/*
+ * Initialize the meta-object set.
+ */
 static void
-mkpool(fsinfo_t *fsopts)
+pool_init(fsinfo_t *fsopts)
 {
+	dsl_dir_phys_t *dsldir;
+	dsl_dataset_phys_t *ds;
 	zfs_opt_t *zfs_opts;
-	nvlist_t *poolconfig, *vdevconfig;
-	uberblock_t *ub;
-	vdev_label_t *label;
-	void *vdevnv;
-	int error;
+	zfs_zap_t objdirzap;
+	uint64_t dnid, dsldirid, dslid;
+	uint64_t dnodecount;
 
 	zfs_opts = fsopts->fs_specific;
-
-	vdevconfig = nvlist_create(0);
-	nvlist_add_string(vdevconfig,
-	    ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
-	nvlist_add_uint64(vdevconfig,
-	    ZPOOL_CONFIG_ASHIFT, 12 /* XXXMJ configurable */);
-	nvlist_add_uint64(vdevconfig,
-	    ZPOOL_CONFIG_ASIZE, 0 /* XXXMJ */);
-	nvlist_add_uint64(vdevconfig,
-	    ZPOOL_CONFIG_ID, 0);
-
-	poolconfig = nvlist_create(0);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_POOL_TXG, 0);
-	nvlist_add_nvlist(poolconfig,
-	    ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_VERSION, SPA_VERSION);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_POOL_STATE, POOL_STATE_ACTIVE);
-	nvlist_add_string(poolconfig,
-	    ZPOOL_CONFIG_POOL_NAME, zfs_opts->poolname);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_POOL_GUID, 0 /* XXXMJ configurable */);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_TOP_GUID, 0 /* XXXMJ configurable */);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_GUID, 0 /* XXXMJ configurable */);
-	nvlist_add_uint64(poolconfig,
-	    ZPOOL_CONFIG_VDEV_CHILDREN, 1);
-
-	label = ecalloc(1, sizeof(*label));
-
-	/* Fill out vdev metadata. */
-	vdevnv = label->vl_vdev_phys.vp_nvlist;
-	memcpy(vdevnv, &poolconfig->nv_header,
-	    sizeof(poolconfig->nv_header));
-	poolconfig->nv_data = vdevnv + sizeof(nvs_header_t);
-	poolconfig->nv_size = VDEV_PHYS_SIZE - sizeof(nvs_header_t);
-	error = nvlist_export(poolconfig);
-	if (error != 0)
-		errc(1, error, "nvlist_export");
-
-	/* Fill out the uberblock. */
-	ub = (void *)&label->vl_uberblock[0];
-	ub->ub_magic = UBERBLOCK_MAGIC;
-	ub->ub_version = SPA_VERSION;
-	ub->ub_txg = 0;
-	ub->ub_guid_sum = 0; /* XXXMJ configurable */
-	ub->ub_timestamp = 0; /* XXXMJ */
-
-	ub->ub_software_version = SPA_VERSION;
-	ub->ub_mmp_magic = 0;
-	ub->ub_mmp_delay = 0;
-	ub->ub_mmp_config = 0;
-	ub->ub_checkpoint_txg = 0;
 
 	/*
 	 * XXXMJ dnode count:
@@ -341,13 +352,12 @@ mkpool(fsinfo_t *fsopts)
 	 * - space maps
 	 * - ?
 	 */
-	uint64_t dnodecount = 0;
+	dnodecount = 0;
 	dnodecount++; /* object directory */
 	dnodecount++; /* DSL directory */
 	dnodecount++; /* DSL root dataset */
-	objset_init(&zfs_opts->mos, DMU_OST_META, dnodecount);
+	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
 
-	uint64_t dnid, dsldirid, dslid;
 	dnode_phys_t *objdirdn = objset_dnode_alloc(&zfs_opts->mos, &dnid);
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
@@ -356,9 +366,8 @@ mkpool(fsinfo_t *fsopts)
 	objdirdn->dn_type = DMU_OT_DSL_DIR;
 	objdirdn->dn_bonustype = DMU_OT_DSL_DIR;
 
-	dsl_dir_phys_t *dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
+	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
 
-	zfs_zap_t objdirzap;
 	zap_init(&objdirzap);
 	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
 	/* XXXMJ add other keys */
@@ -367,33 +376,96 @@ mkpool(fsinfo_t *fsopts)
 	dsldn->dn_type = DMU_OTN_ZAP_DATA;
 	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
 
-	dsl_dataset_phys_t *ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
+	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
 
 	dsldir->dd_head_dataset_obj = dslid;
 
 	/* XXXMJ fill out block pointer to child dataset object set */
 	zio_cksum_t cksum;
 	blkptr_set(&ds->ds_bp, 0, 0, ZIO_CHECKSUM_FLETCHER_4, &cksum);
-
-	/*
-	 * dnode 1 (DMU_POOL_DIRECTORY_OBJECT) in the MOS points to the root
-	 * dataset
-	 */
-#if 0
-	/* XXXMJ checksum will be wrong at this point. */
-	off_t len = sizeof(objset_phys_t);
-	off_t loc = space_alloc(zfs_opts, &len);
-
-	zio_cksum_t cksum;
-	fletcher_4_native(label, len, NULL, &cksum);
-	blkptr_set(&ub->ub_rootbp, loc, len, ZIO_CHECKSUM_FLETCHER_4,
-	    &cksum);
-#endif
-	/* XXXMJ write labels at the end */
 }
 
 static void
-mkpool2(fsinfo_t *fsopts)
+pool_finish(fsinfo_t *fsopts)
+{
+	zio_cksum_t cksum;
+	nvlist_t nv, *poolconfig, *vdevconfig;
+	uberblock_t *ub;
+	vdev_label_t *label;
+	zfs_opt_t *zfs_opts;
+	char *vdevnv;
+	uint64_t txg;
+	int error;
+
+	zfs_opts = fsopts->fs_specific;
+
+	objset_write(fsopts, &zfs_opts->mos);
+
+	/* The initial TXG can't be zero. */
+	txg = 1;
+
+	vdevconfig = nvlist_create(NV_UNIQUE_NAME);
+	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, 12 /* XXXMJ configurable */);
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, 0 /* XXXMJ */);
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
+
+	poolconfig = nvlist_create(NV_UNIQUE_NAME);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_TXG, txg);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VERSION, SPA_VERSION);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_STATE,
+	    POOL_STATE_ACTIVE);
+	nvlist_add_string(poolconfig, ZPOOL_CONFIG_POOL_NAME,
+	    zfs_opts->poolname);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_GUID, 0 /* XXXMJ configurable */);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_TOP_GUID, 0 /* XXXMJ configurable */);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_GUID, 0 /* XXXMJ configurable */);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
+	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
+
+	label = ecalloc(1, sizeof(*label));
+
+	nv.nv_header = poolconfig->nv_header;
+	nv.nv_asize = poolconfig->nv_asize;
+	nv.nv_size = poolconfig->nv_size;
+
+	/* Fill out vdev metadata. */
+	error = nvlist_export(poolconfig);
+	if (error != 0)
+		errc(1, error, "nvlist_export");
+	vdevnv = label->vl_vdev_phys.vp_nvlist;
+	memcpy(vdevnv, &poolconfig->nv_header, sizeof(poolconfig->nv_header));
+	memcpy(vdevnv + sizeof(poolconfig->nv_header), poolconfig->nv_data,
+	    poolconfig->nv_size);
+
+	nvlist_destroy(poolconfig);
+	nvlist_destroy(vdevconfig);
+
+	/* Fill out the uberblock. */
+	ub = (void *)&label->vl_uberblock[0];
+	ub->ub_magic = UBERBLOCK_MAGIC;
+	ub->ub_version = SPA_VERSION;
+	ub->ub_txg = txg;
+	ub->ub_guid_sum = 0; /* XXXMJ configurable */
+	ub->ub_timestamp = 0; /* XXXMJ */
+
+	ub->ub_software_version = SPA_VERSION;
+	ub->ub_mmp_magic = 0;
+	ub->ub_mmp_delay = 0;
+	ub->ub_mmp_config = 0;
+	ub->ub_checkpoint_txg = 0;
+
+	fletcher_4_native(&zfs_opts->mos.osphys, sizeof(objset_phys_t),
+	    NULL, &cksum);
+	blkptr_set(&ub->ub_rootbp, zfs_opts->mos.osloc, sizeof(objset_phys_t),
+	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
+	for (int i = 0; i < VDEV_LABELS; i++)
+		vdev_write_label(fsopts, i, label);
+}
+
+static void
+mkspacemap(fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
 	bitstr_t *spacemap;
@@ -838,14 +910,11 @@ static void
 mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
 	struct fsnode_foreach_populate_arg poparg;
+	zfs_opt_t *zfs_opts;
 	dnode_phys_t *masterobj;
 	uint64_t dnodecount, moid;
 
-#if 0
-	/* XXXMJ not sure about this */
-	fs->dnode = objset_dnode_alloc(&zfs_opts->mos, &fs->dnodeid);
-	fs->dnode->dn_type = DMU_OT_OBJSET;
-#endif
+	zfs_opts = fsopts->fs_specific;
 
 	/*
 	 * Figure out how many dnodes we need.  One for each ZPL object (file,
@@ -865,7 +934,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * really large filesystems.  Check to see how much this costs for a
 	 * FreeBSD tree.
 	 */
-	objset_init(&fs->os, DMU_OST_ZFS, dnodecount);
+	objset_init(zfs_opts, &fs->os, DMU_OST_ZFS, dnodecount);
 	masterobj = objset_dnode_alloc(&fs->os, &moid);
 	assert(moid == MASTER_NODE_OBJ);
 	masterobj->dn_type = DMU_OT_MASTER_NODE;
@@ -908,7 +977,6 @@ void
 zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
-	off_t size;
 	int oflags;
 
 	zfs_opts = fsopts->fs_specific;
@@ -922,25 +990,29 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 		warn("Can't open `%s' for writing", image);
 		goto out;
 	}
-	size = rounddown2(fsopts->maxsize, 1 << zfs_opts->ashift);
-	if (size < SPA_MINDEVSIZE) {
+	zfs_opts->size = rounddown2(fsopts->maxsize, 1 << zfs_opts->ashift);
+	if (zfs_opts->size < SPA_MINDEVSIZE) {
 		warnx("maximum image size %ju is too small",
-		    (uintmax_t)size);
+		    (uintmax_t)zfs_opts->size);
 		goto out;
 	}
-	if (ftruncate(fsopts->fd, size) != 0) {
+	if (ftruncate(fsopts->fd, zfs_opts->size) != 0) {
 		warn("Failed to extend image file `%s'", image);
 		goto out;
 	}
-	if (spacemap_init(zfs_opts, size) != 0)
+	if (spacemap_init(zfs_opts) != 0)
 		goto out;
 
+	pool_init(fsopts);
+
 	printf("%s:%d\n", __func__, __LINE__);
-	mkpool(fsopts);
 
 	mkfs(fsopts, &zfs_opts->rootfs, dir, root);
 
-	mkpool2(fsopts);
+	//mkpool(fsopts);
+	mkspacemap(fsopts);
+
+	pool_finish(fsopts);
 out:
 	if (fsopts->fd != -1)
 		(void)close(fsopts->fd);

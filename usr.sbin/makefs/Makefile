@@ -42,7 +42,7 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
 # XXXMJ conditional on ZFS support
-LIBADD+= nvpair spl zfs zpool
+#LIBADD+= nvpair spl zfs zpool
 
 .include <bsd.prog.mk>
 
