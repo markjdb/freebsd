@@ -164,6 +164,18 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 		loff = zfs_opts->size - (VDEV_LABELS - ind) * sizeof(vdev_label_t);
 
 	/*
+	 * Set the verifier checksum for the boot block.  We don't use it, but
+	 * the loader reads it and will complain if the checksum isn't valid.
+	 */
+	eck = &label->vl_be.vbe_zbt;
+	eck->zec_magic = ZEC_MAGIC; 
+	ZIO_SET_CHECKSUM(&eck->zec_cksum,
+	    loff + __offsetof(vdev_label_t, vl_be), 0, 0, 0);
+	zio_checksum_SHA256(&label->vl_be, sizeof(vdev_boot_envblock_t), NULL,
+	    &cksum);
+	eck->zec_cksum = cksum;
+
+	/*
 	 * Set the verifier checksum for the label.
 	 */
 	eck = &label->vl_vdev_phys.vp_zbt;
@@ -541,6 +553,7 @@ pool_finish(fsinfo_t *fsopts)
 	fletcher_4_native(os->osphys, os->osblksz, NULL, &cksum);
 
 	ds = (dsl_dataset_phys_t *)DN_BONUS(dsldn);
+	ds->ds_dir_obj = dsldirid;
 	blkptr_set(&ds->ds_bp, os->osloc, os->osblksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
@@ -1041,11 +1054,14 @@ static void
 mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
 	struct fsnode_foreach_populate_arg poparg;
+	zio_cksum_t cksum;
+	zfs_objset_t *os;
 	zfs_opt_t *zfs_opts;
 	dnode_phys_t *masterobj;
 	uint64_t dnodecount, moid;
 
 	zfs_opts = fsopts->fs_specific;
+	os = &fs->os;
 
 	/*
 	 * Figure out how many dnodes we need.  One for each ZPL object (file,
@@ -1065,8 +1081,8 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * really large filesystems.  Check to see how much this costs for a
 	 * FreeBSD tree.
 	 */
-	objset_init(zfs_opts, &fs->os, DMU_OST_ZFS, dnodecount);
-	masterobj = objset_dnode_alloc(&fs->os, &moid);
+	objset_init(zfs_opts, os, DMU_OST_ZFS, dnodecount);
+	masterobj = objset_dnode_alloc(os, &moid);
 	assert(moid == MASTER_NODE_OBJ);
 	masterobj->dn_type = DMU_OT_MASTER_NODE;
 	masterobj->dn_bonustype = DMU_OT_NONE;
@@ -1099,6 +1115,10 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
 	zap_write(fsopts, &masterzap, masterobj);
+
+	fletcher_4_native(os->dnodes, os->dnodeblksz, NULL, &cksum);
+	blkptr_set(&os->osphys->os_meta_dnode.dn_blkptr[0], os->dnodeloc,
+	    os->dnodeblksz, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
 	objset_write(fsopts, &fs->os);
 }
@@ -1139,7 +1159,6 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	mkfs(fsopts, &zfs_opts->rootfs, dir, root);
 
-	//mkpool(fsopts);
 	mkspacemap(fsopts);
 
 	pool_finish(fsopts);
