@@ -314,6 +314,8 @@ objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 
 	/* XXXMJ update block pointers */
 	vdev_pwrite(fsopts, os->osphys, os->osblksz, os->osloc);
+
+	/* XXXMJ can't free the (root) objset buffer here */
 }
 
 static dnode_phys_t *
@@ -395,15 +397,7 @@ zap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 static void
 pool_init(fsinfo_t *fsopts)
 {
-#if 0
-	dsl_dir_phys_t *dsldir;
-	dsl_dataset_phys_t *ds;
-#endif
 	zfs_opt_t *zfs_opts;
-#if 0
-	zfs_zap_t objdirzap;
-	uint64_t dnid, dsldirid, dslid;
-#endif
 	uint64_t dnodecount;
 
 	zfs_opts = fsopts->fs_specific;
@@ -422,30 +416,6 @@ pool_init(fsinfo_t *fsopts)
 	dnodecount++; /* DSL root dataset */
 	dnodecount++; /* config object, pointed to by the object directory */ 
 	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
-
-#if 0
-	dnode_phys_t *objdirdn = objset_dnode_alloc(&zfs_opts->mos, &dnid);
-	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
-	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
-
-	dnode_phys_t *dsldirdn = objset_dnode_alloc(&zfs_opts->mos, &dsldirid);
-	objdirdn->dn_type = DMU_OT_DSL_DIR;
-	objdirdn->dn_bonustype = DMU_OT_DSL_DIR;
-
-	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
-
-	zap_init(&objdirzap);
-	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
-	/* XXXMJ add other keys */
-
-	dnode_phys_t *dsldn = objset_dnode_alloc(&zfs_opts->mos, &dslid);
-	dsldn->dn_type = DMU_OTN_ZAP_DATA;
-	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
-
-	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
-
-	dsldir->dd_head_dataset_obj = dslid;
-#endif
 }
 
 static void
@@ -458,15 +428,19 @@ pool_finish(fsinfo_t *fsopts)
 	vdev_label_t *label;
 	zfs_opt_t *zfs_opts;
 	char *vdevnv;
-	uint64_t txg;
+	uint64_t guid, txg;
 	int error;
 
 	zfs_opts = fsopts->fs_specific;
 	mos = &zfs_opts->mos;
 
+	/* XXXMJ configurable */
 	/* The initial TXG can't be zero. */
 	txg = 1;
+	/* Pool GUIDs must also be non-zero. */
+	guid = 0xdeadbeefc0deface;
 
+	/* XXXMJ not sure what needs to be where */
 	vdevconfig = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
@@ -481,9 +455,9 @@ pool_finish(fsinfo_t *fsopts)
 	    POOL_STATE_ACTIVE);
 	nvlist_add_string(poolconfig, ZPOOL_CONFIG_POOL_NAME,
 	    zfs_opts->poolname);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_GUID, 0 /* XXXMJ configurable */);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_TOP_GUID, 0 /* XXXMJ configurable */);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_GUID, 0 /* XXXMJ configurable */);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_GUID, guid);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_TOP_GUID, guid);
+	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_GUID, guid);
 	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
 
@@ -512,13 +486,13 @@ pool_finish(fsinfo_t *fsopts)
 		off_t configloc, configblksz;
 
 		children[0] = nvlist_create(NV_UNIQUE_NAME);
-		nvlist_add_uint64(children[0], ZPOOL_CONFIG_GUID, 0 /* XXXMJ configurable */);
+		nvlist_add_uint64(children[0], ZPOOL_CONFIG_GUID, guid);
 
 		nv = nvlist_create(NV_UNIQUE_NAME);
-		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, 0 /* XXXMJ configurable */);
+		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
-		nvlist_add_nvlist_array(vdevconfig, ZPOOL_CONFIG_CHILDREN, children,
-		    nitems(children));
+		nvlist_add_nvlist_array(vdevconfig, ZPOOL_CONFIG_CHILDREN,
+		    children, nitems(children));
 		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
 		error = nvlist_export(nv);
 		if (error != 0)
@@ -546,7 +520,9 @@ pool_finish(fsinfo_t *fsopts)
 		free(buf);
 	}
 
-	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
+	dsldirdn->dn_nblkptr = 1;
+	dsldirdn->dn_bonuslen = sizeof(dsl_dir_phys_t);
+	dsldir = (dsl_dir_phys_t *)DN_BONUS(dsldirdn);
 
 	/* XXXMJ large thing to put on the stack */
 	zap_init(&objdirzap);
@@ -558,9 +534,17 @@ pool_finish(fsinfo_t *fsopts)
 	dnode_phys_t *dsldn = objset_dnode_alloc(mos, &dslid);
 	dsldn->dn_type = DMU_OTN_ZAP_DATA;
 	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
+	dsldn->dn_nblkptr = 1;
+	dsldn->dn_bonuslen = sizeof(dsl_dataset_phys_t);
 
-	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
+	zfs_objset_t *os = &zfs_opts->rootfs.os;
+	fletcher_4_native(os->osphys, os->osblksz, NULL, &cksum);
 
+	ds = (dsl_dataset_phys_t *)DN_BONUS(dsldn);
+	blkptr_set(&ds->ds_bp, os->osloc, os->osblksz,
+	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
+	printf("%s:%d dslid %lu\n", __func__, __LINE__, dslid);
 	dsldir->dd_head_dataset_obj = dslid;
 	}
 
@@ -1102,7 +1086,6 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 */
 	zfs_zap_t masterzap;
 	zap_init(&masterzap);
-
 	/* XXXMJ add a variant that can check that the object ID is valid */
 	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
 	/* XXXMJ DMU_OT_UNLINKED_SET */
@@ -1110,14 +1093,14 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	/* XXXMJ DMU_OT_SA_MASTER_NODE */
 	zap_add_uint64(&masterzap, "SA_ATTRS", 0 /* XXXMJ */);
 	/* XXXMJ create a shares (ZFS_SHARES_DIR) directory? */
-
 	zap_add_uint64(&masterzap, "version", 5 /* ZPL_VERSION_SA */);
 	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
 	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
 	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
+	zap_write(fsopts, &masterzap, masterobj);
 
-	/* XXXMJ write object set */
+	objset_write(fsopts, &fs->os);
 }
 
 void
