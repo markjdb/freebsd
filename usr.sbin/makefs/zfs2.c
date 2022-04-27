@@ -117,8 +117,8 @@ vdev_pwrite(fsinfo_t *fsopts, void *buf, size_t len, off_t off)
 }
 
 /*
- * Set the embedded checksum in the vdev metadata and write the label at the
- * specified index.
+ * Set embedded checksums in the vdev metadata and uberblocks, and write the
+ * label at the specified index.
  */
 static void
 vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
@@ -127,18 +127,21 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 	zio_cksum_t cksum;
 	zio_eck_t *eck;
 	ssize_t n;
-	off_t loff;
+	off_t blksz, loff;
 
 	assert(ind >= 0 && ind < VDEV_LABELS);
 
 	zfs_opts = fsopts->fs_specific;
+	blksz = 1 << zfs_opts->ashift;
 
 	if (ind < 2)
 		loff = ind * sizeof(vdev_label_t);
 	else
 		loff = zfs_opts->size - (VDEV_LABELS - ind) * sizeof(vdev_label_t);
 
-	/* Set the verifier checksum. */
+	/*
+	 * Set the verifier checksum for the label.
+	 */
 	eck = &label->vl_vdev_phys.vp_zbt;
 	eck->zec_magic = ZEC_MAGIC; 
 	ZIO_SET_CHECKSUM(&eck->zec_cksum,
@@ -146,6 +149,22 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 	zio_checksum_SHA256(&label->vl_vdev_phys, sizeof(vdev_phys_t), NULL,
 	    &cksum);
 	eck->zec_cksum = cksum;
+
+	/*
+	 * Set the verifier checksum for the uberblocks.
+	 */
+	assert(sizeof(label->vl_uberblock) % blksz == 0);
+	for (size_t roff = 0; roff < sizeof(label->vl_uberblock);
+	    roff += blksz) {
+		eck = (zio_eck_t *)(&label->vl_uberblock[0] + roff + blksz) - 1;
+		eck->zec_magic = ZEC_MAGIC;
+		ZIO_SET_CHECKSUM(&eck->zec_cksum,
+		    loff + __offsetof(vdev_label_t, vl_uberblock) + roff,
+		    0, 0, 0);
+		zio_checksum_SHA256(&label->vl_uberblock[0] + roff, blksz, NULL,
+		    &cksum);
+		eck->zec_cksum = cksum;
+	}
 
 	n = pwrite(fsopts->fd, label, sizeof(*label), loff);
 	if (n < 0)
@@ -406,8 +425,9 @@ pool_finish(fsinfo_t *fsopts)
 
 	vdevconfig = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, 12 /* XXXMJ configurable */);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, 0 /* XXXMJ */);
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, fsopts->size -
+	    VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
 
 	poolconfig = nvlist_create(NV_UNIQUE_NAME);
@@ -441,24 +461,30 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_destroy(poolconfig);
 	nvlist_destroy(vdevconfig);
 
-	/* Fill out the uberblock. */
-	ub = (void *)&label->vl_uberblock[0];
-	ub->ub_magic = UBERBLOCK_MAGIC;
-	ub->ub_version = SPA_VERSION;
-	ub->ub_txg = txg;
-	ub->ub_guid_sum = 0; /* XXXMJ configurable */
-	ub->ub_timestamp = 0; /* XXXMJ */
-
-	ub->ub_software_version = SPA_VERSION;
-	ub->ub_mmp_magic = 0;
-	ub->ub_mmp_delay = 0;
-	ub->ub_mmp_config = 0;
-	ub->ub_checkpoint_txg = 0;
-
 	fletcher_4_native(&zfs_opts->mos.osphys, sizeof(objset_phys_t),
 	    NULL, &cksum);
-	blkptr_set(&ub->ub_rootbp, zfs_opts->mos.osloc, sizeof(objset_phys_t),
-	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
+	/*
+	 * Fill out the uberblock.  Just make each one the same.  The embedded
+	 * checksum is calculated in vdev_write_label().
+	 */
+	for (size_t roff = 0; roff < sizeof(label->vl_uberblock);
+	    roff += (1 << zfs_opts->ashift)) {
+		ub = (uberblock_t *)(&label->vl_uberblock[0] + roff);
+		ub->ub_magic = UBERBLOCK_MAGIC;
+		ub->ub_version = SPA_VERSION;
+		ub->ub_txg = txg;
+		ub->ub_guid_sum = 0; /* XXXMJ configurable */
+		ub->ub_timestamp = 0; /* XXXMJ */
+
+		ub->ub_software_version = SPA_VERSION;
+		ub->ub_mmp_magic = 0;
+		ub->ub_mmp_delay = 0;
+		ub->ub_mmp_config = 0;
+		ub->ub_checkpoint_txg = 0;
+		blkptr_set(&ub->ub_rootbp, zfs_opts->mos.osloc,
+		    sizeof(objset_phys_t), ZIO_CHECKSUM_FLETCHER_4, &cksum);
+	}
 
 	for (int i = 0; i < VDEV_LABELS; i++)
 		vdev_write_label(fsopts, i, label);
