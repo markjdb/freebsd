@@ -127,6 +127,9 @@
  *                  0xfffffeffffffffff  End of DMAP
  *                  0xfffffd0000000000  Start of DMAP
  *
+ *                  0xffff009fffffffff  End of KASAN shadow map
+ *                  0xffff008000000000  Start of KASAN shadow map
+ *
  *                  0xffff007fffffffff  End of KVA
  *                  0xffff000000000000  Kernel base address & start of KVA
  *
@@ -159,6 +162,10 @@
 /* 2 TiB maximum for the direct map region */
 #define	DMAP_MIN_ADDRESS	(0xfffffd0000000000UL)
 #define	DMAP_MAX_ADDRESS	(0xffffff0000000000UL)
+
+/* 128 GiB KASAN shadow map */
+#define	KASAN_MIN_ADDRESS	(0xffff008000000000UL)
+#define	KASAN_MAX_ADDRESS	(0xffff00a000000000UL)
 
 #define	DMAP_MIN_PHYSADDR	(dmap_phys_base)
 #define	DMAP_MAX_PHYSADDR	(dmap_phys_max)
@@ -227,7 +234,9 @@
 #define	VM_INITIAL_PAGEIN	16
 #endif
 
+#if !defined(KASAN) && !defined(KMSAN)
 #define	UMA_MD_SMALL_ALLOC
+#endif
 
 #ifndef LOCORE
 

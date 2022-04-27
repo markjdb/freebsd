@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/asan.h>
 #include <sys/buf.h>
 #include <sys/bus.h>
 #include <sys/cons.h>
@@ -1094,6 +1095,18 @@ initarm(struct arm64_bootparams *abp)
 	/* Exclude entries neexed in teh DMAP region, but not phys_avail */
 	if (efihdr != NULL)
 		exclude_efi_map_entries(efihdr);
+
+	/*
+	 * We carefully bootstrap the sanitizer map after we've excluded
+	 * absolutely everything else that could impact phys_avail.  There's not
+	 * always enough room for the initial shadow map after the kernel, so
+	 * we'll end up searching for segments that we can safely use.  Those
+	 * segments also get excluded from phys_avail.
+	 */
+#if defined(KASAN)
+	pmap_bootstrap_san(KERNBASE - abp->kern_delta);
+#endif
+
 	physmem_init_kernel_globals();
 
 	devmap_bootstrap(0, NULL);
@@ -1116,6 +1129,7 @@ initarm(struct arm64_bootparams *abp)
 	pan_enable();
 
 	kcsan_cpu_init(0);
+	kasan_init();
 
 	env = kern_getenv("kernelname");
 	if (env != NULL)

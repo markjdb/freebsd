@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/asan.h>
 #include <sys/kernel.h>
 #include <sys/syslog.h>
 #include <sys/malloc.h>
@@ -291,6 +292,8 @@ intr_irq_handler(struct trapframe *tf)
 	struct thread * td;
 
 	KASSERT(irq_root_filter != NULL, ("%s: no filter", __func__));
+
+	kasan_mark(tf, sizeof(*tf), sizeof(*tf), 0);
 
 	VM_CNT_INC(v_intr);
 	critical_enter();
