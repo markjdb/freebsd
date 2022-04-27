@@ -2343,6 +2343,10 @@ dnode_read(const spa_t *spa, const dnode_phys_t *dnode, off_t offset,
 	int nlevels = dnode->dn_nlevels;
 	int i, rc;
 
+	if (bsize == 0) {
+		printf("ZFS: I/O error - corrupted dnode has block size 0\n");
+		return (EIO);
+	}
 	if (bsize > SPA_MAXBLOCKSIZE) {
 		printf("ZFS: I/O error - blocks larger than %llu are not "
 		    "supported\n", SPA_MAXBLOCKSIZE);
@@ -3442,7 +3446,7 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 	*value = NULL;
 	if ((rc = objset_get_dnode(spa, spa->spa_mos, obj, &dir)) != 0)
 		return (rc);
-	if (dir.dn_type != DMU_OT_PACKED_NVLIST &&
+	if (dir.dn_type != DMU_OT_PACKED_NVLIST ||
 	    dir.dn_bonustype != DMU_OT_PACKED_NVLIST_SIZE) {
 		return (EIO);
 	}
