@@ -503,9 +503,48 @@ pool_finish(fsinfo_t *fsopts)
 	dsldirdn->dn_bonustype = DMU_OT_DSL_DIR;
 
 	dnode_phys_t *configdn = objset_dnode_alloc(mos, &configid);
-	configdn->dn_type == DMU_OT_PACKED_NVLIST;
-	configdn->dn_bonustype == DMU_OT_PACKED_NVLIST_SIZE;
+	configdn->dn_type = DMU_OT_PACKED_NVLIST;
+	configdn->dn_bonustype = DMU_OT_PACKED_NVLIST_SIZE;
 	configdn->dn_bonuslen = sizeof(uint64_t);
+
+	{
+		nvlist_t *nv, *children[1];
+		off_t configloc, configblksz;
+
+		children[0] = nvlist_create(NV_UNIQUE_NAME);
+		nvlist_add_uint64(children[0], ZPOOL_CONFIG_GUID, 0 /* XXXMJ configurable */);
+
+		nv = nvlist_create(NV_UNIQUE_NAME);
+		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, 0 /* XXXMJ configurable */);
+		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
+		nvlist_add_nvlist_array(vdevconfig, ZPOOL_CONFIG_CHILDREN, children,
+		    nitems(children));
+		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
+		error = nvlist_export(nv);
+		if (error != 0)
+			errc(1, error, "nvlist_export");
+
+		configblksz = nv->nv_size + sizeof(nv->nv_header);
+		char *buf = ecalloc(1, configblksz);
+		memcpy(buf, &nv->nv_header, sizeof(nv->nv_header));
+		memcpy(buf + sizeof(nv->nv_header), nv->nv_data, nv->nv_size);
+
+		assert(configblksz <= SPA_OLDMAXBLOCKSIZE);
+		configloc = space_alloc(zfs_opts, &configblksz);
+
+		vdev_pwrite(fsopts, buf, configblksz, configloc);
+
+		fletcher_4_native(buf, configblksz, NULL, &cksum);
+		blkptr_set(&configdn->dn_blkptr[0], configloc, configblksz,
+		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+		configdn->dn_datablkszsec = configblksz >> SPA_MINBLOCKSHIFT;
+		configdn->dn_nlevels = 1;
+		configdn->dn_nblkptr = 1;
+		*(uint64_t *)DN_BONUS(configdn) = nv->nv_size + sizeof(nv->nv_header);
+
+		nvlist_destroy(nv);
+		free(buf);
+	}
 
 	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
 
@@ -513,8 +552,8 @@ pool_finish(fsinfo_t *fsopts)
 	zap_init(&objdirzap);
 	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
 	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
-	zap_write(fsopts, &objdirzap, objdirdn);
 	/* XXXMJ add other keys */
+	zap_write(fsopts, &objdirzap, objdirdn);
 
 	dnode_phys_t *dsldn = objset_dnode_alloc(mos, &dslid);
 	dsldn->dn_type = DMU_OTN_ZAP_DATA;
