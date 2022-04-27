@@ -280,6 +280,8 @@ static void
 objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
     uint64_t dnodecount)
 {
+	dnode_phys_t *mdnode;
+
 	/* Object zero is always meta dnode. */
 	os->dnodecount = dnodecount + 1;
 	os->dnodenextfree = 1;
@@ -293,7 +295,11 @@ objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
 
 	/* XXXMJ what else? */
 	os->osphys = ecalloc(1, os->osblksz);
-	os->osphys->os_meta_dnode.dn_type = DMU_OT_DNODE;
+	mdnode = &os->osphys->os_meta_dnode;
+	mdnode->dn_type = DMU_OT_DNODE;
+	mdnode->dn_datablkszsec = os->dnodeblksz >> SPA_MINBLOCKSHIFT;
+	mdnode->dn_bonustype = DMU_OT_NONE;
+	mdnode->dn_nlevels = 1;
 	os->osphys->os_type = type;
 
 	os->dnodes = ecalloc(os->dnodecount, sizeof(dnode_phys_t));
@@ -366,15 +372,16 @@ zap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 
 	zfs_opts = fsopts->fs_specific;
 
-	fletcher_4_native(zap->zapblk, zap->blksz, NULL, &cksum);
-
 	zap->loc = space_alloc(zfs_opts, &zap->blksz);
+
+	fletcher_4_native(zap->zapblk, zap->blksz, NULL, &cksum);
 
 	dnode->dn_nblkptr = 1;
 	dnode->dn_nlevels = 1;
 	dnode->dn_bonustype = DMU_OT_NONE;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
+	dnode->dn_datablkszsec = zap->blksz >> SPA_MINBLOCKSHIFT;
 
 	blkptr_set(&dnode->dn_blkptr[0], zap->loc, zap->blksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
@@ -413,6 +420,7 @@ pool_init(fsinfo_t *fsopts)
 	dnodecount++; /* object directory */
 	dnodecount++; /* DSL directory */
 	dnodecount++; /* DSL root dataset */
+	dnodecount++; /* config object, pointed to by the object directory */ 
 	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
 
 #if 0
@@ -445,7 +453,7 @@ pool_finish(fsinfo_t *fsopts)
 {
 	zio_cksum_t cksum;
 	zfs_objset_t *mos;
-	nvlist_t nv, *poolconfig, *vdevconfig;
+	nvlist_t *poolconfig, *vdevconfig;
 	uberblock_t *ub;
 	vdev_label_t *label;
 	zfs_opt_t *zfs_opts;
@@ -455,39 +463,6 @@ pool_finish(fsinfo_t *fsopts)
 
 	zfs_opts = fsopts->fs_specific;
 	mos = &zfs_opts->mos;
-
-	{
-	dsl_dir_phys_t *dsldir;
-	dsl_dataset_phys_t *ds;
-	zfs_zap_t objdirzap;
-	uint64_t dnid, dsldirid, dslid;
-
-	dnode_phys_t *objdirdn = objset_dnode_alloc(mos, &dnid);
-	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
-	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
-
-	dnode_phys_t *dsldirdn = objset_dnode_alloc(mos, &dsldirid);
-	objdirdn->dn_type = DMU_OT_DSL_DIR;
-	objdirdn->dn_bonustype = DMU_OT_DSL_DIR;
-
-	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
-
-	/* XXXMJ large thing to put on the stack */
-	zap_init(&objdirzap);
-	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
-#if 0
-	zap_write(fsopts, &objdirzap, objdirdn);
-#endif
-	/* XXXMJ add other keys */
-
-	dnode_phys_t *dsldn = objset_dnode_alloc(mos, &dslid);
-	dsldn->dn_type = DMU_OTN_ZAP_DATA;
-	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
-
-	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
-
-	dsldir->dd_head_dataset_obj = dslid;
-	}
 
 	/* The initial TXG can't be zero. */
 	txg = 1;
@@ -512,11 +487,45 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
 
-	label = ecalloc(1, sizeof(*label));
+	/* XXXMJ most of this code should live in pool_init(). */
+	{
+	dsl_dir_phys_t *dsldir;
+	dsl_dataset_phys_t *ds;
+	zfs_zap_t objdirzap;
+	uint64_t dnid, dsldirid, dslid, configid;
 
-	nv.nv_header = poolconfig->nv_header;
-	nv.nv_asize = poolconfig->nv_asize;
-	nv.nv_size = poolconfig->nv_size;
+	dnode_phys_t *objdirdn = objset_dnode_alloc(mos, &dnid);
+	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
+	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
+
+	dnode_phys_t *dsldirdn = objset_dnode_alloc(mos, &dsldirid);
+	dsldirdn->dn_type = DMU_OT_DSL_DIR;
+	dsldirdn->dn_bonustype = DMU_OT_DSL_DIR;
+
+	dnode_phys_t *configdn = objset_dnode_alloc(mos, &configid);
+	configdn->dn_type == DMU_OT_PACKED_NVLIST;
+	configdn->dn_bonustype == DMU_OT_PACKED_NVLIST_SIZE;
+	configdn->dn_bonuslen = sizeof(uint64_t);
+
+	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
+
+	/* XXXMJ large thing to put on the stack */
+	zap_init(&objdirzap);
+	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
+	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
+	zap_write(fsopts, &objdirzap, objdirdn);
+	/* XXXMJ add other keys */
+
+	dnode_phys_t *dsldn = objset_dnode_alloc(mos, &dslid);
+	dsldn->dn_type = DMU_OTN_ZAP_DATA;
+	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
+
+	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
+
+	dsldir->dd_head_dataset_obj = dslid;
+	}
+
+	label = ecalloc(1, sizeof(*label));
 
 	/* Fill out vdev metadata. */
 	error = nvlist_export(poolconfig);
