@@ -32,6 +32,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/asan.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
@@ -465,6 +466,8 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 	uint64_t esr, far;
 	int dfsc;
 
+	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
+
 	/* Read the esr register to get the exception details */
 	esr = frame->tf_esr;
 	exception = ESR_ELx_EXCEPTION(esr);
@@ -570,6 +573,8 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 	KASSERT((uintptr_t)get_pcpu() >= VM_MIN_KERNEL_ADDRESS,
 	    ("Invalid pcpu address from userland: %p (tpidr %lx)",
 	     get_pcpu(), READ_SPECIALREG(tpidr_el1)));
+
+	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
 
 	esr = frame->tf_esr;
 	exception = ESR_ELx_EXCEPTION(esr);
@@ -723,6 +728,8 @@ do_serror(struct trapframe *frame)
 {
 	uint64_t esr, far;
 
+	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
+
 	far = READ_SPECIALREG(far_el1);
 	esr = frame->tf_esr;
 
@@ -736,6 +743,8 @@ void
 unhandled_exception(struct trapframe *frame)
 {
 	uint64_t esr, far;
+
+	kasan_mark(frame, sizeof(*frame), sizeof(*frame), 0);
 
 	far = READ_SPECIALREG(far_el1);
 	esr = frame->tf_esr;

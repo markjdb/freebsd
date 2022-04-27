@@ -147,6 +147,17 @@ virtdone:
 	str	x27, [x0, #BP_KERN_TTBR0]
 	str	x23, [x0, #BP_BOOT_EL]
 
+#ifdef KASAN
+	/* Save bootparams */
+	mov	x19, x0
+
+	/* Bootstrap an early shadow map for the boot stack. */
+	bl	pmap_san_bootstrap
+
+	/* Restore bootparams */
+	mov	x0, x19
+#endif
+
 	/* trace back starts here */
 	mov	fp, #0
 	/* Branch to C code */
