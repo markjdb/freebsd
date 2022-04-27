@@ -22,12 +22,14 @@
 #define	INDIR_LEVELS	6
 
 typedef struct {
-	objset_phys_t	osphys;
+	objset_phys_t	*osphys;
 	off_t		osloc;
+	off_t		osblksz;
 	dnode_phys_t	*dnodes;	/* dnode array */
 	uint64_t	dnodenextfree;	/* dnode ID bump allocator */
 	uint64_t	dnodecount;	/* total number of dnodes */
 	off_t		dnodeloc;
+	off_t		dnodeblksz;
 } zfs_objset_t;
 
 typedef struct {
@@ -97,6 +99,28 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 
 	free(fsopts->fs_specific);
 	free(fsopts->fs_options);
+}
+
+static void
+blkptr_set(blkptr_t *bp, off_t off, off_t size, enum zio_checksum cksumt,
+    zio_cksum_t *cksum)
+{
+	dva_t *dva;
+
+	/* XXXMJ assert size is a power of 2? */
+
+	BP_ZERO(bp);
+	BP_SET_LSIZE(bp, size);
+	BP_SET_PSIZE(bp, size);
+	BP_SET_CHECKSUM(bp, cksumt);
+	BP_SET_COMPRESS(bp, ZIO_COMPRESS_OFF);
+	BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
+
+	dva = BP_IDENTITY(bp);
+	DVA_SET_VDEV(dva, 0);
+	DVA_SET_OFFSET(dva, off);
+	DVA_SET_ASIZE(dva, size);
+	memcpy(&bp->blk_cksum, cksum, sizeof(*cksum));
 }
 
 static void
@@ -256,32 +280,34 @@ static void
 objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
     uint64_t dnodecount)
 {
-	off_t blksz;
-
-	/* XXXMJ what else? */
-	os->osphys.os_meta_dnode.dn_type = DMU_OT_DNODE;
-	os->osphys.os_type = type;
-
-	os->dnodecount = dnodecount + 1;
-	os->dnodes = ecalloc(os->dnodecount, sizeof(dnode_phys_t));
 	/* Object zero is always meta dnode. */
+	os->dnodecount = dnodecount + 1;
 	os->dnodenextfree = 1;
 
 	/* Allocate space on the vdev for the objset and dnode array. */
-	blksz = sizeof(objset_phys_t);
-	os->osloc = space_alloc(zfs_opts, &blksz);
+	os->osblksz = sizeof(objset_phys_t);
+	os->osloc = space_alloc(zfs_opts, &os->osblksz);
 
-	blksz = sizeof(dnode_phys_t) * os->dnodecount;
-	os->dnodeloc = space_alloc(zfs_opts, &blksz);
+	os->dnodeblksz = sizeof(dnode_phys_t) * os->dnodecount;
+	os->dnodeloc = space_alloc(zfs_opts, &os->dnodeblksz);
+
+	/* XXXMJ what else? */
+	os->osphys = ecalloc(1, os->osblksz);
+	os->osphys->os_meta_dnode.dn_type = DMU_OT_DNODE;
+	os->osphys->os_type = type;
+
+	os->dnodes = ecalloc(os->dnodecount, sizeof(dnode_phys_t));
 }
 
 static void
 objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 {
+	/* XXXMJ this will need to be revisited */
+	assert(os->dnodeblksz <= SPA_OLDMAXBLOCKSIZE);
+	vdev_pwrite(fsopts, os->dnodes, os->dnodeblksz, os->dnodeloc);
+
 	/* XXXMJ update block pointers */
-	vdev_pwrite(fsopts, &os->osphys, sizeof(objset_phys_t), os->osloc);
-	vdev_pwrite(fsopts, os->dnodes, sizeof(dnode_phys_t) * os->dnodecount,
-	    os->dnodeloc);
+	vdev_pwrite(fsopts, os->osphys, os->osblksz, os->osloc);
 }
 
 static dnode_phys_t *
@@ -310,6 +336,7 @@ zap_init(zfs_zap_t *zap)
 	zaphdr->mz_salt = 0; /* XXXMJ */
 	zaphdr->mz_normflags = 0;
 
+	zap->blksz = __offsetof(mzap_phys_t, mz_chunk);
 	zap->ent = &zaphdr->mz_chunk[0];
 }
 
@@ -318,6 +345,8 @@ zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 {
 	mzap_ent_phys_t *ent;
 
+	/* XXXMJ assert no overflow in the block */
+
 	ent = zap->ent;
 	zap->ent++;
 
@@ -325,27 +354,32 @@ zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 	ent->mze_cd = 0; /* XXXMJ */
 	assert(strlen(name) < sizeof(ent->mze_name));
 	strlcpy(ent->mze_name, name, sizeof(ent->mze_name));
+
+	zap->blksz += sizeof(mzap_ent_phys_t);
 }
 
 static void
-blkptr_set(blkptr_t *bp, off_t off, off_t size, enum zio_checksum cksumt,
-    zio_cksum_t *cksum)
+zap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 {
-	dva_t *dva;
+	zfs_opt_t *zfs_opts;
+	zio_cksum_t cksum;
 
-	/* XXXMJ assert size is a power of 2? */
+	zfs_opts = fsopts->fs_specific;
 
-	BP_ZERO(bp);
-	BP_SET_LSIZE(bp, size);
-	BP_SET_PSIZE(bp, size);
-	BP_SET_CHECKSUM(bp, cksumt);
-	BP_SET_COMPRESS(bp, ZIO_COMPRESS_OFF);
+	fletcher_4_native(zap->zapblk, zap->blksz, NULL, &cksum);
 
-	dva = BP_IDENTITY(bp);
-	DVA_SET_VDEV(dva, 0);
-	DVA_SET_OFFSET(dva, off);
-	DVA_SET_ASIZE(dva, size);
-	bp->blk_cksum = *cksum;
+	zap->loc = space_alloc(zfs_opts, &zap->blksz);
+
+	dnode->dn_nblkptr = 1;
+	dnode->dn_nlevels = 1;
+	dnode->dn_bonustype = DMU_OT_NONE;
+	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
+	dnode->dn_compress = ZIO_COMPRESS_OFF;
+
+	blkptr_set(&dnode->dn_blkptr[0], zap->loc, zap->blksz,
+	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
+	vdev_pwrite(fsopts, zap->zapblk, zap->blksz, zap->loc);
 }
 
 /*
@@ -354,11 +388,15 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, enum zio_checksum cksumt,
 static void
 pool_init(fsinfo_t *fsopts)
 {
+#if 0
 	dsl_dir_phys_t *dsldir;
 	dsl_dataset_phys_t *ds;
+#endif
 	zfs_opt_t *zfs_opts;
+#if 0
 	zfs_zap_t objdirzap;
 	uint64_t dnid, dsldirid, dslid;
+#endif
 	uint64_t dnodecount;
 
 	zfs_opts = fsopts->fs_specific;
@@ -377,6 +415,7 @@ pool_init(fsinfo_t *fsopts)
 	dnodecount++; /* DSL root dataset */
 	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
 
+#if 0
 	dnode_phys_t *objdirdn = objset_dnode_alloc(&zfs_opts->mos, &dnid);
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
@@ -398,16 +437,14 @@ pool_init(fsinfo_t *fsopts)
 	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
 
 	dsldir->dd_head_dataset_obj = dslid;
-
-	/* XXXMJ fill out block pointer to child dataset object set */
-	zio_cksum_t cksum;
-	blkptr_set(&ds->ds_bp, 0, 0, ZIO_CHECKSUM_FLETCHER_4, &cksum);
+#endif
 }
 
 static void
 pool_finish(fsinfo_t *fsopts)
 {
 	zio_cksum_t cksum;
+	zfs_objset_t *mos;
 	nvlist_t nv, *poolconfig, *vdevconfig;
 	uberblock_t *ub;
 	vdev_label_t *label;
@@ -417,8 +454,40 @@ pool_finish(fsinfo_t *fsopts)
 	int error;
 
 	zfs_opts = fsopts->fs_specific;
+	mos = &zfs_opts->mos;
 
-	objset_write(fsopts, &zfs_opts->mos);
+	{
+	dsl_dir_phys_t *dsldir;
+	dsl_dataset_phys_t *ds;
+	zfs_zap_t objdirzap;
+	uint64_t dnid, dsldirid, dslid;
+
+	dnode_phys_t *objdirdn = objset_dnode_alloc(mos, &dnid);
+	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
+	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
+
+	dnode_phys_t *dsldirdn = objset_dnode_alloc(mos, &dsldirid);
+	objdirdn->dn_type = DMU_OT_DSL_DIR;
+	objdirdn->dn_bonustype = DMU_OT_DSL_DIR;
+
+	dsldir = (dsl_dir_phys_t *)&dsldirdn->dn_bonus;
+
+	/* XXXMJ large thing to put on the stack */
+	zap_init(&objdirzap);
+	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
+#if 0
+	zap_write(fsopts, &objdirzap, objdirdn);
+#endif
+	/* XXXMJ add other keys */
+
+	dnode_phys_t *dsldn = objset_dnode_alloc(mos, &dslid);
+	dsldn->dn_type = DMU_OTN_ZAP_DATA;
+	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
+
+	ds = (dsl_dataset_phys_t *)&dsldn->dn_bonus;
+
+	dsldir->dd_head_dataset_obj = dslid;
+	}
 
 	/* The initial TXG can't be zero. */
 	txg = 1;
@@ -461,8 +530,12 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_destroy(poolconfig);
 	nvlist_destroy(vdevconfig);
 
-	fletcher_4_native(&zfs_opts->mos.osphys, sizeof(objset_phys_t),
-	    NULL, &cksum);
+	fletcher_4_native(mos->dnodes, mos->dnodeblksz, NULL, &cksum);
+	blkptr_set(&mos->osphys->os_meta_dnode.dn_blkptr[0], mos->dnodeloc,
+	    mos->dnodeblksz, ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
+	fletcher_4_native(mos->osphys, mos->osblksz, NULL, &cksum);
+	objset_write(fsopts, mos);
 
 	/*
 	 * Fill out the uberblock.  Just make each one the same.  The embedded
@@ -482,8 +555,8 @@ pool_finish(fsinfo_t *fsopts)
 		ub->ub_mmp_delay = 0;
 		ub->ub_mmp_config = 0;
 		ub->ub_checkpoint_txg = 0;
-		blkptr_set(&ub->ub_rootbp, zfs_opts->mos.osloc,
-		    sizeof(objset_phys_t), ZIO_CHECKSUM_FLETCHER_4, &cksum);
+		blkptr_set(&ub->ub_rootbp, mos->osloc, mos->osblksz,
+		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 	}
 
 	for (int i = 0; i < VDEV_LABELS; i++)
