@@ -344,12 +344,15 @@ typedef struct zfs_zap {
 	off_t			blksz;
 	mzap_ent_phys_t		*ent;
 	char			zapblk[SPA_OLDMAXBLOCKSIZE];
+	char			leafblk[SPA_OLDMAXBLOCKSIZE];
 } zfs_zap_t;
 
 static void
 zap_init(zfs_zap_t *zap)
 {
 	mzap_phys_t *zaphdr;
+
+	memset(zap, 0, sizeof(*zap));
 
 	zaphdr = (mzap_phys_t *)&zap->zapblk[0];
 	zaphdr->mz_block_type = ZBT_MICRO;
@@ -358,6 +361,76 @@ zap_init(zfs_zap_t *zap)
 
 	zap->blksz = __offsetof(mzap_phys_t, mz_chunk);
 	zap->ent = &zaphdr->mz_chunk[0];
+}
+
+/* XXXMJ from zfssubr.c */
+static uint64_t zfs_crc64_table[256];
+
+static void
+zfs_init_crc(void)
+{
+	int i, j;
+	uint64_t *ct;
+
+	/*
+	 * Calculate the crc64 table (used for the zap hash
+	 * function).
+	 */
+	if (zfs_crc64_table[128] != ZFS_CRC64_POLY) {
+		memset(zfs_crc64_table, 0, sizeof(zfs_crc64_table));
+		for (i = 0; i < 256; i++)
+			for (ct = zfs_crc64_table + i, *ct = i, j = 8; j > 0; j--)
+				*ct = (*ct >> 1) ^ (-(*ct & 1) & ZFS_CRC64_POLY);
+	}
+}
+
+/* XXXMJ from zfssubr.c */
+static uint64_t
+zap_hash(uint64_t salt, const char *name)
+{
+	const uint8_t *cp;
+	uint8_t c;
+	uint64_t crc = salt;
+
+	ASSERT(crc != 0);
+	ASSERT(zfs_crc64_table[128] == ZFS_CRC64_POLY);
+	for (cp = (const uint8_t *)name; (c = *cp) != '\0'; cp++)
+		crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ c) & 0xFF];
+
+	/*
+	 * Only use 28 bits, since we need 4 bits in the cookie for the
+	 * collision differentiator.  We MUST use the high bits, since
+	 * those are the onces that we first pay attention to when
+	 * chosing the bucket.
+	 */
+	crc &= ~((1ULL << (64 - ZAP_HASHBITS)) - 1);
+
+	return (crc);
+}
+
+static void
+fzap_init(zfs_zap_t *zap)
+{
+	zap_phys_t *zaphdr;
+
+	memset(zap, 0, sizeof(*zap));
+
+	zaphdr = (zap_phys_t *)&zap->zapblk[0];
+	zaphdr->zap_block_type = ZBT_HEADER;
+	zaphdr->zap_magic = ZAP_MAGIC;
+
+	zaphdr->zap_ptrtbl.zt_blk = 0;	/* embedded in the same block */
+	zaphdr->zap_ptrtbl.zt_numblks = 0; /* embedded in the same block */
+	zaphdr->zap_ptrtbl.zt_shift = 13; /* required for embedded hash table */
+	zaphdr->zap_ptrtbl.zt_nextblk = 0;
+	zaphdr->zap_ptrtbl.zt_blks_copied = 0;
+
+	zaphdr->zap_freeblk = 0;
+	zaphdr->zap_num_leafs = 1;
+	zaphdr->zap_num_entries = 1;
+	zaphdr->zap_salt = 0;
+	zaphdr->zap_normflags = 0;
+	zaphdr->zap_flags = 0;
 }
 
 static void
@@ -1057,8 +1130,8 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zio_cksum_t cksum;
 	zfs_objset_t *os;
 	zfs_opt_t *zfs_opts;
-	dnode_phys_t *masterobj;
-	uint64_t dnodecount, moid;
+	dnode_phys_t *masterobj, *saobj, *salobj, *sarobj;
+	uint64_t dnodecount, moid, saobjid, salobjid, sarobjid;
 
 	zfs_opts = fsopts->fs_specific;
 	os = &fs->os;
@@ -1074,7 +1147,9 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	dnodecount++; /* master object */
 	dnodecount++; /* root directory */
 	dnodecount++; /* delete queue */
-	dnodecount++; /* system attributes */
+	dnodecount++; /* system attributes master node */
+	dnodecount++; /* system attributes registry */
+	dnodecount++; /* system attributes layout */
 
 	/*
 	 * XXXMJ allocating them all up front like this might be too painful for
@@ -1086,6 +1161,80 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	assert(moid == MASTER_NODE_OBJ);
 	masterobj->dn_type = DMU_OT_MASTER_NODE;
 	masterobj->dn_bonustype = DMU_OT_NONE;
+
+	/*
+	 * Create the SA layout(s) now, since filesystem object dnodes will
+	 * refer to them.
+	 *
+	 * SA:
+	 * - files/dirs/etc. have a bonus buffer of type DMU_OT_SA, starts with
+	 *   a sa_hdr_phys
+	 */
+	saobj = objset_dnode_alloc(os, &saobjid);
+	saobj->dn_type = DMU_OT_SA_MASTER_NODE;
+	saobj->dn_bonustype = DMU_OT_NONE;
+
+	salobj = objset_dnode_alloc(os, &salobjid);
+	salobj->dn_type = DMU_OT_SA_ATTR_LAYOUTS;
+	salobj->dn_bonustype = DMU_OT_NONE;
+
+	sarobj = objset_dnode_alloc(os, &sarobjid);
+	sarobj->dn_type = DMU_OT_SA_ATTR_REGISTRATION;
+	sarobj->dn_bonustype = DMU_OT_NONE;
+
+	{
+	zfs_zap_t sarzap;
+	zap_init(&sarzap);
+#define	ATTR_REG(name, ind, size, bs) do {		\
+	uint64_t attr = 0;				\
+	SA_ATTR_ENCODE(attr, ind, size, bs);		\
+	zap_add_uint64(&sarzap, name, attr);		\
+} while (0)
+	ATTR_REG("ZPL_ATIME", 0, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_MTIME", 1, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_CTIME", 2, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_CRTIME", 3, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_GEN", 4, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_MODE", 5, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_SIZE", 6, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_PARENT", 7, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_LINKS", 8, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_XATTR", 9, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_RDEV", 10, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_FLAGS", 11, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_UID", 12, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_GID", 13, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_PAD", 14, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_ZNODE_ACL", 15, 88, SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_DACL_COUNT", 16, sizeof(uint64_t), SA_UINT64_ARRAY);
+	ATTR_REG("ZPL_SYMLINK", 17, 0, SA_UINT8_ARRAY);
+	ATTR_REG("ZPL_SCANSTAMP", 18, sizeof(uint64_t) * 4, SA_UINT8_ARRAY);
+	ATTR_REG("ZPL_DACL_ACES", 19, 0, SA_ACL);
+	ATTR_REG("ZPL_DXATTR", 20, 0, SA_UINT8_ARRAY);
+	ATTR_REG("ZPL_PROJID", 21, sizeof(uint64_t), SA_UINT64_ARRAY);
+#undef ATTR_REGISTER
+	zap_write(fsopts, &sarzap, sarobj);
+	}
+
+	{
+	zfs_zap_t salzap;
+
+	char attr[16];
+	snprintf(attr, sizeof(attr), "%u", 2u);
+
+	fzap_init(&salzap);
+#if 0
+	zap_write(fsopts, &salzap, salobj);
+#endif
+	}
+
+	{
+	zfs_zap_t sazap;
+	zap_init(&sazap);
+	zap_add_uint64(&sazap, SA_LAYOUTS, salobjid);
+	zap_add_uint64(&sazap, SA_REGISTRY, sarobjid);
+	zap_write(fsopts, &sazap, saobj);
+	}
 
 	poparg.fsopts = fsopts;
 	poparg.fs = fs;
@@ -1107,7 +1256,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	/* XXXMJ DMU_OT_UNLINKED_SET */
 	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, 0 /* XXXMJ */);
 	/* XXXMJ DMU_OT_SA_MASTER_NODE */
-	zap_add_uint64(&masterzap, "SA_ATTRS", 0 /* XXXMJ */);
+	zap_add_uint64(&masterzap, "SA_ATTRS", saobjid);
 	/* XXXMJ create a shares (ZFS_SHARES_DIR) directory? */
 	zap_add_uint64(&masterzap, "version", 5 /* ZPL_VERSION_SA */);
 	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
@@ -1130,6 +1279,8 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	int oflags;
 
 	zfs_opts = fsopts->fs_specific;
+
+	zfs_init_crc();
 
 	oflags = O_RDWR | O_CREAT;
 	if (fsopts->offset == 0)
