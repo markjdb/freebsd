@@ -1,6 +1,9 @@
+#include <sys/queue.h>
+
 #include <assert.h>
 #include <bitstring.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -19,6 +22,11 @@
 #pragma clang diagnostic pop
 
 /*
+ * XXXMJ
+ * - dn_checksum should be set at dnode initialization time
+ */
+
+/*
  * XXXMJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
  * comes from.  Be sure to test with large files...
  */
@@ -35,6 +43,17 @@ typedef struct {
 	off_t		dnodeblksz;
 } zfs_objset_t;
 
+typedef struct zfs_zap_entry {
+	char		*name;
+	union {
+		uint8_t	*valp;
+		uint64_t val;
+	};
+	size_t		intsz;
+	size_t		intcnt;
+	STAILQ_ENTRY(zfs_zap_entry) next;
+} zfs_zap_entry_t;
+
 typedef struct zfs_zap {
 	off_t			loc;
 	off_t			blksz;
@@ -43,6 +62,11 @@ typedef struct zfs_zap {
 	char			zapblk[SPA_OLDMAXBLOCKSIZE];
 	zap_leaf_chunk_t	*firstchunk;
 	char			leafblk[SPA_OLDMAXBLOCKSIZE];
+
+	STAILQ_HEAD(, zfs_zap_entry) kvps;
+	unsigned long		kvcnt;
+	bool			micro;
+	dnode_phys_t		*dnode;
 } zfs_zap_t;
 
 typedef struct {
@@ -344,28 +368,25 @@ objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 }
 
 static dnode_phys_t *
-objset_dnode_alloc(zfs_objset_t *os, uint64_t *idp)
+objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
+    uint64_t *idp)
 {
+	dnode_phys_t *dnode;
+
 	assert(os->dnodenextfree < os->dnodecount);
 	if (idp != NULL)
 		*idp = os->dnodenextfree;
-	return (&os->dnodes[os->dnodenextfree++]);
+	dnode = &os->dnodes[os->dnodenextfree++];
+	dnode->dn_type = type;
+	dnode->dn_bonustype = bonustype;
+	dnode->dn_compress = ZIO_COMPRESS_OFF;
+	return (dnode);
 }
 
-static void
-zap_init(zfs_zap_t *zap)
+static dnode_phys_t *
+objset_dnode_alloc(zfs_objset_t *os, uint8_t type, uint64_t *idp)
 {
-	mzap_phys_t *zaphdr;
-
-	memset(zap, 0, sizeof(*zap));
-
-	zaphdr = (mzap_phys_t *)&zap->zapblk[0];
-	zaphdr->mz_block_type = ZBT_MICRO;
-	zaphdr->mz_salt = 0; /* XXXMJ */
-	zaphdr->mz_normflags = 0;
-
-	zap->blksz = __offsetof(mzap_phys_t, mz_chunk);
-	zap->ent = &zaphdr->mz_chunk[0];
+	return (objset_dnode_bonus_alloc(os, type, DMU_OT_NONE, idp));
 }
 
 /* XXXMJ from zfssubr.c */
@@ -405,6 +426,27 @@ zap_hash(uint64_t salt, const char *name)
 }
 
 static void
+zap_init(zfs_zap_t *zap, dnode_phys_t *dnode)
+{
+	mzap_phys_t *zaphdr;
+
+	memset(zap, 0, sizeof(*zap));
+
+	zaphdr = (mzap_phys_t *)&zap->zapblk[0];
+	zaphdr->mz_block_type = ZBT_MICRO;
+	zaphdr->mz_salt = 0; /* XXXMJ */
+	zaphdr->mz_normflags = 0;
+
+	zap->blksz = __offsetof(mzap_phys_t, mz_chunk);
+	zap->ent = &zaphdr->mz_chunk[0];
+
+	STAILQ_INIT(&zap->kvps);
+	zap->micro = true;
+	zap->kvcnt = 0;
+	zap->dnode = dnode;
+}
+
+static void
 fzap_init(zfs_zap_t *zap, off_t blksz)
 {
 	zap_phys_t *zaphdr;
@@ -440,7 +482,6 @@ fzap_add_array(zfs_zap_t *zap, const char *name, uint64_t intsz,
 	size_t len;
 	uint64_t hash;
 
-	printf("%s:%d %lu\n", __func__, __LINE__, zap->zapblksz);
 	l.l_bs = flsl(zap->zapblksz) - 1;
 	l.l_phys = (zap_leaf_phys_t *)&zap->leafblk[0];
 
@@ -462,7 +503,6 @@ fzap_add_array(zfs_zap_t *zap, const char *name, uint64_t intsz,
 	*hashentp = 0; /* XXXMJ should be whatever the next free one is */
 
 	struct zap_leaf_entry *le = ZAP_LEAF_ENTRY(&l, *hashentp);
-	printf("%s:%d leaf phys %p le %p\n", __func__, __LINE__, l.l_phys, le);
 	le->le_type = ZAP_CHUNK_ENTRY;
 	le->le_value_intlen = intsz;
 	le->le_next = 0; /* XXXMJ */
@@ -483,7 +523,6 @@ fzap_add_array(zfs_zap_t *zap, const char *name, uint64_t intsz,
 
 	len = intcnt * intsz;
 
-	printf("%s:%d %d\n", __func__, __LINE__, ZAP_LEAF_NUMCHUNKS(&l));
 	size_t resid = len;
 	int i;
 	for (i = 2; resid > 0; i++) {
@@ -501,44 +540,100 @@ fzap_add_array(zfs_zap_t *zap, const char *name, uint64_t intsz,
 }
 
 static void
-zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
+zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
+    const uint8_t *val)
 {
-	mzap_ent_phys_t *ent;
+	zfs_zap_entry_t *ent;
 
-	/* XXXMJ assert no overflow in the block */
+	ent = ecalloc(1, sizeof(*ent));
+	ent->name = estrdup(name);
+	ent->intsz = intsz;
+	ent->intcnt = intcnt;
+	if (intsz == sizeof(uint64_t) && intcnt == 1) {
+		memcpy(&ent->val, val, sizeof(uint64_t));
+	} else {
+		ent->valp = ecalloc(intcnt, intsz);
+		memcpy(ent->valp, val, intcnt * intsz);
+		zap->micro = false;
+	}
+	if (strlen(name) + 1 > MZAP_NAME_LEN)
+		zap->micro = false;
+	if (++zap->kvcnt > MZAP_ENT_MAX)
+		zap->micro = false;
 
-	ent = zap->ent;
-	zap->ent++;
-
-	ent->mze_value = val;
-	ent->mze_cd = 0; /* XXXMJ */
-	assert(strlen(name) < sizeof(ent->mze_name));
-	strlcpy(ent->mze_name, name, sizeof(ent->mze_name));
-
-	zap->blksz += sizeof(mzap_ent_phys_t);
+	STAILQ_INSERT_TAIL(&zap->kvps, ent, next);
 }
 
 static void
-zap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
+zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 {
-	zfs_opt_t *zfs_opts;
+	zap_add(zap, name, sizeof(uint64_t), 1, (uint8_t *)&val);
+}
+
+static void
+zap_micro_write(fsinfo_t *fsopts, zfs_zap_t *zap)
+{
 	zio_cksum_t cksum;
+	dnode_phys_t *dnode;
+	zfs_zap_entry_t *ent, *tmp;
+	zfs_opt_t *zfs_opts;
+	mzap_phys_t *mzap;
+	mzap_ent_phys_t *ment;
+	off_t bytes, loc;
 
 	zfs_opts = fsopts->fs_specific;
 
-	zap->loc = space_alloc(zfs_opts, &zap->blksz);
+	memset(zfs_opts->filebuf, 0, sizeof(zfs_opts->filebuf));
+	mzap = (mzap_phys_t *)&zfs_opts->filebuf[0];
+	mzap->mz_block_type = ZBT_MICRO;
+	mzap->mz_salt = 0; /* XXXMJ */
+	mzap->mz_normflags = 0;
 
+	ment = &mzap->mz_chunk[0];
+	STAILQ_FOREACH_SAFE(ent, &zap->kvps, next, tmp) {
+		ment->mze_value = ent->val;
+		ment->mze_cd = 0; /* XXXMJ */
+		strlcpy(ment->mze_name, ent->name, sizeof(ment->mze_name));
+
+		free(ent->name);
+		free(ent);
+
+		ment++;
+	}
+
+	bytes = sizeof(*mzap) + (zap->kvcnt - 1) * sizeof(*ment);
+	loc = space_alloc(zfs_opts, &bytes);
+
+	dnode = zap->dnode;
 	dnode->dn_nblkptr = 1;
 	dnode->dn_nlevels = 1;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
-	dnode->dn_compress = ZIO_COMPRESS_OFF;
-	dnode->dn_datablkszsec = zap->blksz >> SPA_MINBLOCKSHIFT;
+	dnode->dn_datablkszsec = bytes >> SPA_MINBLOCKSHIFT;
 
-	fletcher_4_native(zap->zapblk, zap->blksz, NULL, &cksum);
-	blkptr_set(&dnode->dn_blkptr[0], zap->loc, zap->blksz,
-	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+	fletcher_4_native(zfs_opts->filebuf, bytes, NULL, &cksum);
+	blkptr_set(&dnode->dn_blkptr[0], loc, bytes, ZIO_CHECKSUM_FLETCHER_4,
+	    &cksum);
 
-	vdev_pwrite(fsopts, zap->zapblk, zap->blksz, zap->loc);
+	vdev_pwrite(fsopts, zfs_opts->filebuf, bytes, loc);
+}
+
+static void
+zap_fat_write(fsinfo_t *fsopts, zfs_zap_t *zap)
+{
+	(void)fsopts;
+	(void)zap;
+	assert(0);
+}
+
+static void
+zap_write(fsinfo_t *fsopts, zfs_zap_t *zap)
+{
+	assert(zap->kvcnt > 0);
+	assert(!STAILQ_EMPTY(&zap->kvps));
+	if (zap->micro)
+		zap_micro_write(fsopts, zap);
+	else
+		zap_fat_write(fsopts, zap);
 }
 
 static void
@@ -557,7 +652,6 @@ fzap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 	dnode->dn_nlevels = 1;
 	dnode->dn_bonustype = DMU_OT_NONE;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
-	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_datablkszsec = zap->zapblksz >> SPA_MINBLOCKSHIFT;
 
 	fletcher_4_native(zap->zapblk, zap->zapblksz, NULL, &cksum);
@@ -648,17 +742,15 @@ pool_finish(fsinfo_t *fsopts)
 	zfs_zap_t objdirzap;
 	uint64_t dnid, dsldirid, dslid, configid;
 
-	dnode_phys_t *objdirdn = objset_dnode_alloc(mos, &dnid);
+	dnode_phys_t *objdirdn = objset_dnode_alloc(mos,
+	    DMU_OT_OBJECT_DIRECTORY, &dnid);
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
-	objdirdn->dn_type = DMU_OT_OBJECT_DIRECTORY;
 
-	dnode_phys_t *dsldirdn = objset_dnode_alloc(mos, &dsldirid);
-	dsldirdn->dn_type = DMU_OT_DSL_DIR;
-	dsldirdn->dn_bonustype = DMU_OT_DSL_DIR;
+	dnode_phys_t *dsldirdn = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DIR,
+	    DMU_OT_DSL_DIR, &dsldirid);
 
-	dnode_phys_t *configdn = objset_dnode_alloc(mos, &configid);
-	configdn->dn_type = DMU_OT_PACKED_NVLIST;
-	configdn->dn_bonustype = DMU_OT_PACKED_NVLIST_SIZE;
+	dnode_phys_t *configdn = objset_dnode_bonus_alloc(mos,
+	    DMU_OT_PACKED_NVLIST, DMU_OT_PACKED_NVLIST_SIZE, &configid);
 	configdn->dn_bonuslen = sizeof(uint64_t);
 
 	{
@@ -705,15 +797,14 @@ pool_finish(fsinfo_t *fsopts)
 	dsldir = (dsl_dir_phys_t *)DN_BONUS(dsldirdn);
 
 	/* XXXMJ large thing to put on the stack */
-	zap_init(&objdirzap);
+	zap_init(&objdirzap, objdirdn);
 	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
 	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
 	/* XXXMJ add other keys */
-	zap_write(fsopts, &objdirzap, objdirdn);
+	zap_write(fsopts, &objdirzap);
 
-	dnode_phys_t *dsldn = objset_dnode_alloc(mos, &dslid);
-	dsldn->dn_type = DMU_OTN_ZAP_DATA;
-	dsldn->dn_bonustype = DMU_OT_OBJECT_DIRECTORY;
+	dnode_phys_t *dsldn = objset_dnode_bonus_alloc(mos, DMU_OTN_ZAP_DATA,
+	    DMU_OT_OBJECT_DIRECTORY, &dslid);
 	dsldn->dn_nblkptr = 1;
 	dsldn->dn_bonuslen = sizeof(dsl_dataset_phys_t);
 
@@ -725,7 +816,6 @@ pool_finish(fsinfo_t *fsopts)
 	blkptr_set(&ds->ds_bp, os->osloc, os->osblksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
-	printf("%s:%d dslid %lu\n", __func__, __LINE__, dslid);
 	dsldir->dd_head_dataset_obj = dslid;
 	}
 
@@ -862,7 +952,7 @@ blkptr_alloc_init(fsinfo_t *fsopts, struct blkptr_alloc_s *s,
 	nblocks = howmany(size, SPA_OLDMAXBLOCKSIZE);
 	for (indlevel = 0, max = 1; nblocks > max; indlevel++)
 		max *= SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t);
-	assert(indlevel < INDIR_LEVELS); /* XXXMJ magic */
+	assert(indlevel < INDIR_LEVELS);
 
 	/*
 	 * XXXMJ does the "rightmost" indirect block in a level have to have the
@@ -1012,8 +1102,6 @@ fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
 {
 	struct fsnode_populate_dir_s *dir;
 
-	printf("%s:%d adding %s\n", __func__, __LINE__, name);
-
 	dir = SLIST_FIRST(&arg->dirs);
 	zap_add_uint64(&dir->zap, name, dnid);
 }
@@ -1040,19 +1128,17 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 
 	size = cur->inode->st.st_size;
 
-	dnode = objset_dnode_alloc(&arg->fs->os, &dnid);
+	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
+	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, &dnid);
 
 	bpas = ecalloc(1, sizeof(*bpas));
 	blkptr_alloc_init(fsopts, bpas, dnode, size);
 
-	dnode->dn_type = DMU_OT_PLAIN_FILE_CONTENTS;
 	dnode->dn_indblkshift = (uint8_t)flsll(bpas->indblksz);
 	dnode->dn_nlevels = (uint8_t)bpas->levels;
 	/* Leave room for attributes in the bonus buffer. */
 	dnode->dn_nblkptr = 1;
-	dnode->dn_bonustype = DMU_OT_SA;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
-	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_flags = 0; /* XXXMJ ??? */
 #if 0 /* XXXMJ */
 	dnode->dn_datablkszsec = 0;
@@ -1066,8 +1152,6 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 
 	bufsz = sizeof(zfs_opts->filebuf);
 	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
-
-	printf("%s:%d opening %s, %lu bytes\n", __func__, __LINE__, path, size);
 
 	fd = open(path, O_RDONLY);
 	if (fd == -1)
@@ -1132,16 +1216,14 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	fsopts = arg->fsopts;
 	zfs_opts = fsopts->fs_specific;
 
-	dnode = objset_dnode_alloc(&arg->fs->os, &dnid);
-	dnode->dn_type = DMU_OT_DIRECTORY_CONTENTS;
+	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
+	    DMU_OT_DIRECTORY_CONTENTS, DMU_OT_SA, &dnid);
 #if 0 /* XXXMJ */
 	dnode->dn_indblkshift = 0;
 #endif
 	dnode->dn_nlevels = 1; /* XXXMJ should be set by ZAP layer */
 	dnode->dn_nblkptr = 1; /* XXXMJ should be set by ZAP layer */
-	dnode->dn_bonustype = DMU_OT_SA;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
-	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_flags = 0; /* XXXMJ */
 #if 0 /* XXXMJ */
 	dnode->dn_datablkszsec = 0;
@@ -1180,7 +1262,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 		struct fsnode_populate_dir_s *zap = ecalloc(1, sizeof(*zap));
 
 		zap->dnode = dnode;
-		zap_init(&zap->zap);
+		zap_init(&zap->zap, dnode);
 
 		/* XXXMJ space allocation could be done later. */
 		blksz = (count + 1) * MZAP_ENT_LEN;
@@ -1226,7 +1308,7 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 		dirs = SLIST_FIRST(&arg->dirs);
 		SLIST_REMOVE_HEAD(&arg->dirs, next);
 
-		zap_write(arg->fsopts, &dirs->zap, dirs->dnode);
+		zap_write(arg->fsopts, &dirs->zap);
 
 		free(dirs);
 	}
@@ -1266,10 +1348,8 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * FreeBSD tree.
 	 */
 	objset_init(zfs_opts, os, DMU_OST_ZFS, dnodecount);
-	masterobj = objset_dnode_alloc(os, &moid);
+	masterobj = objset_dnode_alloc(os, DMU_OT_MASTER_NODE, &moid);
 	assert(moid == MASTER_NODE_OBJ);
-	masterobj->dn_type = DMU_OT_MASTER_NODE;
-	masterobj->dn_bonustype = DMU_OT_NONE;
 
 	/*
 	 * Create the SA layout(s) now, since filesystem object dnodes will
@@ -1279,21 +1359,15 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * - files/dirs/etc. have a bonus buffer of type DMU_OT_SA, starts with
 	 *   a sa_hdr_phys
 	 */
-	saobj = objset_dnode_alloc(os, &saobjid);
-	saobj->dn_type = DMU_OT_SA_MASTER_NODE;
-	saobj->dn_bonustype = DMU_OT_NONE;
+	saobj = objset_dnode_alloc(os, DMU_OT_SA_MASTER_NODE, &saobjid);
 
-	salobj = objset_dnode_alloc(os, &salobjid);
-	salobj->dn_type = DMU_OT_SA_ATTR_LAYOUTS;
-	salobj->dn_bonustype = DMU_OT_NONE;
+	salobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_LAYOUTS, &salobjid);
 
-	sarobj = objset_dnode_alloc(os, &sarobjid);
-	sarobj->dn_type = DMU_OT_SA_ATTR_REGISTRATION;
-	sarobj->dn_bonustype = DMU_OT_NONE;
+	sarobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_REGISTRATION, &sarobjid);
 
 	{
 	zfs_zap_t sarzap;
-	zap_init(&sarzap);
+	zap_init(&sarzap, sarobj);
 #define	ATTR_REG(name, ind, size, bs) do {		\
 	uint64_t attr = 0;				\
 	SA_ATTR_ENCODE(attr, ind, size, bs);		\
@@ -1322,7 +1396,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	ATTR_REG("ZPL_DXATTR", 20, 0, SA_UINT8_ARRAY);
 	ATTR_REG("ZPL_PROJID", 21, sizeof(uint64_t), SA_UINT64_ARRAY);
 #undef ATTR_REGISTER
-	zap_write(fsopts, &sarzap, sarobj);
+	zap_write(fsopts, &sarzap);
 	}
 
 	{
@@ -1354,10 +1428,10 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 
 	{
 	zfs_zap_t sazap;
-	zap_init(&sazap);
+	zap_init(&sazap, saobj);
 	zap_add_uint64(&sazap, SA_LAYOUTS, salobjid);
 	zap_add_uint64(&sazap, SA_REGISTRY, sarobjid);
-	zap_write(fsopts, &sazap, saobj);
+	zap_write(fsopts, &sazap);
 	}
 
 	poparg.fsopts = fsopts;
@@ -1375,7 +1449,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * directory and delete queue.
 	 */
 	zfs_zap_t masterzap;
-	zap_init(&masterzap);
+	zap_init(&masterzap, masterobj);
 	/* XXXMJ add a variant that can check that the object ID is valid */
 	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
 	/* XXXMJ DMU_OT_UNLINKED_SET */
@@ -1387,9 +1461,8 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
 	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
-	zap_write(fsopts, &masterzap, masterobj);
+	zap_write(fsopts, &masterzap);
 
-	printf("%s:%d %p %lu\n", __func__, __LINE__, os->dnodes, os->dnodeblksz);
 	fletcher_4_native(os->dnodes, os->dnodeblksz, NULL, &cksum);
 	blkptr_set(&os->osphys->os_meta_dnode.dn_blkptr[0], os->dnodeloc,
 	    os->dnodeblksz, ZIO_CHECKSUM_FLETCHER_4, &cksum);
@@ -1428,8 +1501,6 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 		goto out;
 
 	pool_init(fsopts);
-
-	printf("%s:%d\n", __func__, __LINE__);
 
 	mkfs(fsopts, &zfs_opts->rootfs, dir, root);
 
