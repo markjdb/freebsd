@@ -802,6 +802,8 @@ pool_finish(fsinfo_t *fsopts)
 		free(buf);
 	}
 
+	dsldirdn->dn_datablkszsec = zfs_opts->ashift - SPA_MINBLOCKSHIFT;
+	dsldirdn->dn_nlevels = 1;
 	dsldirdn->dn_nblkptr = 1;
 	dsldirdn->dn_bonuslen = sizeof(dsl_dir_phys_t);
 	dsldir = (dsl_dir_phys_t *)DN_BONUS(dsldirdn);
@@ -810,6 +812,12 @@ pool_finish(fsinfo_t *fsopts)
 	zap_init(&objdirzap, objdirdn);
 	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
 	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
+
+	/* XXXMJ these must be valid object IDs */
+	zap_add_uint64(&objdirzap, DMU_POOL_FEATURES_FOR_READ, 0);
+	zap_add_uint64(&objdirzap, DMU_POOL_FEATURES_FOR_WRITE, 0);
+	zap_add_uint64(&objdirzap, DMU_POOL_FEATURE_DESCRIPTIONS, 0);
+	zap_add_uint64(&objdirzap, DMU_POOL_DIRECTORY_OBJECT, 0);
 	/* XXXMJ add other keys */
 	zap_write(fsopts, &objdirzap);
 
@@ -861,11 +869,11 @@ pool_finish(fsinfo_t *fsopts)
 		ub->ub_magic = UBERBLOCK_MAGIC;
 		ub->ub_version = SPA_VERSION;
 		ub->ub_txg = txg;
-		ub->ub_guid_sum = 0; /* XXXMJ configurable */
+		ub->ub_guid_sum = guid + guid; /* XXXMJ */
 		ub->ub_timestamp = 0; /* XXXMJ */
 
 		ub->ub_software_version = SPA_VERSION;
-		ub->ub_mmp_magic = 0;
+		ub->ub_mmp_magic = MMP_MAGIC;
 		ub->ub_mmp_delay = 0;
 		ub->ub_mmp_config = 0;
 		ub->ub_checkpoint_txg = 0;
@@ -1095,7 +1103,6 @@ blkptr_alloc_flush(fsinfo_t *fsopts, struct blkptr_alloc_s *s)
 
 struct fsnode_populate_dir_s {
 	zfs_zap_t		zap;
-	dnode_phys_t		*dnode;
 	SLIST_ENTRY(fsnode_populate_dir_s) next;
 };
 
@@ -1218,33 +1225,14 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 {
 	dnode_phys_t *dnode;
 	fsinfo_t *fsopts;
-	fsnode *child;
-	zfs_opt_t *zfs_opts;
 	uint64_t dnid;
 
 	assert(cur->type == S_IFDIR);
 
 	fsopts = arg->fsopts;
-	zfs_opts = fsopts->fs_specific;
 
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_DIRECTORY_CONTENTS, DMU_OT_SA, &dnid);
-#if 0 /* XXXMJ */
-	dnode->dn_indblkshift = 0;
-#endif
-	dnode->dn_nlevels = 1; /* XXXMJ should be set by ZAP layer */
-	dnode->dn_nblkptr = 1; /* XXXMJ should be set by ZAP layer */
-	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
-	dnode->dn_flags = 0; /* XXXMJ */
-#if 0 /* XXXMJ */
-	dnode->dn_datablkszsec = 0;
-#endif
-	dnode->dn_bonuslen = 0;
-	dnode->dn_extra_slots = 0;
-#if 0 /* XXXMJ */
-	dnode->dn_maxblkid = 0;
-	dnode->dn_used = 0;
-#endif
 
 	/*
 	 * Add an entry to the parent directory.  This must be done before
@@ -1255,44 +1243,16 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	else
 		arg->rootdirid = dnid;
 
-	int count = 0;
-	size_t maxlen = 0;
-	off_t blksz;
-	for (child = cur->child; child != NULL; child = child->next) {
-		size_t len;
+	struct fsnode_populate_dir_s *zap = ecalloc(1, sizeof(*zap));
 
-		if (strcmp(child->name, ".") == 0)
-			continue;
-		len = strlen(child->name) + 1;
-		if (len > maxlen)
-			maxlen = len;
-		count++;
-	}
-	if (count <= 2047 && maxlen <= 50) {
-		/* We can use a microzap! */
-		struct fsnode_populate_dir_s *zap = ecalloc(1, sizeof(*zap));
-
-		zap->dnode = dnode;
-		zap_init(&zap->zap, dnode);
-
-		/* XXXMJ space allocation could be done later. */
-		blksz = (count + 1) * MZAP_ENT_LEN;
-		zap->zap.loc = space_alloc(zfs_opts, &blksz);
-		zap->zap.blksz = blksz;
-
-		SLIST_INSERT_HEAD(&arg->dirs, zap, next);
-	} else {
-		/* XXXMJ fatzaps are not implemented for now. */
-		assert(0);
-	}
-
-	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
+	zap_init(&zap->zap, dnode);
+	SLIST_INSERT_HEAD(&arg->dirs, zap, next);
 
 	sa_hdr_phys_t *sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
 	sahdr->sa_magic = SA_MAGIC;
 	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, 2 /* XXXMJ */, 8);
 	*(uint64_t *)((char *)sahdr + 8 + SA_MODE_OFFSET) = cur->inode->st.st_mode;
-	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr);
+	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr); /* XXXMJ no */
 }
 
 static void
