@@ -12,8 +12,11 @@
 #define	ASSERT	assert
 #include "zfs/libzfs.h"
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
 #include "fletcher.c"
 #include "sha256.c"
+#pragma clang diagnostic pop
 
 /*
  * XXXMJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
@@ -31,6 +34,16 @@ typedef struct {
 	off_t		dnodeloc;
 	off_t		dnodeblksz;
 } zfs_objset_t;
+
+typedef struct zfs_zap {
+	off_t			loc;
+	off_t			blksz;
+	mzap_ent_phys_t		*ent;
+	off_t			zapblksz;	/* XXXMJ confusing with blksz */
+	char			zapblk[SPA_OLDMAXBLOCKSIZE];
+	zap_leaf_chunk_t	*firstchunk;
+	char			leafblk[SPA_OLDMAXBLOCKSIZE];
+} zfs_zap_t;
 
 typedef struct {
 	zfs_objset_t	os;
@@ -95,7 +108,7 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 	zfs_opt_t *zfs_opts;
 
 	zfs_opts = fsopts->fs_specific;
-	free((void *)zfs_opts->poolname);
+	free(__DECONST(void *, zfs_opts->poolname));
 
 	free(fsopts->fs_specific);
 	free(fsopts->fs_options);
@@ -215,7 +228,7 @@ spacemap_init(zfs_opt_t *zfs_opts)
 
 	size = zfs_opts->size;
 
-	assert(size >= VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE);
+	assert(size >= (off_t)(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE));
 
 	nbits = (size - VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE) >>
 	    zfs_opts->ashift;
@@ -262,7 +275,7 @@ space_alloc(zfs_opt_t *zfs_opts, off_t *lenp)
 
 	assert(len != 0);
 	assert(len / minblksz <= INT_MAX);
-	if (len < SPA_OLDMAXBLOCKSIZE) {
+	if (len < (off_t)SPA_OLDMAXBLOCKSIZE) {
 		if ((len & (len - 1)) != 0)
 			len = (off_t)1 << flsll(len);
 		align = len / minblksz;
@@ -314,14 +327,14 @@ objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
 	mdnode->dn_nlevels = 1;
 	os->osphys->os_type = type;
 
-	os->dnodes = ecalloc(os->dnodecount, sizeof(dnode_phys_t));
+	os->dnodes = ecalloc(1, os->dnodeblksz);
 }
 
 static void
 objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 {
 	/* XXXMJ this will need to be revisited */
-	assert(os->dnodeblksz <= SPA_OLDMAXBLOCKSIZE);
+	assert(os->dnodeblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 	vdev_pwrite(fsopts, os->dnodes, os->dnodeblksz, os->dnodeloc);
 
 	/* XXXMJ update block pointers */
@@ -338,14 +351,6 @@ objset_dnode_alloc(zfs_objset_t *os, uint64_t *idp)
 		*idp = os->dnodenextfree;
 	return (&os->dnodes[os->dnodenextfree++]);
 }
-
-typedef struct zfs_zap {
-	off_t			loc;
-	off_t			blksz;
-	mzap_ent_phys_t		*ent;
-	char			zapblk[SPA_OLDMAXBLOCKSIZE];
-	char			leafblk[SPA_OLDMAXBLOCKSIZE];
-} zfs_zap_t;
 
 static void
 zap_init(zfs_zap_t *zap)
@@ -364,36 +369,27 @@ zap_init(zfs_zap_t *zap)
 }
 
 /* XXXMJ from zfssubr.c */
-static uint64_t zfs_crc64_table[256];
-
-static void
-zfs_init_crc(void)
-{
-	int i, j;
-	uint64_t *ct;
-
-	/*
-	 * Calculate the crc64 table (used for the zap hash
-	 * function).
-	 */
-	if (zfs_crc64_table[128] != ZFS_CRC64_POLY) {
-		memset(zfs_crc64_table, 0, sizeof(zfs_crc64_table));
-		for (i = 0; i < 256; i++)
-			for (ct = zfs_crc64_table + i, *ct = i, j = 8; j > 0; j--)
-				*ct = (*ct >> 1) ^ (-(*ct & 1) & ZFS_CRC64_POLY);
-	}
-}
-
-/* XXXMJ from zfssubr.c */
 static uint64_t
 zap_hash(uint64_t salt, const char *name)
 {
+	static uint64_t zfs_crc64_table[256];
 	const uint8_t *cp;
 	uint8_t c;
 	uint64_t crc = salt;
 
-	ASSERT(crc != 0);
-	ASSERT(zfs_crc64_table[128] == ZFS_CRC64_POLY);
+	assert(crc != 0);
+	if (zfs_crc64_table[128] == 0) {
+		for (int i = 0; i < 256; i++) {
+			uint64_t *t;
+
+			t = zfs_crc64_table + i;
+			*t = i;
+			for (int j = 8; j > 0; j--)
+				*t = (*t >> 1) ^ (-(*t & 1) & ZFS_CRC64_POLY);
+		}
+	}
+	assert(zfs_crc64_table[128] == ZFS_CRC64_POLY);
+
 	for (cp = (const uint8_t *)name; (c = *cp) != '\0'; cp++)
 		crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ c) & 0xFF];
 
@@ -409,11 +405,13 @@ zap_hash(uint64_t salt, const char *name)
 }
 
 static void
-fzap_init(zfs_zap_t *zap)
+fzap_init(zfs_zap_t *zap, off_t blksz)
 {
 	zap_phys_t *zaphdr;
 
 	memset(zap, 0, sizeof(*zap));
+
+	zap->zapblksz = blksz;
 
 	zaphdr = (zap_phys_t *)&zap->zapblk[0];
 	zaphdr->zap_block_type = ZBT_HEADER;
@@ -421,16 +419,85 @@ fzap_init(zfs_zap_t *zap)
 
 	zaphdr->zap_ptrtbl.zt_blk = 0;	/* embedded in the same block */
 	zaphdr->zap_ptrtbl.zt_numblks = 0; /* embedded in the same block */
-	zaphdr->zap_ptrtbl.zt_shift = 13; /* required for embedded hash table */
+	zaphdr->zap_ptrtbl.zt_shift = 0; /* XXX */ /* required for embedded hash table */
 	zaphdr->zap_ptrtbl.zt_nextblk = 0;
 	zaphdr->zap_ptrtbl.zt_blks_copied = 0;
 
 	zaphdr->zap_freeblk = 0;
-	zaphdr->zap_num_leafs = 1;
-	zaphdr->zap_num_entries = 1;
-	zaphdr->zap_salt = 0;
+	zaphdr->zap_num_leafs = 0;
+	zaphdr->zap_num_entries = 0;
+	zaphdr->zap_salt = 1; /* XXXMJ */
 	zaphdr->zap_normflags = 0;
 	zaphdr->zap_flags = 0;
+}
+
+static void
+fzap_add_array(zfs_zap_t *zap, const char *name, uint64_t intsz,
+    uint64_t intcnt, uint8_t *array)
+{
+	zap_leaf_t l;
+	zap_phys_t *zaphdr;
+	size_t len;
+	uint64_t hash;
+
+	printf("%s:%d %lu\n", __func__, __LINE__, zap->zapblksz);
+	l.l_bs = flsl(zap->zapblksz) - 1;
+	l.l_phys = (zap_leaf_phys_t *)&zap->leafblk[0];
+
+	zaphdr = (zap_phys_t *)&zap->zapblk[0];
+	zaphdr->zap_num_leafs++;
+	zaphdr->zap_num_entries++;
+
+	hash = zap_hash(zaphdr->zap_salt, name);
+
+	l.l_phys->l_hdr.lh_block_type = ZBT_LEAF;
+	l.l_phys->l_hdr.lh_prefix = 0 /* XXXMJ */;
+	l.l_phys->l_hdr.lh_magic = ZAP_LEAF_MAGIC;
+	l.l_phys->l_hdr.lh_nfree = 0 /* XXXMJ */;
+	l.l_phys->l_hdr.lh_nentries = 0 /* XXXMJ */;
+	l.l_phys->l_hdr.lh_prefix_len = 0 /* XXXMJ */;
+	l.l_phys->l_hdr.lh_freelist = 0 /* XXXMJ */;
+
+	uint16_t *hashentp = ZAP_LEAF_HASH_ENTPTR(&l, hash);
+	*hashentp = 0; /* XXXMJ should be whatever the next free one is */
+
+	struct zap_leaf_entry *le = ZAP_LEAF_ENTRY(&l, *hashentp);
+	printf("%s:%d leaf phys %p le %p\n", __func__, __LINE__, l.l_phys, le);
+	le->le_type = ZAP_CHUNK_ENTRY;
+	le->le_value_intlen = intsz;
+	le->le_next = 0; /* XXXMJ */
+	le->le_name_chunk = 1; /* XXXMJ */
+	le->le_name_numints = strlen(name) + 1;
+	le->le_value_chunk = 2;
+	le->le_value_numints = intcnt;
+	le->le_cd = 0; /* XXXMJ */
+	le->le_hash = hash;
+
+	/* XXXMJ hard-coding offsets */
+	struct zap_leaf_array *la = &ZAP_LEAF_CHUNK(&l, 1).l_array;
+	la->la_type = ZAP_CHUNK_ARRAY;
+	/* XXXMJ need to check for truncation */
+	assert(strlen(name) + 1 <= ZAP_LEAF_ARRAY_BYTES);
+	(void)strlcpy(la->la_array, name, sizeof(la->la_array));
+	la->la_next = 2;
+
+	len = intcnt * intsz;
+
+	printf("%s:%d %d\n", __func__, __LINE__, ZAP_LEAF_NUMCHUNKS(&l));
+	size_t resid = len;
+	int i;
+	for (i = 2; resid > 0; i++) {
+		size_t tocopy;
+
+		la->la_next = i;
+		assert(i < ZAP_LEAF_NUMCHUNKS(&l));
+		la = &ZAP_LEAF_CHUNK(&l, i).l_array;
+		tocopy = MIN(ZAP_LEAF_ARRAY_BYTES, resid);
+		memcpy(la->la_array, array, tocopy);
+		resid -= tocopy;
+	}
+	la = &ZAP_LEAF_CHUNK(&l, i).l_array;
+	la->la_next = 0xffff;
 }
 
 static void
@@ -474,6 +541,31 @@ zap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
 	vdev_pwrite(fsopts, zap->zapblk, zap->blksz, zap->loc);
+}
+
+static void
+fzap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
+{
+	zfs_opt_t *zfs_opts;
+	zio_cksum_t cksum;
+
+	zfs_opts = fsopts->fs_specific;
+
+	zap->loc = space_alloc(zfs_opts, &zap->zapblksz);
+
+	fletcher_4_native(zap->zapblk, zap->zapblksz, NULL, &cksum);
+
+	dnode->dn_nblkptr = 1;
+	dnode->dn_nlevels = 1;
+	dnode->dn_bonustype = DMU_OT_NONE;
+	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
+	dnode->dn_compress = ZIO_COMPRESS_OFF;
+	dnode->dn_datablkszsec = zap->zapblksz >> SPA_MINBLOCKSHIFT;
+
+	blkptr_set(&dnode->dn_blkptr[0], zap->loc, zap->zapblksz,
+	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
+	vdev_pwrite(fsopts, zap->zapblk, zap->zapblksz, zap->loc);
 }
 
 /*
@@ -584,12 +676,12 @@ pool_finish(fsinfo_t *fsopts)
 			errc(1, error, "nvlist_export");
 
 		configblksz = nv->nv_size + sizeof(nv->nv_header);
+		assert(configblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
+		configloc = space_alloc(zfs_opts, &configblksz);
+
 		char *buf = ecalloc(1, configblksz);
 		memcpy(buf, &nv->nv_header, sizeof(nv->nv_header));
 		memcpy(buf + sizeof(nv->nv_header), nv->nv_data, nv->nv_size);
-
-		assert(configblksz <= SPA_OLDMAXBLOCKSIZE);
-		configloc = space_alloc(zfs_opts, &configblksz);
 
 		vdev_pwrite(fsopts, buf, configblksz, configloc);
 
@@ -783,15 +875,15 @@ blkptr_alloc_init(fsinfo_t *fsopts, struct blkptr_alloc_s *s,
 		s->indblksz = 0;
 		break;
 	case 1:
-		assert(size > 3 * SPA_OLDMAXBLOCKSIZE);
-		if (size > (SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)) *
-		    SPA_OLDMAXBLOCKSIZE) {
+		assert(size > 3 * (off_t)SPA_OLDMAXBLOCKSIZE);
+		if (size > (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)) *
+		    (off_t)SPA_OLDMAXBLOCKSIZE) {
 			s->indblksz = SPA_OLDMAXBLOCKSIZE;
 		} else {
 			s->indblksz = nblocks * sizeof(blkptr_t);
-			s->indblksz = 1ul << flsll(s->indblksz);
-			if (s->indblksz < (1ul << zfs_opts->ashift))
-				s->indblksz = (1ul << zfs_opts->ashift);
+			s->indblksz = 1 << flsll(s->indblksz);
+			if (s->indblksz < (1 << zfs_opts->ashift))
+				s->indblksz = (1 << zfs_opts->ashift);
 		}
 		break;
 	default:
@@ -809,7 +901,7 @@ blkptr_alloc(fsinfo_t *fsopts, struct blkptr_alloc_s *s, off_t off)
 	off_t blk, loc, blksz;
 
 	if (s->levels == 0) {
-		assert(off < 3 * SPA_MAXBLOCKSIZE);
+		assert(off < 3 * (off_t)SPA_MAXBLOCKSIZE);
 		return (&s->dnode->dn_blkptr[off / SPA_MAXBLOCKSIZE]);
 	}
 
@@ -848,7 +940,7 @@ blkptr_alloc(fsinfo_t *fsopts, struct blkptr_alloc_s *s, off_t off)
 
 		assert(blk > 0);
 		if (i < s->levels) {
-			assert(blk - 1 < SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t));
+			assert(blk - 1 < (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)));
 			pbp = (blkptr_t *)&s->buf[i + 1][(blk - 1) * sizeof(blkptr_t)];
 		} else {
 			assert(blk - 1 <= 2);
@@ -885,7 +977,7 @@ blkptr_alloc_flush(fsinfo_t *fsopts, struct blkptr_alloc_s *s)
 		blkid >>= 10;
 
 		if (i < s->levels) {
-			assert(blkid < SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t));
+			assert(blkid < (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)));
 			pbp = (blkptr_t *)&s->buf[i + 1][(blkid) * sizeof(blkptr_t)];
 		} else {
 			assert(blkid <= 2);
@@ -984,7 +1076,7 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 
 		/* Fill up our buffer, handling partial reads. */
 		sofar = 0;
-		target = MIN(size - foff, bufsz);
+		target = MIN(size - foff, (off_t)bufsz);
 		do {
 			n = read(fd, zfs_opts->filebuf + sofar, target);
 			if (n < 0)
@@ -993,11 +1085,12 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 				errx(1, "unexpected EOF reading '%s'", path);
 			sofar += n;
 		} while (sofar < target);
-		if (target < bufsz)
+
+		if (target < (off_t)bufsz)
 			memset(zfs_opts->filebuf + target, 0, bufsz - target);
 
 		blkoff = space_alloc(zfs_opts, &target);
-		assert(target <= SPA_OLDMAXBLOCKSIZE);
+		assert(target <= (off_t)SPA_OLDMAXBLOCKSIZE);
 
 		bp = blkptr_alloc(fsopts, bpas, foff);
 		fletcher_4_native(zfs_opts->filebuf, target, NULL, &cksum);
@@ -1015,7 +1108,7 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 }
 
 static void
-fsnode_populate_dir(fsnode *cur, const char *dir,
+fsnode_populate_dir(fsnode *cur, const char *dir __unused,
     struct fsnode_foreach_populate_arg *arg)
 {
 	dnode_phys_t *dnode;
@@ -1218,14 +1311,29 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 
 	{
 	zfs_zap_t salzap;
+	uint16_t sas[14];
+
+	sas[0] = 5;	/* ZPL_MODE */
+	sas[1] = 6;	/* ZPL_SIZE */
+	sas[2] = 4;	/* ZPL_GEN */
+	sas[3] = 12;	/* ZPL_UID */
+	sas[4] = 13;	/* ZPL_GID */
+	sas[5] = 7;	/* ZPL_PARENT */
+	sas[6] = 11;	/* ZPL_FLAGS */
+	sas[7] = 0;	/* ZPL_ATIME */
+	sas[8] = 1;	/* ZPL_MTIME */
+	sas[9] = 2;	/* ZPL_CTIME */
+	sas[10] = 3;	/* ZPL_CRTIME */
+	sas[11] = 8;	/* ZPL_LINKS */
+	sas[12] = 16;	/* ZPL_DACL_COUNT */
+	sas[13] = 19;	/* ZPL_DACL_ACES */
 
 	char attr[16];
 	snprintf(attr, sizeof(attr), "%u", 2u);
 
-	fzap_init(&salzap);
-#if 0
-	zap_write(fsopts, &salzap, salobj);
-#endif
+	fzap_init(&salzap, 8192 /* XXXMJ */);
+	fzap_add_array(&salzap, "2", sizeof(sa_attr_type_t), 14, (uint8_t *)&sas[0]);
+	fzap_write(fsopts, &salzap, salobj);
 	}
 
 	{
@@ -1265,6 +1373,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
 	zap_write(fsopts, &masterzap, masterobj);
 
+	printf("%s:%d %p %lu\n", __func__, __LINE__, os->dnodes, os->dnodeblksz);
 	fletcher_4_native(os->dnodes, os->dnodeblksz, NULL, &cksum);
 	blkptr_set(&os->osphys->os_meta_dnode.dn_blkptr[0], os->dnodeloc,
 	    os->dnodeblksz, ZIO_CHECKSUM_FLETCHER_4, &cksum);
@@ -1280,8 +1389,6 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	zfs_opts = fsopts->fs_specific;
 
-	zfs_init_crc();
-
 	oflags = O_RDWR | O_CREAT;
 	if (fsopts->offset == 0)
 		oflags |= O_TRUNC;
@@ -1292,7 +1399,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 		goto out;
 	}
 	zfs_opts->size = rounddown2(fsopts->maxsize, 1 << zfs_opts->ashift);
-	if (zfs_opts->size < SPA_MINDEVSIZE) {
+	if (zfs_opts->size < (off_t)SPA_MINDEVSIZE) {
 		warnx("maximum image size %ju is too small",
 		    (uintmax_t)zfs_opts->size);
 		goto out;
