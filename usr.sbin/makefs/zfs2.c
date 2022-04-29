@@ -548,24 +548,29 @@ fzap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 {
 	zfs_opt_t *zfs_opts;
 	zio_cksum_t cksum;
+	off_t lloc;
 
 	zfs_opts = fsopts->fs_specific;
 
 	zap->loc = space_alloc(zfs_opts, &zap->zapblksz);
+	lloc = space_alloc(zfs_opts, &zap->zapblksz);
 
-	fletcher_4_native(zap->zapblk, zap->zapblksz, NULL, &cksum);
-
-	dnode->dn_nblkptr = 1;
+	dnode->dn_nblkptr = 2;
 	dnode->dn_nlevels = 1;
 	dnode->dn_bonustype = DMU_OT_NONE;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_datablkszsec = zap->zapblksz >> SPA_MINBLOCKSHIFT;
 
+	fletcher_4_native(zap->zapblk, zap->zapblksz, NULL, &cksum);
 	blkptr_set(&dnode->dn_blkptr[0], zap->loc, zap->zapblksz,
+	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+	fletcher_4_native(zap->leafblk, zap->zapblksz, NULL, &cksum);
+	blkptr_set(&dnode->dn_blkptr[1], lloc, zap->zapblksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
 	vdev_pwrite(fsopts, zap->zapblk, zap->zapblksz, zap->loc);
+	vdev_pwrite(fsopts, zap->leafblk, zap->zapblksz, lloc);
 }
 
 /*
@@ -857,7 +862,7 @@ blkptr_alloc_init(fsinfo_t *fsopts, struct blkptr_alloc_s *s,
 	 * Do we need indirect blocks?
 	 */
 	nblocks = howmany(size, SPA_OLDMAXBLOCKSIZE);
-	for (indlevel = 0, max = 1; nblocks > 3 * max; indlevel++)
+	for (indlevel = 0, max = 1; nblocks > max; indlevel++)
 		max *= SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t);
 	assert(indlevel < INDIR_LEVELS); /* XXXMJ magic */
 
@@ -875,7 +880,7 @@ blkptr_alloc_init(fsinfo_t *fsopts, struct blkptr_alloc_s *s,
 		s->indblksz = 0;
 		break;
 	case 1:
-		assert(size > 3 * (off_t)SPA_OLDMAXBLOCKSIZE);
+		assert(size > (off_t)SPA_OLDMAXBLOCKSIZE);
 		if (size > (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)) *
 		    (off_t)SPA_OLDMAXBLOCKSIZE) {
 			s->indblksz = SPA_OLDMAXBLOCKSIZE;
@@ -901,7 +906,7 @@ blkptr_alloc(fsinfo_t *fsopts, struct blkptr_alloc_s *s, off_t off)
 	off_t blk, loc, blksz;
 
 	if (s->levels == 0) {
-		assert(off < 3 * (off_t)SPA_MAXBLOCKSIZE);
+		assert(off < (off_t)SPA_MAXBLOCKSIZE);
 		return (&s->dnode->dn_blkptr[off / SPA_MAXBLOCKSIZE]);
 	}
 
@@ -1044,10 +1049,9 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	dnode->dn_type = DMU_OT_PLAIN_FILE_CONTENTS;
 	dnode->dn_indblkshift = (uint8_t)flsll(bpas->indblksz);
 	dnode->dn_nlevels = (uint8_t)bpas->levels;
-#if 0 /* XXXMJ */
-	dnode->dn_nblkptr = 0;
-#endif
-	dnode->dn_bonustype = DMU_OT_NONE;
+	/* Leave room for attributes in the bonus buffer. */
+	dnode->dn_nblkptr = 1;
+	dnode->dn_bonustype = DMU_OT_SA;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_flags = 0; /* XXXMJ ??? */
@@ -1103,6 +1107,13 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	free(bpas);
 	(void)close(fd);
 
+	/* XXXMJ */
+	sa_hdr_phys_t *sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
+	sahdr->sa_magic = SA_MAGIC;
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, 2 /* XXXMJ */, 8);
+	*(uint64_t *)((char *)sahdr + 8 + SA_MODE_OFFSET) = cur->inode->st.st_mode;
+	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr);
+
 	/* Add an entry to the parent directory. */
 	fsnode_populate_dirent(arg, cur->name, dnid);
 }
@@ -1126,10 +1137,10 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	dnode->dn_type = DMU_OT_DIRECTORY_CONTENTS;
 #if 0 /* XXXMJ */
 	dnode->dn_indblkshift = 0;
-	dnode->dn_nlevels = 0;
-	dnode->dn_nblkptr = 0;
 #endif
-	dnode->dn_bonustype = DMU_OT_NONE;
+	dnode->dn_nlevels = 1; /* XXXMJ should be set by ZAP layer */
+	dnode->dn_nblkptr = 1; /* XXXMJ should be set by ZAP layer */
+	dnode->dn_bonustype = DMU_OT_SA;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_flags = 0; /* XXXMJ */
@@ -1181,6 +1192,14 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 		/* XXXMJ fatzaps are not implemented for now. */
 		assert(0);
 	}
+
+	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
+
+	sa_hdr_phys_t *sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
+	sahdr->sa_magic = SA_MAGIC;
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, 2 /* XXXMJ */, 8);
+	*(uint64_t *)((char *)sahdr + 8 + SA_MODE_OFFSET) = cur->inode->st.st_mode;
+	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr);
 }
 
 static void
@@ -1363,8 +1382,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
 	/* XXXMJ DMU_OT_UNLINKED_SET */
 	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, 0 /* XXXMJ */);
-	/* XXXMJ DMU_OT_SA_MASTER_NODE */
-	zap_add_uint64(&masterzap, "SA_ATTRS", saobjid);
+	zap_add_uint64(&masterzap, ZFS_SA_ATTRS, saobjid);
 	/* XXXMJ create a shares (ZFS_SHARES_DIR) directory? */
 	zap_add_uint64(&masterzap, "version", 5 /* ZPL_VERSION_SA */);
 	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
