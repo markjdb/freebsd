@@ -585,6 +585,9 @@ zap_micro_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 	mzap->mz_salt = 0; /* XXXMJ */
 	mzap->mz_normflags = 0;
 
+	bytes = sizeof(*mzap) + (zap->kvcnt - 1) * sizeof(*ment);
+	assert(bytes <= (off_t)MZAP_MAX_BLKSZ);
+
 	ment = &mzap->mz_chunk[0];
 	STAILQ_FOREACH_SAFE(ent, &zap->kvps, next, tmp) {
 		ment->mze_value = ent->val;
@@ -597,7 +600,6 @@ zap_micro_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 		ment++;
 	}
 
-	bytes = sizeof(*mzap) + (zap->kvcnt - 1) * sizeof(*ment);
 	loc = space_alloc(zfs_opts, &bytes);
 
 	dnode = zap->dnode;
@@ -711,12 +713,15 @@ pool_finish(fsinfo_t *fsopts)
 	guid = 0xdeadbeefc0deface;
 
 	/* XXXMJ not sure what needs to be where */
+
 	vdevconfig = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, fsopts->size -
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
 	    VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE);
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_GUID, guid);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
+	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_PATH, "/dev/null");
 
 	poolconfig = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_TXG, txg);
@@ -753,11 +758,15 @@ pool_finish(fsinfo_t *fsopts)
 		nvlist_t *nv, *children[1];
 		off_t configloc, configblksz;
 
+		/* XXXMJ duplication! */
 		children[0] = nvlist_create(NV_UNIQUE_NAME);
 		nvlist_add_uint64(children[0], ZPOOL_CONFIG_GUID, guid);
+		nvlist_add_string(children[0], ZPOOL_CONFIG_PATH, "/dev/null");
 
 		nv = nvlist_create(NV_UNIQUE_NAME);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
+		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
+		    VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 		nvlist_add_nvlist_array(vdevconfig, ZPOOL_CONFIG_CHILDREN,
 		    children, nitems(children));
