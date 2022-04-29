@@ -528,15 +528,13 @@ zap_write(fsinfo_t *fsopts, zfs_zap_t *zap, dnode_phys_t *dnode)
 
 	zap->loc = space_alloc(zfs_opts, &zap->blksz);
 
-	fletcher_4_native(zap->zapblk, zap->blksz, NULL, &cksum);
-
 	dnode->dn_nblkptr = 1;
 	dnode->dn_nlevels = 1;
-	dnode->dn_bonustype = DMU_OT_NONE;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	dnode->dn_datablkszsec = zap->blksz >> SPA_MINBLOCKSHIFT;
 
+	fletcher_4_native(zap->zapblk, zap->blksz, NULL, &cksum);
 	blkptr_set(&dnode->dn_blkptr[0], zap->loc, zap->blksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
@@ -996,6 +994,7 @@ blkptr_alloc_flush(fsinfo_t *fsopts, struct blkptr_alloc_s *s)
 
 struct fsnode_populate_dir_s {
 	zfs_zap_t		zap;
+	dnode_phys_t		*dnode;
 	SLIST_ENTRY(fsnode_populate_dir_s) next;
 };
 
@@ -1158,7 +1157,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	 * Add an entry to the parent directory.  This must be done before
 	 * allocating a ZAP object for this directory's children.
 	 */
-	if (cur->parent != NULL)
+	if (!SLIST_EMPTY(&arg->dirs))
 		fsnode_populate_dirent(arg, cur->name, dnid);
 	else
 		arg->rootdirid = dnid;
@@ -1180,6 +1179,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 		/* We can use a microzap! */
 		struct fsnode_populate_dir_s *zap = ecalloc(1, sizeof(*zap));
 
+		zap->dnode = dnode;
 		zap_init(&zap->zap);
 
 		/* XXXMJ space allocation could be done later. */
@@ -1226,10 +1226,7 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 		dirs = SLIST_FIRST(&arg->dirs);
 		SLIST_REMOVE_HEAD(&arg->dirs, next);
 
-		/* XXXMJ need to set up the directory dnode here */
-
-		vdev_pwrite(arg->fsopts, dirs->zap.zapblk, dirs->zap.blksz,
-		    dirs->zap.loc);
+		zap_write(arg->fsopts, &dirs->zap, dirs->dnode);
 
 		free(dirs);
 	}
@@ -1370,6 +1367,7 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	fsnode_populate_dir(root, dir, &poparg);
 	assert(!SLIST_EMPTY(&poparg.dirs));
 	fsnode_foreach(root, dir, fsnode_foreach_populate, &poparg);
+	assert(SLIST_EMPTY(&poparg.dirs));
 
 	/*
 	 * Allocate and populate the master node object.  This is a ZAP object
