@@ -177,16 +177,26 @@ vdev_pwrite(fsinfo_t *fsopts, void *buf, size_t len, off_t off)
 	} while (len > 0);
 }
 
+static void
+vdev_write_label_checksum(void *buf, off_t off, off_t size)
+{
+	zio_cksum_t cksum;
+	zio_eck_t *eck;
+
+	eck = (zio_eck_t *)((char *)buf + size) - 1;
+	eck->zec_magic = ZEC_MAGIC;
+	ZIO_SET_CHECKSUM(&eck->zec_cksum, off, 0, 0, 0);
+	zio_checksum_SHA256(buf, size, NULL, &cksum);
+	eck->zec_cksum = cksum;
+}
+
 /*
- * Set embedded checksums in the vdev metadata and uberblocks, and write the
- * label at the specified index.
+ * Set embedded checksums and write the label at the specified index.
  */
 static void
 vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 {
 	zfs_opt_t *zfs_opts;
-	zio_cksum_t cksum;
-	zio_eck_t *eck;
 	ssize_t n;
 	off_t blksz, loff;
 
@@ -204,24 +214,15 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 	 * Set the verifier checksum for the boot block.  We don't use it, but
 	 * the loader reads it and will complain if the checksum isn't valid.
 	 */
-	eck = &label->vl_be.vbe_zbt;
-	eck->zec_magic = ZEC_MAGIC; 
-	ZIO_SET_CHECKSUM(&eck->zec_cksum,
-	    loff + __offsetof(vdev_label_t, vl_be), 0, 0, 0);
-	zio_checksum_SHA256(&label->vl_be, sizeof(vdev_boot_envblock_t), NULL,
-	    &cksum);
-	eck->zec_cksum = cksum;
+	vdev_write_label_checksum(&label->vl_be,
+	    loff + __offsetof(vdev_label_t, vl_be),
+	    sizeof(vdev_boot_envblock_t));
 
 	/*
 	 * Set the verifier checksum for the label.
 	 */
-	eck = &label->vl_vdev_phys.vp_zbt;
-	eck->zec_magic = ZEC_MAGIC; 
-	ZIO_SET_CHECKSUM(&eck->zec_cksum,
-	    loff + __offsetof(vdev_label_t, vl_vdev_phys), 0, 0, 0);
-	zio_checksum_SHA256(&label->vl_vdev_phys, sizeof(vdev_phys_t), NULL,
-	    &cksum);
-	eck->zec_cksum = cksum;
+	vdev_write_label_checksum(&label->vl_vdev_phys,
+	    loff + __offsetof(vdev_label_t, vl_vdev_phys), sizeof(vdev_phys_t));
 
 	/*
 	 * Set the verifier checksum for the uberblocks.
@@ -229,14 +230,9 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 	assert(sizeof(label->vl_uberblock) % blksz == 0);
 	for (size_t roff = 0; roff < sizeof(label->vl_uberblock);
 	    roff += blksz) {
-		eck = (zio_eck_t *)(&label->vl_uberblock[0] + roff + blksz) - 1;
-		eck->zec_magic = ZEC_MAGIC;
-		ZIO_SET_CHECKSUM(&eck->zec_cksum,
+		vdev_write_label_checksum(&label->vl_uberblock[0] + roff,
 		    loff + __offsetof(vdev_label_t, vl_uberblock) + roff,
-		    0, 0, 0);
-		zio_checksum_SHA256(&label->vl_uberblock[0] + roff, blksz, NULL,
-		    &cksum);
-		eck->zec_cksum = cksum;
+		    blksz);
 	}
 
 	n = pwrite(fsopts->fd, label, sizeof(*label), loff);
