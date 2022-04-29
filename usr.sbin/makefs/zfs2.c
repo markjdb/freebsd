@@ -152,6 +152,7 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, enum zio_checksum cksumt,
 	BP_SET_CHECKSUM(bp, cksumt);
 	BP_SET_COMPRESS(bp, ZIO_COMPRESS_OFF);
 	BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
+	BP_SET_BIRTH(bp, TXG_INITIAL, TXG_INITIAL);
 
 	dva = BP_IDENTITY(bp);
 	DVA_SET_VDEV(dva, 0);
@@ -582,7 +583,7 @@ zap_micro_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 	memset(zfs_opts->filebuf, 0, sizeof(zfs_opts->filebuf));
 	mzap = (mzap_phys_t *)&zfs_opts->filebuf[0];
 	mzap->mz_block_type = ZBT_MICRO;
-	mzap->mz_salt = 0; /* XXXMJ */
+	mzap->mz_salt = 1; /* XXXMJ */
 	mzap->mz_normflags = 0;
 
 	bytes = sizeof(*mzap) + (zap->kvcnt - 1) * sizeof(*ment);
@@ -706,10 +707,7 @@ pool_finish(fsinfo_t *fsopts)
 	zfs_opts = fsopts->fs_specific;
 	mos = &zfs_opts->mos;
 
-	/* XXXMJ configurable */
-	/* The initial TXG can't be zero. */
-	txg = 1;
-	/* Pool GUIDs must also be non-zero. */
+	txg = TXG_INITIAL;
 	guid = 0xdeadbeefc0deface;
 
 	/* XXXMJ not sure what needs to be where */
@@ -736,6 +734,11 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
 
+	nvlist_t *features = nvlist_create(NV_UNIQUE_NAME);
+	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_FEATURES_FOR_READ,
+	    features);
+
+
 	/* XXXMJ most of this code should live in pool_init(). */
 	{
 	dsl_dir_phys_t *dsldir;
@@ -755,22 +758,24 @@ pool_finish(fsinfo_t *fsopts)
 	configdn->dn_bonuslen = sizeof(uint64_t);
 
 	{
-		nvlist_t *nv, *children[1];
+		nvlist_t *nv, *rootvdev;
 		off_t configloc, configblksz;
 
-		/* XXXMJ duplication! */
-		children[0] = nvlist_create(NV_UNIQUE_NAME);
-		nvlist_add_uint64(children[0], ZPOOL_CONFIG_GUID, guid);
-		nvlist_add_string(children[0], ZPOOL_CONFIG_PATH, "/dev/null");
+		rootvdev = nvlist_create(NV_UNIQUE_NAME);
+		nvlist_add_uint64(rootvdev, ZPOOL_CONFIG_ID, 0);
+		nvlist_add_uint64(rootvdev, ZPOOL_CONFIG_GUID, guid);
+		nvlist_add_string(rootvdev, ZPOOL_CONFIG_TYPE, VDEV_TYPE_ROOT);
+		nvlist_add_nvlist_array(rootvdev, ZPOOL_CONFIG_CHILDREN,
+		    &vdevconfig, 1);
 
 		nv = nvlist_create(NV_UNIQUE_NAME);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
 		    VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
-		nvlist_add_nvlist_array(vdevconfig, ZPOOL_CONFIG_CHILDREN,
-		    children, nitems(children));
-		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
+		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, rootvdev);
+		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_TXG, txg);
+
 		error = nvlist_export(nv);
 		if (error != 0)
 			errc(1, error, "nvlist_export");
@@ -839,6 +844,7 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_destroy(vdevconfig);
 
 	fletcher_4_native(mos->dnodes, mos->dnodeblksz, NULL, &cksum);
+	mos->osphys->os_meta_dnode.dn_nblkptr = 1;
 	blkptr_set(&mos->osphys->os_meta_dnode.dn_blkptr[0], mos->dnodeloc,
 	    mos->dnodeblksz, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
@@ -1469,9 +1475,9 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zap_write(fsopts, &masterzap);
 
 	fletcher_4_native(os->dnodes, os->dnodeblksz, NULL, &cksum);
+	os->osphys->os_meta_dnode.dn_nblkptr = 1;
 	blkptr_set(&os->osphys->os_meta_dnode.dn_blkptr[0], os->dnodeloc,
 	    os->dnodeblksz, ZIO_CHECKSUM_FLETCHER_4, &cksum);
-
 	objset_write(fsopts, &fs->os);
 }
 
