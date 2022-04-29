@@ -32,5 +32,6 @@ file_sizes_body()
 atf_init_test_cases()
 {
 	atf_add_test_case file_sizes
+        # XXXMJ add test case for long file names (to verify fat zap handling)
 
 }

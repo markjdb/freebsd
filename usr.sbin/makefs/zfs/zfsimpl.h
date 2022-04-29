@@ -79,7 +79,7 @@
 typedef enum { B_FALSE, B_TRUE } boolean_t;
 
 /* CRC64 table */
-#define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */
+#define	ZFS_CRC64_POLY	0xC96C5795D7870F42UL	/* ECMA-182, reflected form */
 
 /*
  * Macros for various sorts of alignment and rounding when the alignment
@@ -1297,6 +1297,16 @@ typedef struct sa_hdr_phys {
 	BF32_SET(x, 0, 10, num); \
 }
 
+#define	SA_ATTR_BSWAP(x)	BF32_GET(x, 16, 8)
+#define	SA_ATTR_LENGTH(x)	BF32_GET(x, 24, 16)
+#define	SA_ATTR_NUM(x)		BF32_GET(x, 0, 16)
+#define	SA_ATTR_ENCODE(x, attr, length, bswap) \
+{ \
+	BF64_SET(x, 24, 16, length); \
+	BF64_SET(x, 16, 8, bswap); \
+	BF64_SET(x, 0, 16, attr); \
+}
+
 #define	SA_MODE_OFFSET		0
 #define	SA_SIZE_OFFSET		8
 #define	SA_GEN_OFFSET		16
@@ -1304,6 +1314,19 @@ typedef struct sa_hdr_phys {
 #define	SA_GID_OFFSET		32
 #define	SA_PARENT_OFFSET	40
 #define	SA_SYMLINK_OFFSET	160
+
+#define	SA_REGISTRY	"REGISTRY"
+#define	SA_LAYOUTS	"SA_LAYOUT"
+
+typedef enum sa_bswap_type {
+	SA_UINT64_ARRAY,
+	SA_UINT32_ARRAY,
+	SA_UINT16_ARRAY,
+	SA_UINT8_ARRAY,
+	SA_ACL,
+} sa_bswap_type_t;
+
+typedef uint16_t	sa_attr_type_t;
 
 #define	ZIO_OBJSET_MAC_LEN		32
 
@@ -1551,9 +1574,15 @@ typedef struct fat_zap {
  * chunk_t.
  */
 #define	ZAP_LEAF_CHUNK(l, idx) \
-	((zap_leaf_chunk_t *) \
+	((zap_leaf_chunk_t *)(void *) \
 	((l)->l_phys->l_hash + ZAP_LEAF_HASH_NUMENTRIES(l)))[idx]
 #define	ZAP_LEAF_ENTRY(l, idx) (&ZAP_LEAF_CHUNK(l, idx).l_entry)
+
+#define	ZAP_LEAF_HASH(l, h) \
+	((ZAP_LEAF_HASH_NUMENTRIES(l)-1) & \
+	((h) >> \
+	(64 - ZAP_LEAF_HASH_SHIFT(l) - (l)->l_phys->l_hdr.lh_prefix_len)))
+#define	ZAP_LEAF_HASH_ENTPTR(l, h) (&(l)->l_phys->l_hash[ZAP_LEAF_HASH(l, h)])
 
 typedef enum zap_chunk_type {
 	ZAP_CHUNK_FREE = 253,
@@ -1901,6 +1930,8 @@ typedef struct zio {
 	int		io_error;
 } zio_t;
 
+#if 0 /* XXXMJ */
 static void decode_embedded_bp_compressed(const blkptr_t *, void *);
+#endif
 
 #endif /* _ZFSIMPL_H_ */

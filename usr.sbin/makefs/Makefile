@@ -56,5 +56,10 @@ CFLAGS.zfs.c+=	-I${ZFSTOP}/include \
 		-DIN_BASE \
 		-DHAVE_ISSETUGID
 
+CWARNFLAGS.nvlist.c?=	-Wno-cast-qual
+CWARNFLAGS.skein.c?=	-Wno-missing-variable-declarations
+
+CFLAGS+= -fsanitize=address
+
 CFLAGS.zfs2.c+=	-I${SRCDIR}/zfs \
 		-I${SRCTOP}/sys/cddl/boot/zfs \

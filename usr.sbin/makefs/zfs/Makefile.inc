@@ -1,5 +1,5 @@
 .PATH:	${SRCDIR}/zfs
-SRCS+=	nvlist.c zfsimpl.c
+SRCS+=	nvlist.c
 
 CFLAGS.nvlist.c+=	-I${SRCDIR}/zfs
 CFLAGS.zfsimpl.c+=	-I${SRCDIR}/zfs \
