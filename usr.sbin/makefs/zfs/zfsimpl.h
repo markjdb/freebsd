@@ -397,6 +397,13 @@ _NOTE(CONSTCOND) } while (0)
 #define	BP_PHYSICAL_BIRTH(bp)		\
 	((bp)->blk_phys_birth ? (bp)->blk_phys_birth : (bp)->blk_birth)
 
+#define	BP_SET_BIRTH(bp, logical, physical)	\
+{						\
+	ASSERT(!BP_IS_EMBEDDED(bp));		\
+	(bp)->blk_birth = (logical);		\
+	(bp)->blk_phys_birth = ((logical) == (physical) ? 0 : (physical)); \
+}
+
 #define	BP_GET_ASIZE(bp)	\
 	(DVA_GET_ASIZE(&(bp)->blk_dva[0]) + DVA_GET_ASIZE(&(bp)->blk_dva[1]) + \
 		DVA_GET_ASIZE(&(bp)->blk_dva[2]))
@@ -466,6 +473,8 @@ _NOTE(CONSTCOND) } while (0)
 #define	BPE_PAYLOAD_SIZE (BPE_NUM_WORDS * sizeof (uint64_t))
 #define	BPE_IS_PAYLOADWORD(bp, wp) \
 	((wp) != &(bp)->blk_prop && (wp) != &(bp)->blk_birth)
+
+#define	TXG_INITIAL	4
 
 /*
  * Embedded checksum
@@ -1415,6 +1424,8 @@ typedef struct dsl_dataset_phys {
 #define	DMU_POOL_DIRECTORY_OBJECT	1
 #define	DMU_POOL_CONFIG			"config"
 #define	DMU_POOL_FEATURES_FOR_READ	"features_for_read"
+#define	DMU_POOL_FEATURES_FOR_WRITE	"features_for_write"
+#define	DMU_POOL_FEATURE_DESCRIPTIONS	"feature_descriptions"
 #define	DMU_POOL_ROOT_DATASET		"root_dataset"
 #define	DMU_POOL_SYNC_BPLIST		"sync_bplist"
 #define	DMU_POOL_ERRLOG_SCRUB		"errlog_scrub"
@@ -1423,6 +1434,7 @@ typedef struct dsl_dataset_phys {
 #define	DMU_POOL_DEFLATE		"deflate"
 #define	DMU_POOL_HISTORY		"history"
 #define	DMU_POOL_PROPS			"pool_props"
+#define	DMU_POOL_FREE_BPOBJ		"free_bpobj"
 #define	DMU_POOL_CHECKSUM_SALT		"org.illumos:checksum_salt"
 #define	DMU_POOL_REMOVING		"com.delphix:removing"
 #define	DMU_POOL_OBSOLETE_BPOBJ		"com.delphix:obsolete_bpobj"
@@ -1436,8 +1448,10 @@ typedef struct dsl_dataset_phys {
 #define	ZAP_MAXCD		(uint32_t)(-1)
 #define	ZAP_HASHBITS		28
 #define	MZAP_ENT_LEN		64
+#define	MZAP_ENT_MAX		\
+	((MZAP_MAX_BLKSZ - sizeof(mzap_phys_t)) / sizeof(mzap_ent_phys_t) + 1)
 #define	MZAP_NAME_LEN		(MZAP_ENT_LEN - 8 - 4 - 2)
-#define	MZAP_MAX_BLKSZ		SPA_OLD_MAXBLOCKSIZE
+#define	MZAP_MAX_BLKSZ		SPA_OLDMAXBLOCKSIZE
 
 typedef struct mzap_ent_phys {
 	uint64_t mze_value;
@@ -1670,6 +1684,7 @@ typedef struct zap_leaf {
 #define	ZPL_VERSION_OBJ		"VERSION"
 #define	ZFS_PROP_BLOCKPERPAGE	"BLOCKPERPAGE"
 #define	ZFS_PROP_NOGROWBLOCKS	"NOGROWBLOCKS"
+#define	ZFS_SA_ATTRS		"SA_ATTRS"
 
 #define	ZFS_FLAG_BLOCKPERPAGE	0x1
 #define	ZFS_FLAG_NOGROWBLOCKS	0x2
