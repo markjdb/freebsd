@@ -627,8 +627,6 @@ zap_fat_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 static void
 zap_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 {
-	assert(zap->kvcnt > 0);
-	assert(!STAILQ_EMPTY(&zap->kvps));
 	if (zap->micro)
 		zap_micro_write(fsopts, zap);
 	else
@@ -675,20 +673,40 @@ pool_init(fsinfo_t *fsopts)
 
 	zfs_opts = fsopts->fs_specific;
 
-	/*
-	 * XXXMJ dnode count:
-	 * - object directory
-	 * - DSL directory
-	 * - DSL dataset
-	 * - space maps
-	 * - ?
-	 */
 	dnodecount = 0;
-	dnodecount++; /* object directory */
-	dnodecount++; /* DSL directory */
-	dnodecount++; /* DSL root dataset */
-	dnodecount++; /* config object, pointed to by the object directory */ 
+	dnodecount++; /* object directory (ZAP)               */
+	dnodecount++; /* |-> vdev config object (nvlist)      */
+	dnodecount++; /* |-> DSL directory                    */
+	dnodecount++; /*     |-> DSL child directory (ZAP)    */
+	dnodecount++; /*     |   |-> $MOS                     */
+	dnodecount++; /*     |   |-> $FREE                    */
+	dnodecount++; /*     |   L-> $ORIGIN                  */
+	dnodecount++; /*     |-> DSL root dataset             */
 	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
+}
+
+static void
+pool_add_feature_objects(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
+{
+	zfs_zap_t zap;
+	dnode_phys_t *dnode;
+	uint64_t dnid;
+
+	dnode = objset_dnode_alloc(mos, DMU_OTN_ZAP_METADATA, &dnid);
+	zap_add_uint64(objdir, DMU_POOL_FEATURES_FOR_READ, dnid);
+
+	zap_init(&zap, dnode);
+	zap_write(fsopts, &zap);
+
+	dnode = objset_dnode_alloc(mos, DMU_OTN_ZAP_METADATA, &dnid);
+	zap_add_uint64(objdir, DMU_POOL_FEATURES_FOR_WRITE, dnid);
+
+	dnode = objset_dnode_alloc(mos, DMU_OTN_ZAP_DATA, &dnid);
+	zap_add_uint64(objdir, DMU_POOL_FEATURE_DESCRIPTIONS, dnid);
+
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPLIST, DMU_OT_BPLIST_HDR,
+	    &dnid);
+	zap_add_uint64(objdir, DMU_POOL_FREE_BPOBJ, dnid);
 }
 
 static void
@@ -737,7 +755,6 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_t *features = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_FEATURES_FOR_READ,
 	    features);
-
 
 	/* XXXMJ most of this code should live in pool_init(). */
 	{
@@ -814,10 +831,7 @@ pool_finish(fsinfo_t *fsopts)
 	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
 
 	/* XXXMJ these must be valid object IDs */
-	zap_add_uint64(&objdirzap, DMU_POOL_FEATURES_FOR_READ, 0);
-	zap_add_uint64(&objdirzap, DMU_POOL_FEATURES_FOR_WRITE, 0);
-	zap_add_uint64(&objdirzap, DMU_POOL_FEATURE_DESCRIPTIONS, 0);
-	zap_add_uint64(&objdirzap, DMU_POOL_DIRECTORY_OBJECT, 0);
+	pool_add_feature_objects(fsopts, mos, &objdirzap);
 	/* XXXMJ add other keys */
 	zap_write(fsopts, &objdirzap);
 
@@ -829,11 +843,13 @@ pool_finish(fsinfo_t *fsopts)
 	zfs_objset_t *os = &zfs_opts->rootfs.os;
 	fletcher_4_native(os->osphys, os->osblksz, NULL, &cksum);
 
+	/* XXXMJ more fields */
 	ds = (dsl_dataset_phys_t *)DN_BONUS(dsldn);
 	ds->ds_dir_obj = dsldirid;
 	blkptr_set(&ds->ds_bp, os->osloc, os->osblksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
+	/* XXXMJ more fields */
 	dsldir->dd_head_dataset_obj = dslid;
 	}
 
@@ -1247,6 +1263,9 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 
 	zap_init(&zap->zap, dnode);
 	SLIST_INSERT_HEAD(&arg->dirs, zap, next);
+
+	/* XXXMJ shouldn't be here, but needed for DN_BONUS to work. */
+	dnode->dn_nblkptr = 1;
 
 	sa_hdr_phys_t *sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
 	sahdr->sa_magic = SA_MAGIC;
