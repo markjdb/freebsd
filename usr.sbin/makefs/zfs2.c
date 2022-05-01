@@ -386,6 +386,60 @@ objset_dnode_alloc(zfs_objset_t *os, uint8_t type, uint64_t *idp)
 	return (objset_dnode_bonus_alloc(os, type, DMU_OT_NONE, idp));
 }
 
+static dsl_dir_phys_t *
+dsl_dir_alloc(zfs_objset_t *os, uint64_t parentdir, uint64_t *dnidp)
+{
+	dnode_phys_t *dnode;
+	dsl_dir_phys_t *dsldir;
+
+	dnode = objset_dnode_bonus_alloc(os, DMU_OT_DSL_DIR, DMU_OT_DSL_DIR,
+	    dnidp);
+	dnode->dn_datablkszsec = 12 /* XXXMJ */ - SPA_MINBLOCKSHIFT;
+	dnode->dn_nlevels = 1;
+	dnode->dn_nblkptr = 1;
+	dnode->dn_bonuslen = sizeof(dsl_dir_phys_t);
+
+	dsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
+	dsldir->dd_parent_obj = parentdir;
+
+	return (dsldir);
+}
+
+static dsl_dataset_phys_t *
+dsl_dataset_alloc(zfs_objset_t *mos, uint64_t dir, uint64_t *dnidp)
+{
+	dnode_phys_t *dnode;
+	dsl_dataset_phys_t *ds;
+
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DATASET,
+	    DMU_OT_DSL_DATASET, dnidp);
+	dnode->dn_datablkszsec = 12 /* XXXMJ */ - SPA_MINBLOCKSHIFT;
+	dnode->dn_nlevels = 1;
+	dnode->dn_nblkptr = 1;
+	dnode->dn_bonuslen = sizeof(dsl_dataset_phys_t);
+
+	ds = (dsl_dataset_phys_t *)DN_BONUS(dnode);
+	ds->ds_dir_obj = dir;
+
+	return (ds);
+}
+
+static dsl_deadlist_phys_t *
+dsl_deadlist_alloc(zfs_objset_t *mos, uint64_t *dnidp)
+{
+	dnode_phys_t *dnode;
+
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DEADLIST,
+	    DMU_OT_DEADLIST_HDR, dnidp);
+
+	dnode->dn_datablkszsec = 12 /* XXXMJ */ - SPA_MINBLOCKSHIFT;
+	dnode->dn_nlevels = 1;
+	dnode->dn_nblkptr = 1;
+	dnode->dn_bonuslen = sizeof(dsl_deadlist_phys_t);
+
+	return ((dsl_deadlist_phys_t *)DN_BONUS(dnode));
+}
+
 /* XXXMJ from zfssubr.c */
 static uint64_t
 zap_hash(uint64_t salt, const char *name)
@@ -676,13 +730,56 @@ pool_init(fsinfo_t *fsopts)
 	dnodecount = 0;
 	dnodecount++; /* object directory (ZAP)               */
 	dnodecount++; /* |-> vdev config object (nvlist)      */
+	dnodecount++; /* |-> features for read                */
+	dnodecount++; /* |-> features for write               */
+	dnodecount++; /* |-> feature descriptions             */
+	dnodecount++; /* |-> sync bplist                      */
+	dnodecount++; /* |-> free bplist                      */
 	dnodecount++; /* |-> DSL directory                    */
 	dnodecount++; /*     |-> DSL child directory (ZAP)    */
-	dnodecount++; /*     |   |-> $MOS                     */
-	dnodecount++; /*     |   |-> $FREE                    */
-	dnodecount++; /*     |   L-> $ORIGIN                  */
-	dnodecount++; /*     |-> DSL root dataset             */
+	dnodecount++; /*     |   |-> $MOS (DSL dir)           */
+	dnodecount++; /*     |   |-> $FREE (DSL dir)          */
+	dnodecount++; /*     |   L-> $ORIGIN (DSL dir)        */
+	dnodecount++; /*     |       |-> dataset              */ 
+	dnodecount++; /*     |           |-> deadlist         */ 
+	dnodecount++; /*     |       |-> snapshot             */ 
+	dnodecount++; /*     |           |-> deadlist         */ 
+	dnodecount++; /*     |           |-> snapshot names   */
+	dnodecount++; /*     |           L-> props (ZAP)      */
+	dnodecount++; /*     L-> DSL root dataset             */
+
 	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
+}
+
+static void
+pool_add_bplists(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
+{
+	zfs_opt_t *zfs_opts;
+	dnode_phys_t *dnode;
+	uint64_t dnid;
+
+	zfs_opts = fsopts->fs_specific;
+
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
+	    &dnid);
+	dnode->dn_datablkszsec = zfs_opts->ashift - SPA_MINBLOCKSHIFT;
+	dnode->dn_nblkptr = 1;
+	dnode->dn_nlevels = 1;
+	dnode->dn_bonuslen = sizeof(bpobj_phys_t);
+
+	zap_add_uint64(objdir, DMU_POOL_FREE_BPOBJ, dnid);
+	zap_add_uint64(objdir, DMU_POOL_BPTREE_OBJ, 0 /* XXXMJ */);
+	zap_add_uint64(objdir, DMU_POOL_EMPTY_BPOBJ, 0 /* XXXMJ */);
+	zap_add_uint64(objdir, DMU_POOL_TMP_USERREFS, 0 /* XXXMJ */);
+
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
+	    &dnid);
+	dnode->dn_datablkszsec = zfs_opts->ashift - SPA_MINBLOCKSHIFT;
+	dnode->dn_nblkptr = 1;
+	dnode->dn_nlevels = 1;
+	dnode->dn_bonuslen = sizeof(bpobj_phys_t);
+
+	zap_add_uint64(objdir, DMU_POOL_SYNC_BPLIST, dnid);
 }
 
 static void
@@ -701,12 +798,76 @@ pool_add_feature_objects(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
 	dnode = objset_dnode_alloc(mos, DMU_OTN_ZAP_METADATA, &dnid);
 	zap_add_uint64(objdir, DMU_POOL_FEATURES_FOR_WRITE, dnid);
 
+	zap_init(&zap, dnode);
+	zap_write(fsopts, &zap);
+
 	dnode = objset_dnode_alloc(mos, DMU_OTN_ZAP_DATA, &dnid);
 	zap_add_uint64(objdir, DMU_POOL_FEATURE_DESCRIPTIONS, dnid);
 
+	zap_init(&zap, dnode);
+	zap_write(fsopts, &zap);
+#if 0
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPLIST, DMU_OT_BPLIST_HDR,
 	    &dnid);
 	zap_add_uint64(objdir, DMU_POOL_FREE_BPOBJ, dnid);
+#endif
+}
+
+static uint64_t
+pool_add_child_map(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t parentdir)
+{
+	zfs_opt_t *zfs_opts;
+	zfs_zap_t childzap;
+	dnode_phys_t *childdir, *snapnames;
+	dsl_dir_phys_t *dsldir;
+	dsl_dataset_phys_t *originds, *snapds;
+	uint64_t childdirid, dnid, dsdnid, snapdnid, deadlistdn1, deadlistdn2;
+	uint64_t propsid, snapmapid;
+
+	zfs_opts = fsopts->fs_specific;
+
+	childdir = objset_dnode_alloc(mos, DMU_OT_DSL_DIR_CHILD_MAP, &childdirid);
+
+	zap_init(&childzap, childdir);
+
+	(void)dsl_dir_alloc(mos, parentdir, &dnid);
+	zap_add_uint64(&childzap, "$MOS", dnid);
+
+	dsldir = dsl_dir_alloc(mos, parentdir, &dnid);
+	zap_add_uint64(&childzap, "$ORIGIN", dnid);
+	originds = dsl_dataset_alloc(mos, dnid, &dsdnid);
+	dsldir->dd_head_dataset_obj = dsdnid;
+	snapds = dsl_dataset_alloc(mos, dnid, &snapdnid);
+	originds->ds_prev_snap_obj = snapdnid;
+	snapds->ds_next_snap_obj = dsdnid;
+	snapds->ds_num_children = 1;
+	(void)dsl_deadlist_alloc(mos, &deadlistdn1);
+	snapds->ds_deadlist_obj = deadlistdn1;
+	(void)dsl_deadlist_alloc(mos, &deadlistdn2);
+	originds->ds_deadlist_obj = deadlistdn2;
+
+	snapnames = objset_dnode_alloc(mos, DMU_OT_DSL_DS_SNAP_MAP, &snapmapid);
+	originds->ds_snapnames_zapobj = snapmapid;
+	zfs_zap_t snapnameszap;
+	zap_init(&snapnameszap, snapnames);
+	zap_add_uint64(&snapnameszap, "$ORIGIN", snapdnid);
+	zap_write(fsopts, &snapnameszap);
+
+	/* XXXMJ allocate this together with the dir... */
+	dnode_phys_t *props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsid);
+	dsldir->dd_props_zapobj = propsid;
+	zfs_zap_t propszap;
+	zap_init(&propszap, props);
+	zap_write(fsopts, &propszap);
+
+	(void)dsl_dir_alloc(mos, parentdir, &dnid);
+	zap_add_uint64(&childzap, "$FREE", dnid);
+
+	/* XXXMJ add actual datasets here */
+
+	zap_write(fsopts, &childzap);
+
+	return (childdirid);
 }
 
 static void
@@ -767,9 +928,6 @@ pool_finish(fsinfo_t *fsopts)
 	    DMU_OT_OBJECT_DIRECTORY, &dnid);
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 
-	dnode_phys_t *dsldirdn = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DIR,
-	    DMU_OT_DSL_DIR, &dsldirid);
-
 	dnode_phys_t *configdn = objset_dnode_bonus_alloc(mos,
 	    DMU_OT_PACKED_NVLIST, DMU_OT_PACKED_NVLIST_SIZE, &configid);
 	configdn->dn_bonuslen = sizeof(uint64_t);
@@ -819,38 +977,31 @@ pool_finish(fsinfo_t *fsopts)
 		free(buf);
 	}
 
-	dsldirdn->dn_datablkszsec = zfs_opts->ashift - SPA_MINBLOCKSHIFT;
-	dsldirdn->dn_nlevels = 1;
-	dsldirdn->dn_nblkptr = 1;
-	dsldirdn->dn_bonuslen = sizeof(dsl_dir_phys_t);
-	dsldir = (dsl_dir_phys_t *)DN_BONUS(dsldirdn);
+	dsldir = dsl_dir_alloc(mos, 0, &dsldirid);
 
 	/* XXXMJ large thing to put on the stack */
 	zap_init(&objdirzap, objdirdn);
 	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
 	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
-
-	/* XXXMJ these must be valid object IDs */
+	pool_add_bplists(fsopts, mos, &objdirzap);
 	pool_add_feature_objects(fsopts, mos, &objdirzap);
-	/* XXXMJ add other keys */
 	zap_write(fsopts, &objdirzap);
 
-	dnode_phys_t *dsldn = objset_dnode_bonus_alloc(mos, DMU_OTN_ZAP_DATA,
-	    DMU_OT_OBJECT_DIRECTORY, &dslid);
-	dsldn->dn_nblkptr = 1;
-	dsldn->dn_bonuslen = sizeof(dsl_dataset_phys_t);
+	ds = dsl_dataset_alloc(mos, dsldirid, &dslid);
 
 	zfs_objset_t *os = &zfs_opts->rootfs.os;
 	fletcher_4_native(os->osphys, os->osblksz, NULL, &cksum);
 
 	/* XXXMJ more fields */
-	ds = (dsl_dataset_phys_t *)DN_BONUS(dsldn);
 	ds->ds_dir_obj = dsldirid;
 	blkptr_set(&ds->ds_bp, os->osloc, os->osblksz,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
+	uint64_t childdirid = pool_add_child_map(fsopts, mos, dsldirid);
+
 	/* XXXMJ more fields */
 	dsldir->dd_head_dataset_obj = dslid;
+	dsldir->dd_child_dir_zapobj = childdirid;
 	}
 
 	label = ecalloc(1, sizeof(*label));

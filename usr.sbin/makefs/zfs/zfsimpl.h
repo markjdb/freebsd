@@ -1183,8 +1183,8 @@ typedef enum dmu_object_type {
 	DMU_OT_OBJECT_ARRAY,		/* UINT64 */
 	DMU_OT_PACKED_NVLIST,		/* UINT8 (XDR by nvlist_pack/unpack) */
 	DMU_OT_PACKED_NVLIST_SIZE,	/* UINT64 */
-	DMU_OT_BPLIST,			/* UINT64 */
-	DMU_OT_BPLIST_HDR,		/* UINT64 */
+	DMU_OT_BPOBJ,			/* UINT64 */
+	DMU_OT_BPOBJ_HDR,		/* UINT64 */
 	/* spa: */
 	DMU_OT_SPACE_MAP_HEADER,	/* UINT64 */
 	DMU_OT_SPACE_MAP,		/* UINT64 */
@@ -1236,6 +1236,10 @@ typedef enum dmu_object_type {
 	DMU_OT_SA_ATTR_LAYOUTS,		/* ZAP */
 	DMU_OT_SCAN_XLATE,		/* ZAP */
 	DMU_OT_DEDUP,			/* fake dedup BP from ddt_bp_create() */
+	DMU_OT_DEADLIST,		/* ZAP */
+	DMU_OT_DEADLIST_HDR,		/* UINT64 */
+	DMU_OT_DSL_CLONES,		/* ZAP */
+	DMU_OT_BPOBJ_SUBOBJ,		/* UINT64 */
 	DMU_OT_NUMTYPES,
 
 	/*
@@ -1418,6 +1422,23 @@ typedef struct dsl_dataset_phys {
 	uint64_t ds_pad[8]; /* pad out to 320 bytes for good measure */
 } dsl_dataset_phys_t;
 
+typedef struct dsl_deadlist_phys {
+	uint64_t dl_used;
+	uint64_t dl_comp;
+	uint64_t dl_uncomp;
+	uint64_t dl_pad[37]; /* pad out to 320b for future expansion */
+} dsl_deadlist_phys_t;
+
+typedef struct bpobj_phys {
+	uint64_t	bpo_num_blkptrs;
+	uint64_t	bpo_bytes;
+	uint64_t	bpo_comp;
+	uint64_t	bpo_uncomp;
+	uint64_t	bpo_subobjs;
+	uint64_t	bpo_num_subobjs;
+	uint64_t	bpo_num_freed;
+} bpobj_phys_t;
+
 /*
  * The names of zap entries in the DIRECTORY_OBJECT of the MOS.
  */
@@ -1435,6 +1456,9 @@ typedef struct dsl_dataset_phys {
 #define	DMU_POOL_HISTORY		"history"
 #define	DMU_POOL_PROPS			"pool_props"
 #define	DMU_POOL_FREE_BPOBJ		"free_bpobj"
+#define	DMU_POOL_BPTREE_OBJ		"bptree_obj"
+#define	DMU_POOL_EMPTY_BPOBJ		"empty_bpobj"
+#define	DMU_POOL_TMP_USERREFS		"tmp_userrefs"
 #define	DMU_POOL_CHECKSUM_SALT		"org.illumos:checksum_salt"
 #define	DMU_POOL_REMOVING		"com.delphix:removing"
 #define	DMU_POOL_OBSOLETE_BPOBJ		"com.delphix:obsolete_bpobj"
