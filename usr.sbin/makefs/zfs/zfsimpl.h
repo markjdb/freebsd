@@ -1326,10 +1326,16 @@ typedef struct sa_hdr_phys {
 #define	SA_UID_OFFSET		24
 #define	SA_GID_OFFSET		32
 #define	SA_PARENT_OFFSET	40
-#define	SA_SYMLINK_OFFSET	160
+#define	SA_FLAGS_OFFSET		48
+#define	SA_ATIME_OFFSET		56
+#define	SA_MTIME_OFFSET		72
+#define	SA_CTIME_OFFSET		88
+#define	SA_CRTIME_OFFSET	104
+#define	SA_LINKS_OFFSET		120
+//#define	SA_PROJID_OFFSET	128
 
 #define	SA_REGISTRY	"REGISTRY"
-#define	SA_LAYOUTS	"SA_LAYOUT"
+#define	SA_LAYOUTS	"LAYOUTS"
 
 typedef enum sa_bswap_type {
 	SA_UINT64_ARRAY,
