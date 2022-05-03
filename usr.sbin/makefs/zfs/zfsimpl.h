@@ -1375,6 +1375,97 @@ typedef struct objset_phys {
 	    sizeof (dnode_phys_t)];
 } objset_phys_t;
 
+#define	SPACE_MAP_SIZE_V0	(3 * sizeof (uint64_t))
+#define	SPACE_MAP_HISTOGRAM_SIZE	32
+
+typedef struct space_map_phys {
+	/* object number: not needed but kept for backwards compatibility */
+	uint64_t	smp_object;
+
+	/* length of the object in bytes */
+	uint64_t	smp_length;
+
+	/* space allocated from the map */
+	int64_t		smp_alloc;
+
+	/* reserved */
+	uint64_t	smp_pad[5];
+
+	/*
+	 * The smp_histogram maintains a histogram of free regions. Each
+	 * bucket, smp_histogram[i], contains the number of free regions
+	 * whose size is:
+	 * 2^(i+sm_shift) <= size of free region in bytes < 2^(i+sm_shift+1)
+	 *
+	 * Note that, if log space map feature is enabled, histograms of
+	 * space maps that belong to metaslabs will take into account any
+	 * unflushed changes for their metaslabs, even though the actual
+	 * space map doesn't have entries for these changes.
+	 */
+	uint64_t	smp_histogram[SPACE_MAP_HISTOGRAM_SIZE];
+} space_map_phys_t;
+
+typedef enum {
+	SM_ALLOC,
+	SM_FREE
+} maptype_t;
+
+typedef struct space_map_entry {
+	maptype_t sme_type;
+	uint32_t sme_vdev;	/* max is 2^24-1; SM_NO_VDEVID if not present */
+	uint64_t sme_offset;	/* max is 2^63-1; units of sm_shift */
+	uint64_t sme_run;	/* max is 2^36; units of sm_shift */
+
+	/*
+	 * The following fields are not part of the actual space map entry
+	 * on-disk and they are populated with the values from the debug
+	 * entry most recently visited starting from the beginning to the
+	 * end of the space map.
+	 */
+	uint64_t sme_txg;
+	uint64_t sme_sync_pass;
+} space_map_entry_t;
+
+/* one-word entry constants */
+#define	SM_DEBUG_PREFIX	2
+#define	SM_OFFSET_BITS	47
+#define	SM_RUN_BITS	15
+
+/* two-word entry constants */
+#define	SM2_PREFIX	3
+#define	SM2_OFFSET_BITS	63
+#define	SM2_RUN_BITS	36
+
+#define	SM_PREFIX_DECODE(x)	BF64_DECODE(x, 62, 2)
+#define	SM_PREFIX_ENCODE(x)	BF64_ENCODE(x, 62, 2)
+
+#define	SM_DEBUG_ACTION_DECODE(x)	BF64_DECODE(x, 60, 2)
+#define	SM_DEBUG_ACTION_ENCODE(x)	BF64_ENCODE(x, 60, 2)
+#define	SM_DEBUG_SYNCPASS_DECODE(x)	BF64_DECODE(x, 50, 10)
+#define	SM_DEBUG_SYNCPASS_ENCODE(x)	BF64_ENCODE(x, 50, 10)
+#define	SM_DEBUG_TXG_DECODE(x)		BF64_DECODE(x, 0, 50)
+#define	SM_DEBUG_TXG_ENCODE(x)		BF64_ENCODE(x, 0, 50)
+
+#define	SM_OFFSET_DECODE(x)	BF64_DECODE(x, 16, SM_OFFSET_BITS)
+#define	SM_OFFSET_ENCODE(x)	BF64_ENCODE(x, 16, SM_OFFSET_BITS)
+#define	SM_TYPE_DECODE(x)	BF64_DECODE(x, 15, 1)
+#define	SM_TYPE_ENCODE(x)	BF64_ENCODE(x, 15, 1)
+#define	SM_RUN_DECODE(x)	(BF64_DECODE(x, 0, SM_RUN_BITS) + 1)
+#define	SM_RUN_ENCODE(x)	BF64_ENCODE((x) - 1, 0, SM_RUN_BITS)
+#define	SM_RUN_MAX		SM_RUN_DECODE(~0ULL)
+#define	SM_OFFSET_MAX		SM_OFFSET_DECODE(~0ULL)
+
+#define	SM2_RUN_DECODE(x)	(BF64_DECODE(x, 24, SM2_RUN_BITS) + 1)
+#define	SM2_RUN_ENCODE(x)	BF64_ENCODE((x) - 1, 24, SM2_RUN_BITS)
+#define	SM2_VDEV_DECODE(x)	BF64_DECODE(x, 0, 24)
+#define	SM2_VDEV_ENCODE(x)	BF64_ENCODE(x, 0, 24)
+#define	SM2_TYPE_DECODE(x)	BF64_DECODE(x, SM2_OFFSET_BITS, 1)
+#define	SM2_TYPE_ENCODE(x)	BF64_ENCODE(x, SM2_OFFSET_BITS, 1)
+#define	SM2_OFFSET_DECODE(x)	BF64_DECODE(x, 0, SM2_OFFSET_BITS)
+#define	SM2_OFFSET_ENCODE(x)	BF64_ENCODE(x, 0, SM2_OFFSET_BITS)
+#define	SM2_RUN_MAX		SM2_RUN_DECODE(~0ULL)
+#define	SM2_OFFSET_MAX		SM2_OFFSET_DECODE(~0ULL)
+
 typedef struct dsl_dir_phys {
 	uint64_t dd_creation_time; /* not actually used */
 	uint64_t dd_head_dataset_obj;
@@ -1428,6 +1519,8 @@ typedef struct dsl_deadlist_phys {
 	uint64_t dl_uncomp;
 	uint64_t dl_pad[37]; /* pad out to 320b for future expansion */
 } dsl_deadlist_phys_t;
+
+#define	BPOBJ_SIZE_V2	(6 * sizeof (uint64_t))
 
 typedef struct bpobj_phys {
 	uint64_t	bpo_num_blkptrs;
