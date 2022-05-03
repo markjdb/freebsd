@@ -459,7 +459,6 @@ dnode_create(objset_t *os, dnode_phys_t *dnp, dmu_buf_impl_t *db,
 	dn->dn_phys = dnp;
 
 	if (dnp->dn_datablkszsec) {
-		ASSERT(ISP2(dnp->dn_datablkszsec));
 		dnode_setdblksz(dn, dnp->dn_datablkszsec << SPA_MINBLOCKSHIFT);
 	} else {
 		dn->dn_datablksz = 0;
