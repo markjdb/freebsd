@@ -299,6 +299,8 @@ libzfs_error_description(libzfs_handle_t *hdl)
 	case EZFS_VDEV_NOTSUP:
 		return (dgettext(TEXT_DOMAIN, "operation not supported "
 		    "on this type of vdev"));
+	case EZFS_RAIDZ_EXPAND_IN_PROGRESS:
+		return (dgettext(TEXT_DOMAIN, "raidz expansion in progress"));
 	case EZFS_UNKNOWN:
 		return (dgettext(TEXT_DOMAIN, "unknown error"));
 	default:
@@ -737,6 +739,9 @@ zpool_standard_error_fmt(libzfs_handle_t *hdl, int error, const char *fmt, ...)
 	case ZFS_ERR_IOC_ARG_REQUIRED:
 	case ZFS_ERR_IOC_ARG_BADTYPE:
 		zfs_verror(hdl, EZFS_IOC_NOTSUPPORTED, fmt, ap);
+		break;
+	case ZFS_ERR_RAIDZ_EXPAND_IN_PROGRESS:
+		zfs_verror(hdl, EZFS_RAIDZ_EXPAND_IN_PROGRESS, fmt, ap);
 		break;
 	default:
 		zfs_error_aux(hdl, "%s", strerror(error));

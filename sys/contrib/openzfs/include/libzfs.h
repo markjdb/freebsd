@@ -151,6 +151,7 @@ typedef enum zfs_error {
 	EZFS_EXPORT_IN_PROGRESS,	/* currently exporting the pool */
 	EZFS_REBUILDING,	/* resilvering (sequential reconstrution) */
 	EZFS_VDEV_NOTSUP,	/* ops not supported for this type of vdev */
+	EZFS_RAIDZ_EXPAND_IN_PROGRESS,	/* a raidz is currently expanding */
 	EZFS_UNKNOWN
 } zfs_error_t;
 
