@@ -2623,7 +2623,6 @@ zap_idx_to_blk(fat_zap_t *zap, uint64_t idx, uint64_t *valp)
 	}
 }
 
-#define	ZAP_HASH_IDX(hash, n)	(((n) == 0) ? 0 : ((hash) >> (64 - (n))))
 static int
 zap_deref_leaf(fat_zap_t *zap, uint64_t h, zap_leaf_t **lp)
 {

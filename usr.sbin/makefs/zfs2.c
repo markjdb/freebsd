@@ -304,9 +304,6 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 	objblk = ecalloc(1, blksz);
 	objloc = space_alloc(zfs_opts, &blksz);
 
-#if 0
-	objarr = objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &dnid);
-#endif 
 	objarr->dn_indblkshift = 12; /* XXXMJ see dnode_allocate(), zfs_default_ibs */
 	objarr->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	objarr->dn_nblkptr = 1;
@@ -391,7 +388,7 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
  * Alternately we could try to allocate all blocks of a certain size from the
  * same metaslab.
  *
- * XXXMJ must always be done in the context of an objset
+ * XXXMJ must always be done in the context of an objset for accounting purposes
  */
 static off_t
 space_alloc(zfs_opt_t *zfs_opts, off_t *lenp)
@@ -472,7 +469,7 @@ objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 	/* XXXMJ update block pointers */
 	vdev_pwrite(fsopts, os->osphys, os->osblksz, os->osloc);
 
-	/* XXXMJ can't free the (root) objset buffer here */
+	/* XXXMJ can't free the (root) objset buffer here... */
 }
 
 static dnode_phys_t *
@@ -1348,10 +1345,6 @@ blkptr_alloc(fsinfo_t *fsopts, struct blkptr_alloc_s *s, off_t off)
 
 		blksz = s->indblksz;
 		loc = space_alloc(zfs_opts, &blksz);
-		/*
-		 * XXXMJ do we checksum the whole block or just the part we
-		 * used?
-		 */
 		fletcher_4_native(s->buf[i], s->indblksz, NULL, &cksum);
 
 		assert(blk > 0);
@@ -1457,7 +1450,8 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	bpas = ecalloc(1, sizeof(*bpas));
 	blkptr_alloc_init(fsopts, bpas, dnode, size);
 
-	dnode->dn_indblkshift = (uint8_t)flsll(bpas->indblksz);
+	/* XXXMJ indirect blocks are always the maximum size */
+	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
 	dnode->dn_nlevels = (uint8_t)bpas->levels + 1;
 	/* Leave room for attributes in the bonus buffer. */
 	dnode->dn_nblkptr = 1;

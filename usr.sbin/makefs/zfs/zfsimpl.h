@@ -1624,6 +1624,8 @@ typedef struct mzap_phys {
 	((uint64_t *)(zap)->zap_phys) \
 	[(idx) + (1<<ZAP_EMBEDDED_PTRTBL_SHIFT(zap))]
 
+#define	ZAP_HASH_IDX(hash, n)	(((n) == 0) ? 0 : ((hash) >> (64 - (n))))
+
 /*
  * TAKE NOTE:
  * If zap_phys_t is modified, zap_byteswap() must be modified.
