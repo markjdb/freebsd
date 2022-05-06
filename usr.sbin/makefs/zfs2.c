@@ -1,3 +1,33 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
+ * Copyright (c) 2022 The FreeBSD Foundation
+ *
+ * This software was developed by Mark Johnston under sponsorship from
+ * the FreeBSD Foundation.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include <sys/endian.h>
 #include <sys/queue.h>
 
@@ -38,9 +68,9 @@
 
 typedef struct {
 	const char	*name;
-	uint64_t	index;
-	uint64_t	size;
-	uint64_t	byteswap;
+	unsigned int	id;
+	uint16_t	size;
+	sa_bswap_type_t	bs;
 } zfs_sattr_t;
 
 typedef struct {
@@ -63,14 +93,6 @@ typedef struct zfs_zap_entry {
 } zfs_zap_entry_t;
 
 typedef struct zfs_zap {
-	off_t			loc;
-	off_t			blksz;
-	mzap_ent_phys_t		*ent;
-	off_t			zapblksz;	/* XXXMJ confusing with blksz */
-	char			zapblk[SPA_OLDMAXBLOCKSIZE];
-	zap_leaf_chunk_t	*firstchunk;
-	char			leafblk[SPA_OLDMAXBLOCKSIZE];
-
 	STAILQ_HEAD(, zfs_zap_entry) kvps;
 	unsigned long		kvcnt;
 	bool			micro;
@@ -79,8 +101,13 @@ typedef struct zfs_zap {
 
 typedef struct {
 	zfs_objset_t	os;
-	dnode_phys_t	*dnode;		/* object set dnode */
-	uint64_t	dnodeid;	/* objset set dnode ID */
+	dnode_phys_t	*dnode;		/* meta dnode */
+
+	/* Offset table for system attributes, indexed by a zpl_attr_t. */
+	const zfs_sattr_t *satab;
+	size_t		sacnt;
+	uint16_t	*saoffs;
+	unsigned int	savarszcnt;	/* number of variable-sized attrs */
 } zfs_fs_t;
 
 typedef struct {
@@ -90,7 +117,7 @@ typedef struct {
 	off_t		size;
 	uint64_t	originsnap;
 
-	/* Pool info. */
+	/* Pool state. */
 	zfs_objset_t	mos;		/* meta object set */
 	bitstr_t	*spacemap;	/* space allocator */
 	int		spacemapbits;	/* one bit per ashift-sized block */
@@ -110,46 +137,85 @@ static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
 
 static off_t space_alloc(zfs_opt_t *, off_t *);
 
-#define	ZPL_ATTR(n, i, s, b)	\
-{				\
-	.name = n,		\
-	.index = i,		\
-	.size = s,		\
-	.byteswap = b,		\
-}
+typedef enum zpl_attr {
+	ZPL_ATIME,
+	ZPL_MTIME,
+	ZPL_CTIME,
+	ZPL_CRTIME,
+	ZPL_GEN,
+	ZPL_MODE,
+	ZPL_SIZE,
+	ZPL_PARENT,
+	ZPL_LINKS,
+	ZPL_XATTR,
+	ZPL_RDEV,
+	ZPL_FLAGS,
+	ZPL_UID,
+	ZPL_GID,
+	ZPL_PAD,
+	ZPL_ZNODE_ACL,
+	ZPL_DACL_COUNT,
+	ZPL_SYMLINK,
+	ZPL_SCANSTAMP,
+	ZPL_DACL_ACES,
+	ZPL_DXATTR,
+	ZPL_PROJID,
+} zpl_attr_t;
+
+/*
+ * This table must be kept in sync with zpl_attr_layout[] and zpl_attr_t.
+ */
 static const zfs_sattr_t zpl_attrs[] = {
-	ZPL_ATTR("ZPL_ATIME", 0, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_MTIME", 1, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_CTIME", 2, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_CRTIME", 3, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_GEN", 4, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_MODE", 5, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_SIZE", 6, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_PARENT", 7, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_LINKS", 8, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_XATTR", 9, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_RDEV", 10, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_FLAGS", 11, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_UID", 12, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_GID", 13, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_PAD", 14, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_ZNODE_ACL", 15, 88, SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_DACL_COUNT", 16, sizeof(uint64_t), SA_UINT64_ARRAY),
-	ZPL_ATTR("ZPL_SYMLINK", 17, 0, SA_UINT8_ARRAY),
-	ZPL_ATTR("ZPL_SCANSTAMP", 18, sizeof(uint64_t) * 4, SA_UINT8_ARRAY),
-	ZPL_ATTR("ZPL_DACL_ACES", 19, 0, SA_ACL),
-	ZPL_ATTR("ZPL_DXATTR", 20, 0, SA_UINT8_ARRAY),
-	ZPL_ATTR("ZPL_PROJID", 21, sizeof(uint64_t), SA_UINT64_ARRAY),
-};
+#define	_ZPL_ATTR(n, s, b)	{ .name = #n, .id = n, .size = s, .bs = b }
+	_ZPL_ATTR(ZPL_ATIME, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_MTIME, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_CTIME, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_CRTIME, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_GEN, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_MODE, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_SIZE, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_PARENT, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_LINKS, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_XATTR, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_RDEV, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_FLAGS, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_UID, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_GID, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_PAD, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_ZNODE_ACL, 88, SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_DACL_COUNT, sizeof(uint64_t), SA_UINT64_ARRAY),
+	_ZPL_ATTR(ZPL_SYMLINK, 0, SA_UINT8_ARRAY),
+	_ZPL_ATTR(ZPL_SCANSTAMP, sizeof(uint64_t) * 4, SA_UINT8_ARRAY),
+	_ZPL_ATTR(ZPL_DACL_ACES, 0, SA_ACL),
+	_ZPL_ATTR(ZPL_DXATTR, 0, SA_UINT8_ARRAY),
+	_ZPL_ATTR(ZPL_PROJID, sizeof(uint64_t), SA_UINT64_ARRAY),
 #undef ZPL_ATTR
+};
+
+/*
+ * This layout matches that of a filesystem created using OpenZFS on FreeBSD.
+ *
+ * Variable-length attributes must appear at the end of the layout.
+ */
+static const sa_attr_type_t zpl_attr_layout[] = {
+	ZPL_MODE,
+	ZPL_SIZE,
+	ZPL_GEN,
+	ZPL_UID,
+	ZPL_GID,
+	ZPL_PARENT,
+	ZPL_FLAGS,
+	ZPL_ATIME,
+	ZPL_MTIME,
+	ZPL_CTIME,
+	ZPL_CRTIME,
+	ZPL_LINKS,
+	ZPL_DACL_COUNT,
+	ZPL_DACL_ACES,
+};
 
 /* Key for the default ZPL attribute table in the layout ZAP. */
 #define	SA_LAYOUT_INDEX		2
-
-/* This layout matches that of a filesystem created using OpenZFS on FreeBSD. */
-static const sa_attr_type_t zpl_attr_layout[] = {
-	5, 6, 4, 12, 13, 7, 11, 0, 1, 2, 3, 8, 16, 19,
-};
 
 void
 zfs_prep_opts(fsinfo_t *fsopts)
@@ -223,27 +289,29 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 }
 
 static void
-vdev_pwrite(fsinfo_t *fsopts, void *buf, size_t len, off_t off)
+vdev_pwrite(const fsinfo_t *fsopts, const void *buf, size_t len, off_t off)
 {
 	zfs_opt_t *zfs_opts;
 	ssize_t n;
 
 	zfs_opts = fsopts->fs_specific;
+
 	assert(zfs_opts->size >= VDEV_LABEL_SPACE);
 	assert(off >= 0 && off < zfs_opts->size - VDEV_LABEL_SPACE);
+	assert((off_t)len > 0 && off + (off_t)len > off &&
+	    off + (off_t)len < zfs_opts->size);
 
 	off += VDEV_LABEL_START_SIZE;
-	do {
-		n = pwrite(fsopts->fd, buf, len, off);
+	for (size_t sofar = 0; sofar < len; sofar += n) {
+		n = pwrite(fsopts->fd, (const char *)buf + sofar, len - sofar,
+		    off + sofar);
 		if (n < 0)
-			err(1, "writing image");
-		len -= n;
-		off += n;
-	} while (len > 0);
+			err(1, "pwrite");
+	}
 }
 
 static void
-vdev_write_label_checksum(void *buf, off_t off, off_t size)
+vdev_label_set_checksum(void *buf, off_t off, off_t size)
 {
 	zio_cksum_t cksum;
 	zio_eck_t *eck;
@@ -259,7 +327,7 @@ vdev_write_label_checksum(void *buf, off_t off, off_t size)
  * Set embedded checksums and write the label at the specified index.
  */
 static void
-vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
+vdev_label_write(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 {
 	zfs_opt_t *zfs_opts;
 	ssize_t n;
@@ -279,14 +347,14 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 	 * Set the verifier checksum for the boot block.  We don't use it, but
 	 * the loader reads it and will complain if the checksum isn't valid.
 	 */
-	vdev_write_label_checksum(&label->vl_be,
+	vdev_label_set_checksum(&label->vl_be,
 	    loff + __offsetof(vdev_label_t, vl_be),
 	    sizeof(vdev_boot_envblock_t));
 
 	/*
 	 * Set the verifier checksum for the label.
 	 */
-	vdev_write_label_checksum(&label->vl_vdev_phys,
+	vdev_label_set_checksum(&label->vl_vdev_phys,
 	    loff + __offsetof(vdev_label_t, vl_vdev_phys), sizeof(vdev_phys_t));
 
 	/*
@@ -295,7 +363,7 @@ vdev_write_label(fsinfo_t *fsopts, int ind, vdev_label_t *label)
 	assert(sizeof(label->vl_uberblock) % blksz == 0);
 	for (size_t roff = 0; roff < sizeof(label->vl_uberblock);
 	    roff += blksz) {
-		vdev_write_label_checksum(&label->vl_uberblock[0] + roff,
+		vdev_label_set_checksum(&label->vl_uberblock[0] + roff,
 		    loff + __offsetof(vdev_label_t, vl_uberblock) + roff,
 		    blksz);
 	}
@@ -532,6 +600,9 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 		*idp = os->dnodenextfree;
 	dnode = &os->dnodes[os->dnodenextfree++];
 	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT; /* XXXMJ zfs_default_ibs */
+	dnode->dn_datablkszsec = 1 << (12 /* XXXMJ ashift */ - SPA_MINBLOCKSHIFT);
+	dnode->dn_nlevels = 1;
+	dnode->dn_nblkptr = 1;
 	dnode->dn_type = type;
 	dnode->dn_bonustype = bonustype;
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
@@ -573,23 +644,24 @@ dsl_dir_alloc(fsinfo_t *fsopts, zfs_objset_t *os, uint64_t parentdir,
 }
 
 static dsl_deadlist_phys_t *
-dsl_deadlist_alloc(zfs_objset_t *mos, uint64_t *dnidp)
+dsl_deadlist_alloc(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t *dnidp)
 {
+	zfs_zap_t deadlistzap;
 	dnode_phys_t *dnode;
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DEADLIST,
 	    DMU_OT_DEADLIST_HDR, dnidp);
-
-	dnode->dn_datablkszsec = (1 << 12) /* XXXMJ */ >> SPA_MINBLOCKSHIFT;
-	dnode->dn_nlevels = 1;
-	dnode->dn_nblkptr = 1;
 	dnode->dn_bonuslen = sizeof(dsl_deadlist_phys_t);
+
+	zap_init(&deadlistzap, dnode);
+	zap_write(fsopts, &deadlistzap);
 
 	return ((dsl_deadlist_phys_t *)DN_BONUS(dnode));
 }
 
 static dsl_dataset_phys_t *
-dsl_dataset_alloc(zfs_objset_t *mos, uint64_t dir, uint64_t *dnidp)
+dsl_dataset_alloc(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t dir,
+    uint64_t *dnidp)
 {
 	dnode_phys_t *dnode;
 	dsl_dataset_phys_t *ds;
@@ -597,12 +669,9 @@ dsl_dataset_alloc(zfs_objset_t *mos, uint64_t dir, uint64_t *dnidp)
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DATASET,
 	    DMU_OT_DSL_DATASET, dnidp);
-	dnode->dn_datablkszsec = (1 << 12) /* XXXMJ */ >> SPA_MINBLOCKSHIFT;
-	dnode->dn_nlevels = 1;
-	dnode->dn_nblkptr = 1;
 	dnode->dn_bonuslen = sizeof(dsl_dataset_phys_t);
 
-	(void)dsl_deadlist_alloc(mos, &deadlistid);
+	(void)dsl_deadlist_alloc(fsopts, mos, &deadlistid);
 
 	ds = (dsl_dataset_phys_t *)DN_BONUS(dnode);
 	/* XXXMJ what else? */
@@ -613,7 +682,6 @@ dsl_dataset_alloc(zfs_objset_t *mos, uint64_t dir, uint64_t *dnidp)
 	return (ds);
 }
 
-/* XXXMJ from zfssubr.c */
 static uint64_t
 zap_hash(uint64_t salt, const char *name)
 {
@@ -946,7 +1014,7 @@ pool_init(fsinfo_t *fsopts)
 	dnodecount++; /* |-> feature descriptions             */
 	dnodecount++; /* |-> sync bplist                      */
 	dnodecount++; /* |-> free bplist                      */
-	dnodecount++; /* |-> root DSL directory               */
+	dnodecount++; /* L-> root DSL directory               */
 	dnodecount++; /*     |-> DSL child directory (ZAP)    */
 	dnodecount++; /*     |   |-> $MOS (DSL dir)           */
 	dnodecount++; /*     |   |   L-> props (ZAP)          */
@@ -967,28 +1035,19 @@ pool_init(fsinfo_t *fsopts)
 }
 
 static void
-pool_add_bplists(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
+pool_add_bplists(zfs_objset_t *mos, zfs_zap_t *objdir)
 {
-	zfs_opt_t *zfs_opts;
 	dnode_phys_t *dnode;
 	uint64_t dnid;
 
-	zfs_opts = fsopts->fs_specific;
-
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
 	    &dnid);
-	dnode->dn_datablkszsec = (1 << zfs_opts->ashift) >> SPA_MINBLOCKSHIFT;
-	dnode->dn_nblkptr = 1;
-	dnode->dn_nlevels = 1;
 	dnode->dn_bonuslen = BPOBJ_SIZE_V2;
 	zap_add_uint64(objdir, DMU_POOL_FREE_BPOBJ, dnid);
 
 	/* Object used for deferred frees. */
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
 	    &dnid);
-	dnode->dn_datablkszsec = (1 << zfs_opts->ashift) >> SPA_MINBLOCKSHIFT;
-	dnode->dn_nblkptr = 1;
-	dnode->dn_nlevels = 1;
 	dnode->dn_bonuslen = BPOBJ_SIZE_V2;
 	zap_add_uint64(objdir, DMU_POOL_SYNC_BPLIST, dnid);
 }
@@ -1039,9 +1098,9 @@ pool_add_child_map(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t parentdir)
 
 	dsldir = dsl_dir_alloc(fsopts, mos, parentdir, &dnid);
 	zap_add_uint64(&childzap, "$ORIGIN", dnid);
-	originds = dsl_dataset_alloc(mos, dnid, &dsdnid);
+	originds = dsl_dataset_alloc(fsopts, mos, dnid, &dsdnid);
 	dsldir->dd_head_dataset_obj = dsdnid;
-	snapds = dsl_dataset_alloc(mos, dnid, &snapdnid);
+	snapds = dsl_dataset_alloc(fsopts, mos, dnid, &snapdnid);
 	originds->ds_prev_snap_obj = snapdnid;
 	snapds->ds_next_snap_obj = dsdnid;
 	/* XXXMJ need to add one per dataset */
@@ -1188,14 +1247,14 @@ pool_finish(fsinfo_t *fsopts)
 	zap_init(&objdirzap, objdirdn);
 	zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
 	zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
-	pool_add_bplists(fsopts, mos, &objdirzap);
+	pool_add_bplists(mos, &objdirzap);
 	pool_add_feature_objects(fsopts, mos, &objdirzap);
 	zap_write(fsopts, &objdirzap);
 	}
 
 	uint64_t childdirid = pool_add_child_map(fsopts, mos, dsldirid);
 
-	ds = dsl_dataset_alloc(mos, dsldirid, &dslid);
+	ds = dsl_dataset_alloc(fsopts, mos, dsldirid, &dslid);
 	/* XXXMJ more fields */
 	ds->ds_prev_snap_obj = zfs_opts->originsnap;
 	ds->ds_used_bytes = 1 << 20; /* XXXMJ */
@@ -1239,11 +1298,11 @@ pool_finish(fsinfo_t *fsopts)
 
 	/*
 	 * Fill out the uberblock.  Just make each one the same.  The embedded
-	 * checksum is calculated in vdev_write_label().
+	 * checksum is calculated in vdev_label_write().
 	 */
-	for (size_t roff = 0; roff < sizeof(label->vl_uberblock);
-	    roff += (1 << zfs_opts->ashift)) {
-		ub = (uberblock_t *)(&label->vl_uberblock[0] + roff);
+	for (size_t uoff = 0; uoff < sizeof(label->vl_uberblock);
+	    uoff += (1 << zfs_opts->ashift)) {
+		ub = (uberblock_t *)(&label->vl_uberblock[0] + uoff);
 		ub->ub_magic = UBERBLOCK_MAGIC;
 		ub->ub_version = SPA_VERSION;
 		ub->ub_txg = txg;
@@ -1260,7 +1319,7 @@ pool_finish(fsinfo_t *fsopts)
 	}
 
 	for (int i = 0; i < VDEV_LABELS; i++)
-		vdev_write_label(fsopts, i, label);
+		vdev_label_write(fsopts, i, label);
 }
 
 static void
@@ -1468,35 +1527,95 @@ fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
 }
 
 static void
-fsnode_populate_sattrs(const fsnode *cur, dnode_phys_t *dnode)
+fsnode_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
+    size_t *szp)
 {
+	assert(ind < fs->sacnt);
+
+	memcpy(attrbuf + fs->saoffs[ind], val, fs->satab[ind].size);
+	*szp += fs->satab[ind].size;
+}
+
+static void
+fsnode_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
+    size_t valsz, uint16_t ind)
+{
+	assert(ind < fs->sacnt);
+
+	memcpy(attrbuf + fs->saoffs[ind], val, valsz);
+}
+
+static void
+fsnode_populate_sattrs(zfs_fs_t *fs, const fsnode *cur, dnode_phys_t *dnode)
+{
+	zfs_ace_hdr_t aces[3];
+	struct stat *sb;
 	sa_hdr_phys_t *sahdr;
-	uint64_t *attr;
+	uint64_t daclcount, flags, gen, gid, links, mode, parent, size, uid;
+	char *attrbuf;
+	size_t sz;
 
 	assert(dnode->dn_bonustype == DMU_OT_SA);
 
+	sb = &cur->inode->st;
+
 	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
 	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX, 8);
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX,
+	    fs->savarszcnt * sizeof(uint64_t));
+	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
 
-	attr = (uint64_t *)((char *)sahdr + SA_HDR_SIZE(sahdr));
-	attr[0] = cur->inode->st.st_mode;
-	if (cur->type == S_IFREG)
-		attr[SA_SIZE_OFFSET / sizeof(uint64_t)] = cur->inode->st.st_size;
-	*(uint64_t *)((char *)sahdr + 8 + SA_GEN_OFFSET) = cur->inode->st.st_gen;
-	*(uint64_t *)((char *)sahdr + 8 + SA_UID_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_GID_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_PARENT_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_FLAGS_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_LINKS_OFFSET + 8) = 0; /* XXXMJ */
+	daclcount = nitems(aces);
+	flags = ZFS_ACL_TRIVIAL | ZFS_NO_EXECS_DENIED; /* XXXMJ */
+	gen = sb->st_gen;
+	gid = sb->st_gid;
+	links = 0; /* XXXMJ */
+	mode = sb->st_mode;
+	parent = 0; /* XXXMJ */
+	size = cur->type == S_IFREG ? sb->st_size : 0; /* XXXMJ */
+	uid = sb->st_uid;
 
-	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr) + 14 * sizeof(uint64_t);
+	/* XXXMJ need to review these */
+	memset(aces, 0, sizeof(aces));
+	aces[0].z_flags = ACE_OWNER;
+	aces[0].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+	aces[0].z_access_mask = ACE_READ_DATA | ACE_WRITE_ATTRIBUTES |
+	    ACE_WRITE_OWNER | ACE_WRITE_ACL | ACE_WRITE_NAMED_ATTRS |
+	    ACE_READ_ACL | ACE_READ_ATTRIBUTES | ACE_READ_NAMED_ATTRS |
+	    ACE_SYNCHRONIZE;
+	aces[1].z_flags = ACE_GROUP | ACE_IDENTIFIER_GROUP;
+	aces[1].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+	aces[1].z_access_mask = ACE_READ_DATA | ACE_READ_ACL |
+	    ACE_READ_ATTRIBUTES | ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
+	aces[2].z_flags = ACE_EVERYONE;
+	aces[2].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
+	aces[2].z_access_mask = ACE_READ_DATA | ACE_READ_ACL |
+	    ACE_READ_ATTRIBUTES | ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
+
+	sz = 0;
+	fsnode_populate_attr(fs, attrbuf, &daclcount, ZPL_DACL_COUNT, &sz);
+	fsnode_populate_attr(fs, attrbuf, &flags, ZPL_FLAGS, &sz);
+	fsnode_populate_attr(fs, attrbuf, &gen, ZPL_GEN, &sz);
+	fsnode_populate_attr(fs, attrbuf, &gid, ZPL_GID, &sz);
+	fsnode_populate_attr(fs, attrbuf, &links, ZPL_LINKS, &sz);
+	fsnode_populate_attr(fs, attrbuf, &mode, ZPL_MODE, &sz);
+	fsnode_populate_attr(fs, attrbuf, &parent, ZPL_PARENT, &sz);
+	fsnode_populate_attr(fs, attrbuf, &size, ZPL_SIZE, &sz);
+	fsnode_populate_attr(fs, attrbuf, &uid, ZPL_UID, &sz);
+
+	assert(sizeof(sb->st_atim) == fs->satab[ZPL_ATIME].size);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_atim, ZPL_ATIME, &sz);
+	assert(sizeof(sb->st_ctim) == fs->satab[ZPL_CTIME].size);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_ctim, ZPL_CTIME, &sz);
+	assert(sizeof(sb->st_mtim) == fs->satab[ZPL_MTIME].size);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_mtim, ZPL_MTIME, &sz);
+
+	fsnode_populate_varszattr(fs, attrbuf, aces, sizeof(aces),
+	    ZPL_DACL_ACES);
+	sahdr->sa_lengths[0] = sizeof(aces);
+	assert(fs->savarszcnt == 1);
+
+	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr) + sz;
 }
 
 static void
@@ -1580,7 +1699,7 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	free(bpas);
 	(void)close(fd);
 
-	fsnode_populate_sattrs(cur, dnode);
+	fsnode_populate_sattrs(arg->fs, cur, dnode);
 
 	/* Add an entry to the parent directory. */
 	fsnode_populate_dirent(arg, cur->name, dnid);
@@ -1591,12 +1710,9 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
     struct fsnode_foreach_populate_arg *arg)
 {
 	dnode_phys_t *dnode;
-	fsinfo_t *fsopts;
 	uint64_t dnid;
 
 	assert(cur->type == S_IFDIR);
-
-	fsopts = arg->fsopts;
 
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_DIRECTORY_CONTENTS, DMU_OT_SA, &dnid);
@@ -1618,7 +1734,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	/* XXXMJ shouldn't be here, but needed for DN_BONUS to work. */
 	dnode->dn_nblkptr = 1;
 
-	fsnode_populate_sattrs(cur, dnode);
+	fsnode_populate_sattrs(arg->fs, cur, dnode);
 }
 
 static void
@@ -1651,6 +1767,13 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 	}
 }
 
+/*
+ * Initialize system attribute tables.
+ *
+ * There are two elements to this.  First, we write the zpl_attrs[] and
+ * zpl_attr_layout[] tables to disk.  Then we create a lookup table which
+ * allows us to set file attributes quickly.
+ */
 static uint64_t
 fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 {
@@ -1659,29 +1782,44 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	dnode_phys_t *saobj, *salobj, *sarobj;
 	sa_attr_type_t *sas;
 	uint64_t saobjid, salobjid, sarobjid;
+	size_t i;
+	uint16_t offset;
 	char ti[4];
 
 	os = &fs->os;
 
+	/*
+	 * The on-disk tables are stored in two ZAP objects, the registry object
+	 * and the layout object.  Individual attributes are described by
+	 * entries in the registry object; for example, the value for the
+	 * "ZPL_SIZE" key gives the size and encoding of the ZPL_SIZE attribute.
+	 * The attributes of a file are ordered according to one of the layouts
+	 * defined in the layout object.  The master node object is simply used
+	 * to locate the registry and layout objects.
+	 */
 	saobj = objset_dnode_alloc(os, DMU_OT_SA_MASTER_NODE, &saobjid);
 	salobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_LAYOUTS, &salobjid);
 	sarobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_REGISTRATION, &sarobjid);
 
 	zap_init(&sarzap, sarobj);
-	for (size_t i = 0; i < nitems(zpl_attrs); i++) {
+	for (i = 0; i < nitems(zpl_attrs); i++) {
 		const zfs_sattr_t *sa;
 		uint64_t attr;
 
 		attr = 0;
 		sa = &zpl_attrs[i];
-		SA_ATTR_ENCODE(attr, sa->index, sa->size, sa->byteswap);
+		SA_ATTR_ENCODE(attr, (uint64_t)i, sa->size, sa->bs);
 		zap_add_uint64(&sarzap, sa->name, attr);
 	}
 	zap_write(fsopts, &sarzap);
 
+	/*
+	 * Layouts are arrays of indices into the registry.  We define only a
+	 * single layout for use by the ZPL.
+	 */
 	zap_init(&salzap, salobj);
 	sas = ecalloc(nitems(zpl_attr_layout), sizeof(sa_attr_type_t));
-	for (size_t i = 0; i < nitems(zpl_attr_layout); i++)
+	for (i = 0; i < nitems(zpl_attr_layout); i++)
 		sas[i] = htobe16(zpl_attr_layout[i]);
 	snprintf(ti, sizeof(ti), "%u", SA_LAYOUT_INDEX);
 	zap_add(&salzap, ti, sizeof(*sas), nitems(zpl_attr_layout),
@@ -1694,6 +1832,35 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	zap_add_uint64(&sazap, SA_REGISTRY, sarobjid);
 	zap_write(fsopts, &sazap);
 
+	/* Sanity check. */
+	for (i = 0; i < nitems(zpl_attrs); i++)
+		assert(i == zpl_attrs[i].id);
+
+	/*
+	 * Build the offset table used when setting file attributes.  File
+	 * attributes are stored in the object's bonus buffer; this table
+	 * provides the buffer offset of attributes referenced by the layout
+	 * table.
+	 */
+	fs->sacnt = nitems(zpl_attrs);
+	fs->saoffs = ecalloc(fs->sacnt, sizeof(*fs->saoffs));
+	for (i = 0; i < fs->sacnt; i++)
+		fs->saoffs[i] = 0xffff;
+	for (i = 0, offset = 0; i < nitems(zpl_attr_layout); i++) {
+		uint16_t size;
+
+		assert(zpl_attr_layout[i] < fs->sacnt);
+
+		fs->saoffs[zpl_attr_layout[i]] = offset;
+		size = zpl_attrs[zpl_attr_layout[i]].size;
+		if (size == 0)
+			fs->savarszcnt++;
+		else
+			assert(fs->savarszcnt == 0);
+		offset += size;
+	}
+	fs->satab = zpl_attrs;
+
 	return (saobjid);
 }
 
@@ -1701,11 +1868,12 @@ static void
 mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
 	struct fsnode_foreach_populate_arg poparg;
+	zfs_zap_t deleteqzap;
 	zio_cksum_t cksum;
 	zfs_objset_t *os;
 	zfs_opt_t *zfs_opts;
-	dnode_phys_t *masterobj;
-	uint64_t dnodecount, moid, saobjid;
+	dnode_phys_t *deleteq, *masterobj;
+	uint64_t deleteqid, dnodecount, moid, saobjid;
 
 	zfs_opts = fsopts->fs_specific;
 	os = &fs->os;
@@ -1740,6 +1908,10 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 */
 	saobjid = fs_add_zpl_attrs(fsopts, fs);
 
+	deleteq = objset_dnode_alloc(os, DMU_OT_UNLINKED_SET, &deleteqid);
+	zap_init(&deleteqzap, deleteq);
+	zap_write(fsopts, &deleteqzap);
+
 	poparg.fsopts = fsopts;
 	poparg.fs = fs;
 	SLIST_INIT(&poparg.dirs);
@@ -1750,19 +1922,17 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	assert(SLIST_EMPTY(&poparg.dirs));
 
 	/*
-	 * Allocate and populate the master node object.  This is a ZAP object
-	 * containing various dataset properties and the object IDs of the root
-	 * directory and delete queue.
+	 * Populate the master node object.  This is a ZAP object containing
+	 * various dataset properties and the object IDs of the root directory
+	 * and delete queue.
 	 */
 	zfs_zap_t masterzap;
 	zap_init(&masterzap, masterobj);
-	/* XXXMJ add a variant that can check that the object ID is valid */
 	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
-	/* XXXMJ DMU_OT_UNLINKED_SET */
-	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, 0 /* XXXMJ */);
+	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, deleteqid);
 	zap_add_uint64(&masterzap, ZFS_SA_ATTRS, saobjid);
 	/* XXXMJ create a shares (ZFS_SHARES_DIR) directory? */
-	zap_add_uint64(&masterzap, "version", 5 /* ZPL_VERSION_SA */);
+	zap_add_uint64(&masterzap, ZPL_VERSION_OBJ, 5 /* ZPL_VERSION_SA */);
 	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
 	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
 	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
