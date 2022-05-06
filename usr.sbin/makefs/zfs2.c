@@ -31,11 +31,10 @@
  * XXXMJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
  * comes from.  Be sure to test with large files...
  */
-#define	INDIR_LEVELS	6
+#define	INDIR_LEVELS		6
 
-#define	VDEV_LABEL_SIZE	(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE)
-
-#define	SA_LAYOUT_INDEX	2
+#define	VDEV_LABEL_SPACE	\
+	((off_t)(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE))
 
 typedef struct {
 	const char	*name;
@@ -118,7 +117,6 @@ static off_t space_alloc(zfs_opt_t *, off_t *);
 	.size = s,		\
 	.byteswap = b,		\
 }
-
 static const zfs_sattr_t zpl_attrs[] = {
 	ZPL_ATTR("ZPL_ATIME", 0, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
 	ZPL_ATTR("ZPL_MTIME", 1, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
@@ -142,6 +140,15 @@ static const zfs_sattr_t zpl_attrs[] = {
 	ZPL_ATTR("ZPL_DACL_ACES", 19, 0, SA_ACL),
 	ZPL_ATTR("ZPL_DXATTR", 20, 0, SA_UINT8_ARRAY),
 	ZPL_ATTR("ZPL_PROJID", 21, sizeof(uint64_t), SA_UINT64_ARRAY),
+};
+#undef ZPL_ATTR
+
+/* Key for the default ZPL attribute table in the layout ZAP. */
+#define	SA_LAYOUT_INDEX		2
+
+/* This layout matches that of a filesystem created using OpenZFS on FreeBSD. */
+static const sa_attr_type_t zpl_attr_layout[] = {
+	5, 6, 4, 12, 13, 7, 11, 0, 1, 2, 3, 8, 16, 19,
 };
 
 void
@@ -218,9 +225,12 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 static void
 vdev_pwrite(fsinfo_t *fsopts, void *buf, size_t len, off_t off)
 {
+	zfs_opt_t *zfs_opts;
 	ssize_t n;
 
-	/* XXXMJ check that [off,off+len) is in bounds */
+	zfs_opts = fsopts->fs_specific;
+	assert(zfs_opts->size >= VDEV_LABEL_SPACE);
+	assert(off >= 0 && off < zfs_opts->size - VDEV_LABEL_SPACE);
 
 	off += VDEV_LABEL_START_SIZE;
 	do {
@@ -303,9 +313,9 @@ spacemap_init(zfs_opt_t *zfs_opts)
 
 	size = zfs_opts->size;
 
-	assert(size >= (off_t)VDEV_LABEL_SIZE);
+	assert(size >= VDEV_LABEL_SPACE);
 
-	nbits = (size - VDEV_LABEL_SIZE) >> zfs_opts->ashift;
+	nbits = (size - VDEV_LABEL_SPACE) >> zfs_opts->ashift;
 	if (nbits > INT_MAX) {
 		/*
 		 * With the smallest block size of 512B, the limit on the image
@@ -387,7 +397,6 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 
 	spablk[0] = SM_PREFIX_ENCODE(SM2_PREFIX) | SM2_RUN_ENCODE(last) | SM2_VDEV_ENCODE(0);
 	spablk[1] = SM2_TYPE_ENCODE(SM_ALLOC) | SM2_OFFSET_ENCODE(0);
-	printf("%s:%d free is %d\n", __func__, __LINE__, last);
 
 	fletcher_4_native(spablk, blksz, NULL, &cksum);
 	blkptr_set(&dnode->dn_blkptr[0], loc, blksz, dnode->dn_type, ZIO_CHECKSUM_FLETCHER_4, &cksum);
@@ -1082,7 +1091,7 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
-	    VDEV_LABEL_SIZE);
+	    VDEV_LABEL_SPACE);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_GUID, guid);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_PATH, "/dev/null");
@@ -1139,7 +1148,7 @@ pool_finish(fsinfo_t *fsopts)
 		nv = nvlist_create(NV_UNIQUE_NAME);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
-		    VDEV_LABEL_SIZE);
+		    VDEV_LABEL_SPACE);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, rootvdev);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_TXG, txg);
@@ -1468,7 +1477,7 @@ fsnode_populate_sattrs(const fsnode *cur, dnode_phys_t *dnode)
 
 	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
 	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX, 8 /* variable-length attr */);
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX, 8);
 
 	attr = (uint64_t *)((char *)sahdr + SA_HDR_SIZE(sahdr));
 	attr[0] = cur->inode->st.st_mode;
@@ -1648,8 +1657,8 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	zfs_zap_t sazap, salzap, sarzap;
 	zfs_objset_t *os;
 	dnode_phys_t *saobj, *salobj, *sarobj;
+	sa_attr_type_t *sas;
 	uint64_t saobjid, salobjid, sarobjid;
-	uint16_t sas[14];
 	char ti[4];
 
 	os = &fs->os;
@@ -1670,25 +1679,14 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	}
 	zap_write(fsopts, &sarzap);
 
-	sas[0] = htobe16(5);	/* ZPL_MODE */
-	sas[1] = htobe16(6);	/* ZPL_SIZE */
-	sas[2] = htobe16(4);	/* ZPL_GEN */
-	sas[3] = htobe16(12);	/* ZPL_UID */
-	sas[4] = htobe16(13);	/* ZPL_GID */
-	sas[5] = htobe16(7);	/* ZPL_PARENT */
-	sas[6] = htobe16(11);	/* ZPL_FLAGS */
-	sas[7] = htobe16(0);	/* ZPL_ATIME */
-	sas[8] = htobe16(1);	/* ZPL_MTIME */
-	sas[9] = htobe16(2);	/* ZPL_CTIME */
-	sas[10] = htobe16(3);	/* ZPL_CRTIME */
-	sas[11] = htobe16(8);	/* ZPL_LINKS */
-	sas[12] = htobe16(16);	/* ZPL_DACL_COUNT */
-	sas[13] = htobe16(19);	/* ZPL_DACL_ACES */
-
 	zap_init(&salzap, salobj);
+	sas = ecalloc(nitems(zpl_attr_layout), sizeof(sa_attr_type_t));
+	for (size_t i = 0; i < nitems(zpl_attr_layout); i++)
+		sas[i] = htobe16(zpl_attr_layout[i]);
 	snprintf(ti, sizeof(ti), "%u", SA_LAYOUT_INDEX);
-	zap_add(&salzap, ti, sizeof(sa_attr_type_t), nitems(sas),
+	zap_add(&salzap, ti, sizeof(*sas), nitems(zpl_attr_layout),
 	    (uint8_t *)sas);
+	free(sas);
 	zap_write(fsopts, &salzap);
 
 	zap_init(&sazap, saobj);
