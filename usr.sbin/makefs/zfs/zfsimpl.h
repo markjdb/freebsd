@@ -1790,12 +1790,75 @@ typedef struct zap_leaf {
 	zap_leaf_phys_t *l_phys;
 } zap_leaf_t;
 
+#define	ACE_READ_DATA		0x00000001	/* file: read data */
+#define	ACE_LIST_DIRECTORY	0x00000001	/* dir: list files */
+#define	ACE_WRITE_DATA		0x00000002	/* file: write data */
+#define	ACE_ADD_FILE		0x00000002	/* dir: create file */
+#define	ACE_APPEND_DATA		0x00000004	/* file: append data */
+#define	ACE_ADD_SUBDIRECTORY	0x00000004	/* dir: create subdir */
+#define	ACE_READ_NAMED_ATTRS	0x00000008	/* FILE_READ_EA */
+#define	ACE_WRITE_NAMED_ATTRS	0x00000010	/* FILE_WRITE_EA */
+#define	ACE_EXECUTE		0x00000020	/* file: execute */
+#define	ACE_TRAVERSE		0x00000020	/* dir: lookup name */
+#define	ACE_DELETE_CHILD	0x00000040	/* dir: unlink child */
+#define	ACE_READ_ATTRIBUTES	0x00000080	/* (all) stat, etc. */
+#define	ACE_WRITE_ATTRIBUTES	0x00000100	/* (all) utimes, etc. */
+#define	ACE_DELETE		0x00010000	/* (all) unlink self */
+#define	ACE_READ_ACL		0x00020000	/* (all) getsecattr */
+#define	ACE_WRITE_ACL		0x00040000	/* (all) setsecattr */
+#define	ACE_WRITE_OWNER		0x00080000	/* (all) chown */
+#define	ACE_SYNCHRONIZE		0x00100000	/* (all) */
+
+#define	ACE_FILE_INHERIT_ACE		0x0001
+#define	ACE_DIRECTORY_INHERIT_ACE	0x0002
+#define	ACE_NO_PROPAGATE_INHERIT_ACE	0x0004
+#define	ACE_INHERIT_ONLY_ACE		0x0008
+#define	ACE_SUCCESSFUL_ACCESS_ACE_FLAG	0x0010
+#define	ACE_FAILED_ACCESS_ACE_FLAG	0x0020
+#define	ACE_IDENTIFIER_GROUP		0x0040
+#define	ACE_INHERITED_ACE		0x0080
+#define	ACE_OWNER			0x1000
+#define	ACE_GROUP			0x2000
+#define	ACE_EVERYONE			0x4000
+
+#define	ACE_ACCESS_ALLOWED_ACE_TYPE	0x0000
+#define	ACE_ACCESS_DENIED_ACE_TYPE	0x0001
+#define	ACE_SYSTEM_AUDIT_ACE_TYPE	0x0002
+#define	ACE_SYSTEM_ALARM_ACE_TYPE	0x0003
+
+typedef struct zfs_ace_hdr {
+	uint16_t z_type;
+	uint16_t z_flags;
+	uint32_t z_access_mask;
+} zfs_ace_hdr_t;
+
 /*
  * Define special zfs pflags
  */
-#define	ZFS_XATTR	0x1		/* is an extended attribute */
-#define	ZFS_INHERIT_ACE	0x2		/* ace has inheritable ACEs */
-#define	ZFS_ACL_TRIVIAL 0x4		/* files ACL is trivial */
+#define	ZFS_XATTR		0x1		/* is an extended attribute */
+#define	ZFS_INHERIT_ACE		0x2		/* ace has inheritable ACEs */
+#define	ZFS_ACL_TRIVIAL		0x4		/* files ACL is trivial */
+#define	ZFS_ACL_OBJ_ACE		0x8		/* ACL has CMPLX Object ACE */
+#define	ZFS_ACL_PROTECTED	0x10		/* ACL protected */
+#define	ZFS_ACL_DEFAULTED	0x20		/* ACL should be defaulted */
+#define	ZFS_ACL_AUTO_INHERIT	0x40		/* ACL should be inherited */
+#define	ZFS_BONUS_SCANSTAMP	0x80		/* Scanstamp in bonus area */
+#define	ZFS_NO_EXECS_DENIED	0x100		/* exec was given to everyone */
+
+#define	ZFS_READONLY		0x0000000100000000ull
+#define	ZFS_HIDDEN		0x0000000200000000ull
+#define	ZFS_SYSTEM		0x0000000400000000ull
+#define	ZFS_ARCHIVE		0x0000000800000000ull
+#define	ZFS_IMMUTABLE		0x0000001000000000ull
+#define	ZFS_NOUNLINK		0x0000002000000000ull
+#define	ZFS_APPENDONLY		0x0000004000000000ull
+#define	ZFS_NODUMP		0x0000008000000000ull
+#define	ZFS_OPAQUE		0x0000010000000000ull
+#define	ZFS_AV_QUARANTINED	0x0000020000000000ull
+#define	ZFS_AV_MODIFIED		0x0000040000000000ull
+#define	ZFS_REPARSE		0x0000080000000000ull
+#define	ZFS_OFFLINE		0x0000100000000000ull
+#define	ZFS_SPARSE		0x0000200000000000ull
 
 #define	MASTER_NODE_OBJ	1
 

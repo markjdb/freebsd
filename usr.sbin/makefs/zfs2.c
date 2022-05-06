@@ -28,6 +28,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/dirent.h>
 #include <sys/endian.h>
 #include <sys/queue.h>
 
@@ -43,6 +44,7 @@
 
 #include "makefs.h"
 
+/* XXXMJ just need nvlists */
 #define	ASSERT	assert
 #include "zfs/libzfs.h"
 
@@ -55,6 +57,7 @@
 /*
  * XXXMJ
  * - dn_checksum should be set at dnode initialization time
+ * - resolve fsinfo vs. zfs_opt silliness
  */
 
 /*
@@ -94,7 +97,7 @@ typedef struct zfs_zap_entry {
 
 typedef struct zfs_zap {
 	STAILQ_HEAD(, zfs_zap_entry) kvps;
-	unsigned long		kvcnt;
+	unsigned long		kvpcnt;
 	bool			micro;
 	dnode_phys_t		*dnode;
 } zfs_zap_t;
@@ -133,7 +136,7 @@ static void zap_write(fsinfo_t *, zfs_zap_t *);
 
 static dnode_phys_t *objset_dnode_alloc(zfs_objset_t *, uint8_t, uint64_t *);
 static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
-    uint64_t *);
+    uint16_t, uint64_t *);
 
 static off_t space_alloc(zfs_opt_t *, off_t *);
 
@@ -194,8 +197,6 @@ static const zfs_sattr_t zpl_attrs[] = {
 
 /*
  * This layout matches that of a filesystem created using OpenZFS on FreeBSD.
- *
- * Variable-length attributes must appear at the end of the layout.
  */
 static const sa_attr_type_t zpl_attr_layout[] = {
 	ZPL_MODE,
@@ -446,8 +447,8 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 	assert(!bit_test(spacemap, last));
 	uint64_t *spablk = ecalloc(1, blksz);
 
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP, DMU_OT_SPACE_MAP_HEADER, &dnid);
-	printf("%s:%d objid is %lu\n", __func__, __LINE__, dnid);
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP,
+	    DMU_OT_SPACE_MAP_HEADER, SPACE_MAP_SIZE_V0, &dnid);
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	/*
 	 * We'll only ever allocate a single block for this space map, but
@@ -455,9 +456,7 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 	 * supports histograms.
 	 */
 	dnode->dn_nblkptr = 3;
-	dnode->dn_nlevels = 1;
 	dnode->dn_used = dnode->dn_datablkszsec;
-	dnode->dn_bonuslen = SPACE_MAP_SIZE_V0;
 
 	space_map_phys_t *sm = DN_BONUS(dnode);
 	sm->smp_length = 2 * sizeof(uint64_t);
@@ -472,12 +471,9 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 	free(spablk);
 
 	uint64_t dnid2;
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP, DMU_OT_SPACE_MAP_HEADER, &dnid2);
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP,
+	    DMU_OT_SPACE_MAP_HEADER, SPACE_MAP_SIZE_V0, &dnid2);
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
-	dnode->dn_nblkptr = 1;
-	dnode->dn_nlevels = 1;
-	dnode->dn_used = 0;
-	dnode->dn_bonuslen = SPACE_MAP_SIZE_V0;
 
 	objblk[0] = dnid;
 	//objblk[1] = dnid2;
@@ -591,11 +587,13 @@ objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 
 static dnode_phys_t *
 objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
-    uint64_t *idp)
+    uint16_t bonuslen, uint64_t *idp)
 {
 	dnode_phys_t *dnode;
 
 	assert(os->dnodenextfree < os->dnodecount);
+	assert(bonuslen <= DN_OLD_MAX_BONUSLEN);
+
 	if (idp != NULL)
 		*idp = os->dnodenextfree;
 	dnode = &os->dnodes[os->dnodenextfree++];
@@ -605,6 +603,7 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 	dnode->dn_nblkptr = 1;
 	dnode->dn_type = type;
 	dnode->dn_bonustype = bonustype;
+	dnode->dn_bonuslen = bonuslen;
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
 	return (dnode);
 }
@@ -612,7 +611,7 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 static dnode_phys_t *
 objset_dnode_alloc(zfs_objset_t *os, uint8_t type, uint64_t *idp)
 {
-	return (objset_dnode_bonus_alloc(os, type, DMU_OT_NONE, idp));
+	return (objset_dnode_bonus_alloc(os, type, DMU_OT_NONE, 0, idp));
 }
 
 static dsl_dir_phys_t *
@@ -625,11 +624,7 @@ dsl_dir_alloc(fsinfo_t *fsopts, zfs_objset_t *os, uint64_t parentdir,
 	uint64_t propsid;
 
 	dnode = objset_dnode_bonus_alloc(os, DMU_OT_DSL_DIR, DMU_OT_DSL_DIR,
-	    dnidp);
-	dnode->dn_datablkszsec = (1 << 12) /* XXXMJ */ >> SPA_MINBLOCKSHIFT;
-	dnode->dn_nlevels = 1;
-	dnode->dn_nblkptr = 1;
-	dnode->dn_bonuslen = sizeof(dsl_dir_phys_t);
+	    sizeof(dsl_dir_phys_t), dnidp);
 
 	props = objset_dnode_alloc(os, DMU_OT_DSL_PROPS, &propsid);
 	zap_init(&propszap, props);
@@ -650,8 +645,7 @@ dsl_deadlist_alloc(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t *dnidp)
 	dnode_phys_t *dnode;
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DEADLIST,
-	    DMU_OT_DEADLIST_HDR, dnidp);
-	dnode->dn_bonuslen = sizeof(dsl_deadlist_phys_t);
+	    DMU_OT_DEADLIST_HDR, sizeof(dsl_deadlist_phys_t), dnidp);
 
 	zap_init(&deadlistzap, dnode);
 	zap_write(fsopts, &deadlistzap);
@@ -668,8 +662,7 @@ dsl_dataset_alloc(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t dir,
 	uint64_t deadlistid;
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DATASET,
-	    DMU_OT_DSL_DATASET, dnidp);
-	dnode->dn_bonuslen = sizeof(dsl_dataset_phys_t);
+	    DMU_OT_DSL_DATASET, sizeof(dsl_dataset_phys_t), dnidp);
 
 	(void)dsl_deadlist_alloc(fsopts, mos, &deadlistid);
 
@@ -722,7 +715,7 @@ zap_init(zfs_zap_t *zap, dnode_phys_t *dnode)
 {
 	STAILQ_INIT(&zap->kvps);
 	zap->micro = true;
-	zap->kvcnt = 0;
+	zap->kvpcnt = 0;
 	zap->dnode = dnode;
 }
 
@@ -746,7 +739,7 @@ zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
 		zap->micro = false;
 	if (strlen(name) + 1 > MZAP_NAME_LEN)
 		zap->micro = false;
-	if (++zap->kvcnt > MZAP_ENT_MAX)
+	if (++zap->kvpcnt > MZAP_ENT_MAX)
 		zap->micro = false;
 
 	STAILQ_INSERT_TAIL(&zap->kvps, ent, next);
@@ -777,7 +770,7 @@ zap_micro_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 	mzap->mz_salt = random();
 	mzap->mz_normflags = 0;
 
-	bytes = sizeof(*mzap) + (zap->kvcnt - 1) * sizeof(*ment);
+	bytes = sizeof(*mzap) + (zap->kvpcnt - 1) * sizeof(*ment);
 	assert(bytes <= (off_t)MZAP_MAX_BLKSZ);
 
 	ment = &mzap->mz_chunk[0];
@@ -861,7 +854,7 @@ zap_fat_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 	zaphdr->zap_ptrtbl.zt_nextblk = 0;
 	zaphdr->zap_ptrtbl.zt_blks_copied = 0;
 
-	zaphdr->zap_num_entries = zap->kvcnt;
+	zaphdr->zap_num_entries = zap->kvpcnt;
 	zaphdr->zap_salt = random();
 
 	/* The embedded pointer hash table starts half way through the block. */
@@ -979,10 +972,13 @@ zap_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 {
 	zfs_zap_entry_t *ent;
 
-	if (zap->micro)
+	if (zap->micro) {
 		zap_micro_write(fsopts, zap);
-	else
+	} else {
+		assert(!STAILQ_EMPTY(&zap->kvps));
+		assert(zap->kvpcnt > 0);
 		zap_fat_write(fsopts, zap);
+	}
 
 	while ((ent = STAILQ_FIRST(&zap->kvps)) != NULL) {
 		STAILQ_REMOVE_HEAD(&zap->kvps, next);
@@ -1037,21 +1033,22 @@ pool_init(fsinfo_t *fsopts)
 static void
 pool_add_bplists(zfs_objset_t *mos, zfs_zap_t *objdir)
 {
-	dnode_phys_t *dnode;
 	uint64_t dnid;
 
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
-	    &dnid);
-	dnode->dn_bonuslen = BPOBJ_SIZE_V2;
+	(void)objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
+	    BPOBJ_SIZE_V2, &dnid);
 	zap_add_uint64(objdir, DMU_POOL_FREE_BPOBJ, dnid);
 
 	/* Object used for deferred frees. */
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
-	    &dnid);
-	dnode->dn_bonuslen = BPOBJ_SIZE_V2;
+	(void)objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
+	    BPOBJ_SIZE_V2, &dnid);
 	zap_add_uint64(objdir, DMU_POOL_SYNC_BPLIST, dnid);
 }
 
+/*
+ * Add required feature metadata objects.  We don't know anything about ZFS
+ * features, so the objects are just empty ZAPs.
+ */
 static void
 pool_add_feature_objects(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
 {
@@ -1182,8 +1179,8 @@ pool_finish(fsinfo_t *fsopts)
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 
 	dnode_phys_t *configdn = objset_dnode_bonus_alloc(mos,
-	    DMU_OT_PACKED_NVLIST, DMU_OT_PACKED_NVLIST_SIZE, &configid);
-	configdn->dn_bonuslen = sizeof(uint64_t);
+	    DMU_OT_PACKED_NVLIST, DMU_OT_PACKED_NVLIST_SIZE, sizeof(uint64_t),
+	    &configid);
 
 	/* XXXMJ need at least 2 (vdev->asize >> msshift) metaslabs */
 	uint64_t msshift = 28 /* XXXMJ zfs_vdev_default_ms_shift */;
@@ -1505,6 +1502,7 @@ blkptr_alloc_flush(fsinfo_t *fsopts, struct blkptr_alloc_s *s)
 
 struct fsnode_populate_dir_s {
 	zfs_zap_t		zap;
+	uint64_t		objid;
 	SLIST_ENTRY(fsnode_populate_dir_s) next;
 };
 
@@ -1518,12 +1516,27 @@ struct fsnode_foreach_populate_arg {
 
 static void
 fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
-    const char *name, uint64_t dnid)
+    fsnode *cur, uint64_t dnid)
 {
 	struct fsnode_populate_dir_s *dir;
+	uint64_t type;
+
+	switch (cur->type) {
+	case S_IFREG:
+		type = DT_REG;
+		break;
+	case S_IFDIR:
+		type = DT_DIR;
+		break;
+	case S_IFLNK:
+		type = DT_LNK;
+		break;
+	default:
+		assert(0);
+	}
 
 	dir = SLIST_FIRST(&arg->dirs);
-	zap_add_uint64(&dir->zap, name, dnid);
+	zap_add_uint64(&dir->zap, cur->name, ZFS_DIRENT_MAKE(type, dnid));
 }
 
 static void
@@ -1531,6 +1544,7 @@ fsnode_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
     size_t *szp)
 {
 	assert(ind < fs->sacnt);
+	assert(fs->saoffs[ind] != 0xffff);
 
 	memcpy(attrbuf + fs->saoffs[ind], val, fs->satab[ind].size);
 	*szp += fs->satab[ind].size;
@@ -1538,16 +1552,21 @@ fsnode_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
 
 static void
 fsnode_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
-    size_t valsz, uint16_t ind)
+    size_t valsz, uint16_t ind, size_t *szp)
 {
 	assert(ind < fs->sacnt);
+	assert(fs->saoffs[ind] != 0xffff);
+	assert(fs->satab[ind].size == 0);
 
 	memcpy(attrbuf + fs->saoffs[ind], val, valsz);
+	*szp += valsz;
 }
 
 static void
-fsnode_populate_sattrs(zfs_fs_t *fs, const fsnode *cur, dnode_phys_t *dnode)
+fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
+    const fsnode *cur, dnode_phys_t *dnode)
 {
+	zfs_fs_t *fs;
 	zfs_ace_hdr_t aces[3];
 	struct stat *sb;
 	sa_hdr_phys_t *sahdr;
@@ -1556,6 +1575,9 @@ fsnode_populate_sattrs(zfs_fs_t *fs, const fsnode *cur, dnode_phys_t *dnode)
 	size_t sz;
 
 	assert(dnode->dn_bonustype == DMU_OT_SA);
+	assert(dnode->dn_nblkptr == 1);
+
+	fs = arg->fs;
 
 	sb = &cur->inode->st;
 
@@ -1566,12 +1588,13 @@ fsnode_populate_sattrs(zfs_fs_t *fs, const fsnode *cur, dnode_phys_t *dnode)
 	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
 
 	daclcount = nitems(aces);
-	flags = ZFS_ACL_TRIVIAL | ZFS_NO_EXECS_DENIED; /* XXXMJ */
+	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED |
+	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
 	gen = sb->st_gen;
 	gid = sb->st_gid;
 	links = 0; /* XXXMJ */
 	mode = sb->st_mode;
-	parent = 0; /* XXXMJ */
+	parent = SLIST_FIRST(&arg->dirs)->objid;
 	size = cur->type == S_IFREG ? sb->st_size : 0; /* XXXMJ */
 	uid = sb->st_uid;
 
@@ -1609,9 +1632,11 @@ fsnode_populate_sattrs(zfs_fs_t *fs, const fsnode *cur, dnode_phys_t *dnode)
 	fsnode_populate_attr(fs, attrbuf, &sb->st_ctim, ZPL_CTIME, &sz);
 	assert(sizeof(sb->st_mtim) == fs->satab[ZPL_MTIME].size);
 	fsnode_populate_attr(fs, attrbuf, &sb->st_mtim, ZPL_MTIME, &sz);
+	assert(sizeof(sb->st_birthtim) == fs->satab[ZPL_CRTIME].size);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_birthtim, ZPL_CRTIME, &sz);
 
 	fsnode_populate_varszattr(fs, attrbuf, aces, sizeof(aces),
-	    ZPL_DACL_ACES);
+	    ZPL_DACL_ACES, &sz);
 	sahdr->sa_lengths[0] = sizeof(aces);
 	assert(fs->savarszcnt == 1);
 
@@ -1641,7 +1666,7 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	size = cur->inode->st.st_size;
 
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
-	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, &dnid);
+	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
 
 	bpas = ecalloc(1, sizeof(*bpas));
 	blkptr_alloc_init(fsopts, bpas, dnode, size);
@@ -1699,42 +1724,40 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	free(bpas);
 	(void)close(fd);
 
-	fsnode_populate_sattrs(arg->fs, cur, dnode);
+	fsnode_populate_sattrs(arg, cur, dnode);
 
 	/* Add an entry to the parent directory. */
-	fsnode_populate_dirent(arg, cur->name, dnid);
+	fsnode_populate_dirent(arg, cur, dnid);
 }
 
 static void
 fsnode_populate_dir(fsnode *cur, const char *dir __unused,
     struct fsnode_foreach_populate_arg *arg)
 {
+	struct fsnode_populate_dir_s *dirinfo;
 	dnode_phys_t *dnode;
 	uint64_t dnid;
 
 	assert(cur->type == S_IFDIR);
 
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
-	    DMU_OT_DIRECTORY_CONTENTS, DMU_OT_SA, &dnid);
+	    DMU_OT_DIRECTORY_CONTENTS, DMU_OT_SA, 0, &dnid);
 
 	/*
 	 * Add an entry to the parent directory.  This must be done before
 	 * allocating a ZAP object for this directory's children.
 	 */
 	if (!SLIST_EMPTY(&arg->dirs))
-		fsnode_populate_dirent(arg, cur->name, dnid);
+		fsnode_populate_dirent(arg, cur, dnid);
 	else
 		arg->rootdirid = dnid;
 
-	struct fsnode_populate_dir_s *zap = ecalloc(1, sizeof(*zap));
+	dirinfo = ecalloc(1, sizeof(*dirinfo));
+	zap_init(&dirinfo->zap, dnode);
+	dirinfo->objid = dnid;
+	SLIST_INSERT_HEAD(&arg->dirs, dirinfo, next);
 
-	zap_init(&zap->zap, dnode);
-	SLIST_INSERT_HEAD(&arg->dirs, zap, next);
-
-	/* XXXMJ shouldn't be here, but needed for DN_BONUS to work. */
-	dnode->dn_nblkptr = 1;
-
-	fsnode_populate_sattrs(arg->fs, cur, dnode);
+	fsnode_populate_sattrs(arg, cur, dnode);
 }
 
 static void
@@ -1979,6 +2002,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 		warn("Failed to extend image file `%s'", image);
 		goto out;
 	}
+
 	if (spacemap_init(zfs_opts) != 0)
 		goto out;
 
