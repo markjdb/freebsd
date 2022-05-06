@@ -23,7 +23,7 @@ file_sizes_body()
 	# XXXMJ this creates sparse files, make sure makefs doesn't
 	# preserve the sparseness.
         # XXXMJ try with different ashifts
-	atf_check -o not-empty -e empty -s exit:0 \
+	atf_check -o empty -e empty -s exit:0 \
 		$MAKEFS -s 10g -o poolname=$(mkpoolname) ./test.img .
 
 	# XXXMJ mount the pool and verify
@@ -39,7 +39,7 @@ indirect_dnode_array_body()
 		touch $i
 	done
 
-	atf_check -o not-empty -e empty -s exit:0 \
+	atf_check -o empty -e empty -s exit:0 \
 		$MAKEFS -s 10g -o poolname=$(mkpoolname) ./test.img .
 
 	# XXXMJ mount the pool and verify

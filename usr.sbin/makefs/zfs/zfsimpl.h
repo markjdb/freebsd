@@ -289,26 +289,26 @@ typedef struct zio_cksum_salt {
  */
 
 #define	BPE_GET_ETYPE(bp)	\
-	(ASSERT(BP_IS_EMBEDDED(bp)), \
+	(assert(BP_IS_EMBEDDED(bp)), \
 	BF64_GET((bp)->blk_prop, 40, 8))
 #define	BPE_SET_ETYPE(bp, t)	do { \
-	ASSERT(BP_IS_EMBEDDED(bp)); \
+	assert(BP_IS_EMBEDDED(bp)); \
 	BF64_SET((bp)->blk_prop, 40, 8, t); \
 _NOTE(CONSTCOND) } while (0)
 
 #define	BPE_GET_LSIZE(bp)	\
-	(ASSERT(BP_IS_EMBEDDED(bp)), \
+	(assert(BP_IS_EMBEDDED(bp)), \
 	BF64_GET_SB((bp)->blk_prop, 0, 25, 0, 1))
 #define	BPE_SET_LSIZE(bp, x)	do { \
-	ASSERT(BP_IS_EMBEDDED(bp)); \
+	assert(BP_IS_EMBEDDED(bp)); \
 	BF64_SET_SB((bp)->blk_prop, 0, 25, 0, 1, x); \
 _NOTE(CONSTCOND) } while (0)
 
 #define	BPE_GET_PSIZE(bp)	\
-	(ASSERT(BP_IS_EMBEDDED(bp)), \
+	(assert(BP_IS_EMBEDDED(bp)), \
 	BF64_GET_SB((bp)->blk_prop, 25, 7, 0, 1))
 #define	BPE_SET_PSIZE(bp, x)	do { \
-	ASSERT(BP_IS_EMBEDDED(bp)); \
+	assert(BP_IS_EMBEDDED(bp)); \
 	BF64_SET_SB((bp)->blk_prop, 25, 7, 0, 1, x); \
 _NOTE(CONSTCOND) } while (0)
 
@@ -364,7 +364,7 @@ typedef struct blkptr {
 	(BPE_GET_ETYPE(bp) == BP_EMBEDDED_TYPE_DATA ? BPE_GET_LSIZE(bp) : 0): \
 	BF64_GET_SB((bp)->blk_prop, 0, SPA_LSIZEBITS, SPA_MINBLOCKSHIFT, 1))
 #define	BP_SET_LSIZE(bp, x)	do { \
-	ASSERT(!BP_IS_EMBEDDED(bp)); \
+	assert(!BP_IS_EMBEDDED(bp)); \
 	BF64_SET_SB((bp)->blk_prop, \
 	    0, SPA_LSIZEBITS, SPA_MINBLOCKSHIFT, 1, x); \
 _NOTE(CONSTCOND) } while (0)
@@ -399,7 +399,7 @@ _NOTE(CONSTCOND) } while (0)
 
 #define	BP_SET_BIRTH(bp, logical, physical)	\
 {						\
-	ASSERT(!BP_IS_EMBEDDED(bp));		\
+	assert(!BP_IS_EMBEDDED(bp));		\
 	(bp)->blk_birth = (logical);		\
 	(bp)->blk_phys_birth = ((logical) == (physical) ? 0 : (physical)); \
 }
@@ -678,40 +678,6 @@ enum zio_zstd_levels {
 
 #define	ZIO_COMPRESS_ON_VALUE	ZIO_COMPRESS_LZJB
 #define	ZIO_COMPRESS_DEFAULT	ZIO_COMPRESS_OFF
-
-/* nvlist pack encoding */
-#define	NV_ENCODE_NATIVE	0
-#define	NV_ENCODE_XDR		1
-
-typedef enum {
-	DATA_TYPE_UNKNOWN = 0,
-	DATA_TYPE_BOOLEAN,
-	DATA_TYPE_BYTE,
-	DATA_TYPE_INT16,
-	DATA_TYPE_UINT16,
-	DATA_TYPE_INT32,
-	DATA_TYPE_UINT32,
-	DATA_TYPE_INT64,
-	DATA_TYPE_UINT64,
-	DATA_TYPE_STRING,
-	DATA_TYPE_BYTE_ARRAY,
-	DATA_TYPE_INT16_ARRAY,
-	DATA_TYPE_UINT16_ARRAY,
-	DATA_TYPE_INT32_ARRAY,
-	DATA_TYPE_UINT32_ARRAY,
-	DATA_TYPE_INT64_ARRAY,
-	DATA_TYPE_UINT64_ARRAY,
-	DATA_TYPE_STRING_ARRAY,
-	DATA_TYPE_HRTIME,
-	DATA_TYPE_NVLIST,
-	DATA_TYPE_NVLIST_ARRAY,
-	DATA_TYPE_BOOLEAN_VALUE,
-	DATA_TYPE_INT8,
-	DATA_TYPE_UINT8,
-	DATA_TYPE_BOOLEAN_ARRAY,
-	DATA_TYPE_INT8_ARRAY,
-	DATA_TYPE_UINT8_ARRAY
-} data_type_t;
 
 /*
  * On-disk version number.

@@ -43,10 +43,8 @@
 #include <util.h>
 
 #include "makefs.h"
-
-/* XXXMJ just need nvlists */
-#define	ASSERT	assert
-#include "zfs/libzfs.h"
+#include "zfs/zfsimpl.h"
+#include "zfs/nvlist.h"
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
@@ -58,6 +56,9 @@
  * XXXMJ
  * - dn_checksum should be set at dnode initialization time
  * - resolve fsinfo vs. zfs_opt silliness
+ * - fix space map to handle arbitrarily large images
+ * - fix dnode array size limits
+ * - implement symlinks
  */
 
 /*
@@ -575,21 +576,24 @@ objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
 	mdnode = &os->osphys->os_meta_dnode;
 	mdnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
 	mdnode->dn_type = DMU_OT_DNODE;
-	/* XXXMJ this has to be at most^W^Wexactly 16KB apparently... */
-	mdnode->dn_datablkszsec = os->dnodeblksz >> SPA_MINBLOCKSHIFT;
 	mdnode->dn_bonustype = DMU_OT_NONE;
+	mdnode->dn_datablkszsec = os->dnodeblksz >> SPA_MINBLOCKSHIFT;
 	mdnode->dn_nlevels = 1;
+	for (uint64_t count = dnodecount / DNODES_PER_BLOCK; count > 1;
+	    count /= BLKPTR_PER_INDIR)
+		mdnode->dn_nlevels++;
 	mdnode->dn_nblkptr = 1;
+	mdnode->dn_maxblkid = howmany(dnodecount, DNODES_PER_BLOCK) - 1;
 	os->osphys->os_type = type;
 
-	os->dnodes = ecalloc(1, os->dnodeblksz);
+	os->dnodes = ecalloc(1,
+	    roundup2(dnodecount * sizeof(dnode_phys_t), os->dnodeblksz));
 }
 
 static void
 objset_write(fsinfo_t *fsopts, zfs_objset_t *os)
 {
 	/* XXXMJ this will need to be revisited */
-	assert(os->dnodeblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 	vdev_pwrite(fsopts, os->dnodes, os->dnodeblksz, os->dnodeloc);
 
 	/* XXXMJ update block pointers */

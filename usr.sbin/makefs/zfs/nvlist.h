@@ -26,23 +26,8 @@
  * $FreeBSD$
  */
 
-#ifndef _BOOT_LIBZFS_H_
-#define _BOOT_LIBZFS_H_
-
-#include <zfsimpl.h>
-
-#define	ZFS_MAXNAMELEN	256
-
-#if 0
-/*
- * ZFS fully-qualified device descriptor.
- */
-struct zfs_devdesc {
-	struct devdesc	dd;		/* Must be first. */
-	uint64_t	pool_guid;
-	uint64_t	root_guid;
-};
-#endif
+#ifndef _NVLIST_H_
+#define _NVLIST_H_
 
 /* nvp implementation version */
 #define	NV_VERSION		0
@@ -53,6 +38,40 @@ struct zfs_devdesc {
 
 #define	NV_ALIGN4(x)		(((x) + 3) & ~3)
 #define	NV_ALIGN(x)		(((x) + 7) & ~7)
+
+/* nvlist pack encoding */
+#define	NV_ENCODE_NATIVE	0
+#define	NV_ENCODE_XDR		1
+
+typedef enum {
+	DATA_TYPE_UNKNOWN = 0,
+	DATA_TYPE_BOOLEAN,
+	DATA_TYPE_BYTE,
+	DATA_TYPE_INT16,
+	DATA_TYPE_UINT16,
+	DATA_TYPE_INT32,
+	DATA_TYPE_UINT32,
+	DATA_TYPE_INT64,
+	DATA_TYPE_UINT64,
+	DATA_TYPE_STRING,
+	DATA_TYPE_BYTE_ARRAY,
+	DATA_TYPE_INT16_ARRAY,
+	DATA_TYPE_UINT16_ARRAY,
+	DATA_TYPE_INT32_ARRAY,
+	DATA_TYPE_UINT32_ARRAY,
+	DATA_TYPE_INT64_ARRAY,
+	DATA_TYPE_UINT64_ARRAY,
+	DATA_TYPE_STRING_ARRAY,
+	DATA_TYPE_HRTIME,
+	DATA_TYPE_NVLIST,
+	DATA_TYPE_NVLIST_ARRAY,
+	DATA_TYPE_BOOLEAN_VALUE,
+	DATA_TYPE_INT8,
+	DATA_TYPE_UINT8,
+	DATA_TYPE_BOOLEAN_ARRAY,
+	DATA_TYPE_INT8_ARRAY,
+	DATA_TYPE_UINT8_ARRAY
+} data_type_t;
 
 /*
  * nvlist header.
@@ -120,7 +139,7 @@ int nvlist_find(const nvlist_t *, const char *, data_type_t,
     int *, void *, int *);
 nvp_header_t *nvlist_next_nvpair(nvlist_t *, nvp_header_t *);
 
-int nvlist_add_boolean_value(nvlist_t *, const char *, boolean_t);
+int nvlist_add_boolean_value(nvlist_t *, const char *, bool);
 int nvlist_add_byte(nvlist_t *, const char *, uint8_t);
 int nvlist_add_int8(nvlist_t *, const char *, int8_t);
 int nvlist_add_uint8(nvlist_t *, const char *, uint8_t);
@@ -131,7 +150,7 @@ int nvlist_add_uint32(nvlist_t *, const char *, uint32_t);
 int nvlist_add_int64(nvlist_t *, const char *, int64_t);
 int nvlist_add_uint64(nvlist_t *, const char *, uint64_t);
 int nvlist_add_string(nvlist_t *, const char *, const char *);
-int nvlist_add_boolean_array(nvlist_t *, const char *, boolean_t *, uint32_t);
+int nvlist_add_boolean_array(nvlist_t *, const char *, bool *, uint32_t);
 int nvlist_add_byte_array(nvlist_t *, const char *, uint8_t *, uint32_t);
 int nvlist_add_int8_array(nvlist_t *, const char *, int8_t *, uint32_t);
 int nvlist_add_uint8_array(nvlist_t *, const char *, uint8_t *, uint32_t);
@@ -145,28 +164,4 @@ int nvlist_add_string_array(nvlist_t *, const char *, char * const *, uint32_t);
 int nvlist_add_nvlist(nvlist_t *, const char *, nvlist_t *);
 int nvlist_add_nvlist_array(nvlist_t *, const char *, nvlist_t **, uint32_t);
 
-#if 0
-int	zfs_parsedev(struct zfs_devdesc *dev, const char *devspec,
-		     const char **path);
-#endif
-char	*zfs_fmtdev(void *vdev);
-int	zfs_probe_dev(const char *devname, uint64_t *pool_guid);
-int	zfs_list(const char *name);
-int	zfs_get_bootonce(void *, const char *, char *, size_t);
-int	zfs_get_bootenv(void *, nvlist_t **);
-int	zfs_set_bootenv(void *, nvlist_t *);
-int	zfs_attach_nvstore(void *);
-uint64_t ldi_get_size(void *);
-void	init_zfs_boot_options(const char *currdev);
-
-int	zfs_bootenv(const char *name);
-int	zfs_attach_nvstore(void *);
-int	zfs_belist_add(const char *name, uint64_t __unused);
-int	zfs_set_env(void);
-
-nvlist_t *vdev_read_bootenv(vdev_t *);
-
-extern struct devsw zfs_dev;
-extern struct fs_ops zfs_fsops;
-
-#endif /*_BOOT_LIBZFS_H_*/
+#endif /* !_NVLIST_H_ */
