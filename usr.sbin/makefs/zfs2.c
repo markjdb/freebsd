@@ -65,6 +65,7 @@
  * comes from.  Be sure to test with large files...
  */
 #define	INDIR_LEVELS		6
+#define	BLKPTR_PER_INDIR	(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t))
 
 #define	VDEV_LABEL_SPACE	\
 	((off_t)(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE))
@@ -217,6 +218,7 @@ static const sa_attr_type_t zpl_attr_layout[] = {
 
 /* Key for the default ZPL attribute table in the layout ZAP. */
 #define	SA_LAYOUT_INDEX		2
+#define	SA_LAYOUT_INDEX_SYMLINK	3
 
 void
 zfs_prep_opts(fsinfo_t *fsopts)
@@ -266,12 +268,12 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 }
 
 static void
-blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
-    enum zio_checksum cksumt, zio_cksum_t *cksum)
+blkptr_set_level(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
+    uint8_t level, enum zio_checksum cksumt, zio_cksum_t *cksum)
 {
 	dva_t *dva;
 
-	/* XXXMJ assert size is a power of 2? */
+	assert(powerof2(size));
 
 	BP_ZERO(bp);
 	BP_SET_LSIZE(bp, size);
@@ -280,6 +282,10 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 	BP_SET_COMPRESS(bp, ZIO_COMPRESS_OFF);
 	BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
 	BP_SET_BIRTH(bp, TXG_INITIAL, TXG_INITIAL);
+	BP_SET_LEVEL(bp, level);
+#if 0
+	BP_SET_FILL(bp, 0); /* XXXMJ */
+#endif
 	BP_SET_TYPE(bp, dntype);
 
 	dva = BP_IDENTITY(bp);
@@ -287,6 +293,13 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 	DVA_SET_OFFSET(dva, off);
 	DVA_SET_ASIZE(dva, size);
 	memcpy(&bp->blk_cksum, cksum, sizeof(*cksum));
+}
+
+static void
+blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
+    enum zio_checksum cksumt, zio_cksum_t *cksum)
+{
+	blkptr_set_level(bp, off, size, dntype, 0, cksumt, cksum);
 }
 
 static void
@@ -1238,7 +1251,6 @@ pool_finish(fsinfo_t *fsopts)
 
 	dsldir = dsl_dir_alloc(fsopts, mos, 0, &dsldirid);
 
-	/* XXXMJ large thing to put on the stack */
 	{
 	zfs_zap_t objdirzap;
 	zap_init(&objdirzap, objdirdn);
@@ -1270,7 +1282,6 @@ pool_finish(fsinfo_t *fsopts)
 
 	spacemap_write(fsopts, objarr);
 
-	/* Write pool labels. */
 	label = ecalloc(1, sizeof(*label));
 
 	/* Fill out vdev metadata. */
@@ -1351,156 +1362,120 @@ fsnode_foreach_count(fsnode *cur, const char *dir __unused, void *arg)
 		(*countp)++;
 }
 
-/* XXXMJ fold this into populate arg? */
-struct blkptr_alloc_s {
-	char		buf[INDIR_LEVELS][SPA_OLDMAXBLOCKSIZE];
+struct dnode_cursor {
+	blkptr_t	inddir[INDIR_LEVELS][BLKPTR_PER_INDIR];
 	dnode_phys_t	*dnode;
 	off_t		off;
-	int		indblksz;
-	int		levels;
 };
 
-static void
-blkptr_alloc_init(fsinfo_t *fsopts, struct blkptr_alloc_s *s,
-    dnode_phys_t *dnode, off_t size)
+static struct dnode_cursor *
+dnode_cursor_init(fsinfo_t *fsopts, dnode_phys_t *dnode, off_t size)
 {
+	struct dnode_cursor *c;
 	zfs_opt_t *zfs_opts;
 	off_t max, nblocks;
 	int indlevel;
 
 	zfs_opts = fsopts->fs_specific;
 
+	assert(dnode->dn_nblkptr == 1);
+
+	c = ecalloc(1, sizeof(*c));
+	c->dnode = dnode;
+	c->off = 0;
+
 	/*
 	 * Do we need indirect blocks?
 	 */
 	nblocks = howmany(size, SPA_OLDMAXBLOCKSIZE);
-	for (indlevel = 0, max = 1; nblocks > max; indlevel++)
+	for (indlevel = 1, max = 1; nblocks > max; indlevel++)
 		max *= SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t);
 	assert(indlevel < INDIR_LEVELS);
 
-	/*
-	 * XXXMJ does the "rightmost" indirect block in a level have to have the
-	 * same block size as the rest?  If not then we can save space at the
-	 * expsense of some complexity.  Or maybe (probably) it's not worth it
-	 * once you have a large enough indir tree.
-	 */
-	s->dnode = dnode;
-	s->off = 0;
-	s->levels = indlevel;
-	switch (s->levels) {
-	case 0:
-		s->indblksz = 0;
-		break;
-	case 1:
-		assert(size > (off_t)SPA_OLDMAXBLOCKSIZE);
-		if (size > (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)) *
-		    (off_t)SPA_OLDMAXBLOCKSIZE) {
-			s->indblksz = SPA_OLDMAXBLOCKSIZE;
-		} else {
-			s->indblksz = nblocks * sizeof(blkptr_t);
-			s->indblksz = 1 << flsll(s->indblksz);
-			if (s->indblksz < (1 << zfs_opts->ashift))
-				s->indblksz = (1 << zfs_opts->ashift);
-		}
-		break;
-	default:
-		s->indblksz = SPA_OLDMAXBLOCKSIZE;
-		break;
-	}
+	dnode->dn_nlevels = indlevel;
+	dnode->dn_maxblkid = howmany(size, SPA_OLDMAXBLOCKSIZE) - 1;
+	dnode->dn_datablkszsec = (indlevel == 1 ?
+	    (powerof2(size) ? size : (1 << flsl(size))) :
+	    SPA_OLDMAXBLOCKSIZE) >> SPA_MINBLOCKSHIFT;
+	dnode->dn_used = 0; /* XXXMJ just data blocks or also indirect? */
 
-	/* XXXMJ now need to allocate indirect block pointers for offset 0 */
-}
-
-static blkptr_t *
-blkptr_alloc(fsinfo_t *fsopts, struct blkptr_alloc_s *s, off_t off)
-{
-	zfs_opt_t *zfs_opts;
-	off_t blk, loc, blksz;
-
-	if (s->levels == 0) {
-		assert(off < (off_t)SPA_MAXBLOCKSIZE);
-		return (&s->dnode->dn_blkptr[off / SPA_MAXBLOCKSIZE]);
-	}
-
-	zfs_opts = fsopts->fs_specific;
-	assert(off % SPA_OLDMAXBLOCKSIZE == 0);
-
-	/*
-	 * First see if the previous allocation filled a level 1 indirect block.
-	 * If so, flush that block and visit its ancestors to see if they need
-	 * to be flushed as well.
-	 */
-	s->off = off;
-	blk = off >> SPA_OLDMAXBLOCKSHIFT;
-	for (int i = 1; i <= s->levels; i++) {
-		zio_cksum_t cksum;
-		blkptr_t *pbp;
-
-		if (blk == 0) {
-			/*
-			 * Don't need to do anything for the very first
-			 * allocation.
-			 */
-			break;
-		}
-		if (blk % (1ull << 10 /* XXXMJ log2(OLDMAXBLOCKSIZE / sizeof(blkptr_t)) */) != 0)
-			break;
-		blk >>= 10;
-
-		blksz = s->indblksz;
-		loc = space_alloc(zfs_opts, &blksz);
-		fletcher_4_native(s->buf[i], s->indblksz, NULL, &cksum);
-
-		assert(blk > 0);
-		if (i < s->levels) {
-			assert(blk - 1 < (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)));
-			pbp = (blkptr_t *)&s->buf[i + 1][(blk - 1) * sizeof(blkptr_t)];
-		} else {
-			assert(blk - 1 <= 2);
-			pbp = &s->dnode->dn_blkptr[blk - 1];
-		}
-		blkptr_set(pbp, loc, blksz, DMU_OT_PLAIN_FILE_CONTENTS, ZIO_CHECKSUM_FLETCHER_4, &cksum);
-		vdev_pwrite(fsopts, s->buf[i], blksz, loc);
-		memset(s->buf[i], 0, SPA_OLDMAXBLOCKSIZE);
-	}
-	off_t l1id = ((off >> SPA_OLDMAXBLOCKSHIFT) &
-	    ((SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t))) - 1);
-	return ((blkptr_t *)&s->buf[1][l1id * sizeof(blkptr_t)]);
+	return (c);
 }
 
 static void
-blkptr_alloc_flush(fsinfo_t *fsopts, struct blkptr_alloc_s *s)
+_dnode_cursor_flush(fsinfo_t *fsopts, struct dnode_cursor *c, int levels)
 {
+	zio_cksum_t cksum;
 	zfs_opt_t *zfs_opts;
+	blkptr_t *pbp;
+	void *buf;
 	off_t blkid, blksz, loc;
+
+	assert(levels > 0);
+	assert(levels <= c->dnode->dn_nlevels - 1);
 
 	zfs_opts = fsopts->fs_specific;
 
-	/* XXXMJ largely duplicates similar logic in blkptr_alloc(). */
-	blkid = s->off >> SPA_OLDMAXBLOCKSHIFT;
-	for (int i = 1; i <= s->levels; i++) {
-		zio_cksum_t cksum;
-		blkptr_t *pbp;
+	blksz = SPA_OLDMAXBLOCKSIZE;
+	blkid = c->off >> SPA_OLDMAXBLOCKSHIFT;
+	for (int i = 0; i < levels; i++) {
+		buf = c->inddir[i];
 
-		blksz = s->indblksz;
+		if (i + 1 == c->dnode->dn_nlevels - 1)
+			pbp = &c->dnode->dn_blkptr[0];
+		else
+			pbp = &c->inddir[i + 1][blkid & BLKPTR_PER_INDIR];
+
 		loc = space_alloc(zfs_opts, &blksz);
-
-		fletcher_4_native(s->buf[i], s->indblksz, NULL, &cksum);
-
-		blkid >>= 10;
-
-		if (i < s->levels) {
-			assert(blkid < (off_t)(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t)));
-			pbp = (blkptr_t *)&s->buf[i + 1][(blkid) * sizeof(blkptr_t)];
-		} else {
-			assert(blkid <= 2);
-			pbp = &s->dnode->dn_blkptr[blkid];
-		}
-		blkptr_set(pbp, loc, blksz, DMU_OT_PLAIN_FILE_CONTENTS,
+		fletcher_4_native(buf, blksz, NULL, &cksum);
+		blkptr_set_level(pbp, loc, blksz, c->dnode->dn_type, i + 1,
 		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
-		vdev_pwrite(fsopts, s->buf[i], blksz, loc);
-		memset(s->buf[i], 0, SPA_OLDMAXBLOCKSIZE);
+		vdev_pwrite(fsopts, buf, blksz, loc);
+		memset(buf, 0, SPA_OLDMAXBLOCKSIZE);
+
+		blkid /= BLKPTR_PER_INDIR;
 	}
+}
+
+static blkptr_t *
+dnode_cursor_next(fsinfo_t *fsopts, struct dnode_cursor *c, off_t off)
+{
+	off_t blkid, l1id;
+	int levels;
+
+	if (c->dnode->dn_nlevels == 1) {
+		assert(off < (off_t)SPA_OLDMAXBLOCKSIZE);
+		return (&c->dnode->dn_blkptr[0]);
+	}
+
+	assert(off % SPA_OLDMAXBLOCKSIZE == 0);
+
+	/* Do we need to flush any full indirect blocks? */
+	if (off > 0) {
+		blkid = off >> SPA_OLDMAXBLOCKSHIFT;
+		for (levels = 0; levels < c->dnode->dn_nlevels - 1; levels++) {
+			if (blkid % BLKPTR_PER_INDIR != 0)
+				break;
+			blkid /= BLKPTR_PER_INDIR;
+		}
+		if (levels > 0)
+			_dnode_cursor_flush(fsopts, c, levels);
+	}
+
+	c->off = off;
+	l1id = (off >> SPA_OLDMAXBLOCKSHIFT) & (BLKPTR_PER_INDIR - 1);
+	return (&c->inddir[0][l1id]);
+}
+
+static void
+dnode_cursor_finish(fsinfo_t *fsopts, struct dnode_cursor *c)
+{
+	int levels;
+
+	levels = c->dnode->dn_nlevels - 1;
+	if (levels > 0)
+		_dnode_cursor_flush(fsopts, c, levels);
+	free(c);
 }
 
 struct fsnode_populate_dir_s {
@@ -1627,7 +1602,8 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 
 	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
 	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX,
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info,
+	    cur->type == S_IFLNK ? SA_LAYOUT_INDEX_SYMLINK : SA_LAYOUT_INDEX,
 	    fs->savarszcnt * sizeof(uint64_t));
 	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
 
@@ -1663,7 +1639,7 @@ static void
 fsnode_populate_file(fsnode *cur, const char *dir,
     struct fsnode_foreach_populate_arg *arg)
 {
-	struct blkptr_alloc_s *bpas;
+	struct dnode_cursor *c;
 	dnode_phys_t *dnode;
 	fsinfo_t *fsopts;
 	zfs_opt_t *zfs_opts;
@@ -1684,15 +1660,10 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
 
-	bpas = ecalloc(1, sizeof(*bpas));
-	blkptr_alloc_init(fsopts, bpas, dnode, size);
+	c = dnode_cursor_init(fsopts, dnode, size);
 
-	/* XXXMJ indirect blocks are always the maximum size */
-	dnode->dn_nlevels = (uint8_t)bpas->levels + 1;
 	/* Leave room for attributes in the bonus buffer. */
-	dnode->dn_nblkptr = 1;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
-	dnode->dn_flags = 0; /* XXXMJ ??? */
 	dnode->dn_datablkszsec = MIN(SPA_OLDMAXBLOCKSIZE, 1 << MAX(zfs_opts->ashift, flsl(size))) >>
 	    SPA_MINBLOCKSHIFT;
 #if 0 /* XXXMJ */
@@ -1729,15 +1700,14 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 		blkoff = space_alloc(zfs_opts, &target);
 		assert(target <= (off_t)SPA_OLDMAXBLOCKSIZE);
 
-		bp = blkptr_alloc(fsopts, bpas, foff);
+		bp = dnode_cursor_next(fsopts, c, foff);
 		fletcher_4_native(zfs_opts->filebuf, target, NULL, &cksum);
 		blkptr_set(bp, blkoff, target, DMU_OT_PLAIN_FILE_CONTENTS, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
 		vdev_pwrite(fsopts, zfs_opts->filebuf, target, blkoff);
 	}
-	blkptr_alloc_flush(fsopts, bpas);
+	dnode_cursor_finish(fsopts, c);
 
-	free(bpas);
 	(void)close(fd);
 
 	fsnode_populate_sattrs(arg, cur, dnode);
