@@ -33,6 +33,17 @@
  */
 #define	INDIR_LEVELS	6
 
+#define	VDEV_LABEL_SIZE	(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE)
+
+#define	SA_LAYOUT_INDEX	2
+
+typedef struct {
+	const char	*name;
+	uint64_t	index;
+	uint64_t	size;
+	uint64_t	byteswap;
+} zfs_sattr_t;
+
 typedef struct {
 	objset_phys_t	*osphys;
 	off_t		osloc;
@@ -99,6 +110,39 @@ static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
     uint64_t *);
 
 static off_t space_alloc(zfs_opt_t *, off_t *);
+
+#define	ZPL_ATTR(n, i, s, b)	\
+{				\
+	.name = n,		\
+	.index = i,		\
+	.size = s,		\
+	.byteswap = b,		\
+}
+
+static const zfs_sattr_t zpl_attrs[] = {
+	ZPL_ATTR("ZPL_ATIME", 0, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_MTIME", 1, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_CTIME", 2, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_CRTIME", 3, sizeof(uint64_t) * 2, SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_GEN", 4, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_MODE", 5, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_SIZE", 6, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_PARENT", 7, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_LINKS", 8, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_XATTR", 9, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_RDEV", 10, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_FLAGS", 11, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_UID", 12, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_GID", 13, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_PAD", 14, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_ZNODE_ACL", 15, 88, SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_DACL_COUNT", 16, sizeof(uint64_t), SA_UINT64_ARRAY),
+	ZPL_ATTR("ZPL_SYMLINK", 17, 0, SA_UINT8_ARRAY),
+	ZPL_ATTR("ZPL_SCANSTAMP", 18, sizeof(uint64_t) * 4, SA_UINT8_ARRAY),
+	ZPL_ATTR("ZPL_DACL_ACES", 19, 0, SA_ACL),
+	ZPL_ATTR("ZPL_DXATTR", 20, 0, SA_UINT8_ARRAY),
+	ZPL_ATTR("ZPL_PROJID", 21, sizeof(uint64_t), SA_UINT64_ARRAY),
+};
 
 void
 zfs_prep_opts(fsinfo_t *fsopts)
@@ -259,10 +303,9 @@ spacemap_init(zfs_opt_t *zfs_opts)
 
 	size = zfs_opts->size;
 
-	assert(size >= (off_t)(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE));
+	assert(size >= (off_t)VDEV_LABEL_SIZE);
 
-	nbits = (size - VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE) >>
-	    zfs_opts->ashift;
+	nbits = (size - VDEV_LABEL_SIZE) >> zfs_opts->ashift;
 	if (nbits > INT_MAX) {
 		/*
 		 * With the smallest block size of 512B, the limit on the image
@@ -304,7 +347,6 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 	objblk = ecalloc(1, blksz);
 	objloc = space_alloc(zfs_opts, &blksz);
 
-	objarr->dn_indblkshift = 12; /* XXXMJ see dnode_allocate(), zfs_default_ibs */
 	objarr->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	objarr->dn_nblkptr = 1;
 	objarr->dn_nlevels = 1;
@@ -328,7 +370,6 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP, DMU_OT_SPACE_MAP_HEADER, &dnid);
 	printf("%s:%d objid is %lu\n", __func__, __LINE__, dnid);
-	dnode->dn_indblkshift = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	/*
 	 * We'll only ever allocate a single block for this space map, but
@@ -355,7 +396,6 @@ spacemap_write(fsinfo_t *fsopts, dnode_phys_t *objarr)
 
 	uint64_t dnid2;
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP, DMU_OT_SPACE_MAP_HEADER, &dnid2);
-	dnode->dn_indblkshift = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_nblkptr = 1;
 	dnode->dn_nlevels = 1;
@@ -447,7 +487,7 @@ objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
 	/* XXXMJ what else? */
 	os->osphys = ecalloc(1, os->osblksz);
 	mdnode = &os->osphys->os_meta_dnode;
-	mdnode->dn_indblkshift = zfs_opts->ashift;
+	mdnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
 	mdnode->dn_type = DMU_OT_DNODE;
 	/* XXXMJ this has to be at most^W^Wexactly 16KB apparently... */
 	mdnode->dn_datablkszsec = os->dnodeblksz >> SPA_MINBLOCKSHIFT;
@@ -482,6 +522,7 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 	if (idp != NULL)
 		*idp = os->dnodenextfree;
 	dnode = &os->dnodes[os->dnodenextfree++];
+	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT; /* XXXMJ zfs_default_ibs */
 	dnode->dn_type = type;
 	dnode->dn_bonustype = bonustype;
 	dnode->dn_compress = ZIO_COMPRESS_OFF;
@@ -678,7 +719,6 @@ zap_micro_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 	dnode->dn_nlevels = 1;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
 	dnode->dn_datablkszsec = bytes >> SPA_MINBLOCKSHIFT;
-	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
 
 	fletcher_4_native(zfs_opts->filebuf, bytes, NULL, &cksum);
 	blkptr_set(&dnode->dn_blkptr[0], loc, bytes, dnode->dn_type, ZIO_CHECKSUM_FLETCHER_4,
@@ -835,7 +875,6 @@ zap_fat_write(fsinfo_t *fsopts, zfs_zap_t *zap)
 			ptrhasht[i] = blkid;
 
 	dnode = zap->dnode;
-	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
 	dnode->dn_nblkptr = 2;
 	dnode->dn_nlevels = 1;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
@@ -933,7 +972,6 @@ pool_add_bplists(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
 	dnode->dn_nblkptr = 1;
 	dnode->dn_nlevels = 1;
 	dnode->dn_bonuslen = BPOBJ_SIZE_V2;
-	dnode->dn_indblkshift = zfs_opts->ashift - SPA_MINBLOCKSHIFT;
 	zap_add_uint64(objdir, DMU_POOL_FREE_BPOBJ, dnid);
 
 	/* Object used for deferred frees. */
@@ -943,7 +981,6 @@ pool_add_bplists(fsinfo_t *fsopts, zfs_objset_t *mos, zfs_zap_t *objdir)
 	dnode->dn_nblkptr = 1;
 	dnode->dn_nlevels = 1;
 	dnode->dn_bonuslen = BPOBJ_SIZE_V2;
-	dnode->dn_indblkshift = zfs_opts->ashift - SPA_MINBLOCKSHIFT;
 	zap_add_uint64(objdir, DMU_POOL_SYNC_BPLIST, dnid);
 }
 
@@ -1045,7 +1082,7 @@ pool_finish(fsinfo_t *fsopts)
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
-	    VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE);
+	    VDEV_LABEL_SIZE);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_GUID, guid);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_PATH, "/dev/null");
@@ -1102,7 +1139,7 @@ pool_finish(fsinfo_t *fsopts)
 		nv = nvlist_create(NV_UNIQUE_NAME);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
-		    VDEV_LABEL_START_SIZE - VDEV_LABEL_END_SIZE);
+		    VDEV_LABEL_SIZE);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, rootvdev);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_TXG, txg);
@@ -1124,7 +1161,6 @@ pool_finish(fsinfo_t *fsopts)
 		fletcher_4_native(buf, configblksz, NULL, &cksum);
 		blkptr_set(&configdn->dn_blkptr[0], configloc, configblksz,
 		    configdn->dn_type, ZIO_CHECKSUM_FLETCHER_4, &cksum);
-		configdn->dn_indblkshift = 12; /* XXXMJ see dnode_allocate(), zfs_default_ibs */
 		configdn->dn_datablkszsec = configblksz >> SPA_MINBLOCKSHIFT;
 		configdn->dn_used = configblksz >> SPA_MINBLOCKSHIFT;
 		configdn->dn_nlevels = 1;
@@ -1423,6 +1459,38 @@ fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
 }
 
 static void
+fsnode_populate_sattrs(const fsnode *cur, dnode_phys_t *dnode)
+{
+	sa_hdr_phys_t *sahdr;
+	uint64_t *attr;
+
+	assert(dnode->dn_bonustype == DMU_OT_SA);
+
+	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
+	sahdr->sa_magic = SA_MAGIC;
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX, 8 /* variable-length attr */);
+
+	attr = (uint64_t *)((char *)sahdr + SA_HDR_SIZE(sahdr));
+	attr[0] = cur->inode->st.st_mode;
+	if (cur->type == S_IFREG)
+		attr[SA_SIZE_OFFSET / sizeof(uint64_t)] = cur->inode->st.st_size;
+	*(uint64_t *)((char *)sahdr + 8 + SA_GEN_OFFSET) = cur->inode->st.st_gen;
+	*(uint64_t *)((char *)sahdr + 8 + SA_UID_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_GID_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_PARENT_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_FLAGS_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET + 8) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET + 8) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET + 8) = 0; /* XXXMJ */
+	*(uint64_t *)((char *)sahdr + 8 + SA_LINKS_OFFSET + 8) = 0; /* XXXMJ */
+
+	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr) + 14 * sizeof(uint64_t);
+}
+
+static void
 fsnode_populate_file(fsnode *cur, const char *dir,
     struct fsnode_foreach_populate_arg *arg)
 {
@@ -1451,7 +1519,6 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	blkptr_alloc_init(fsopts, bpas, dnode, size);
 
 	/* XXXMJ indirect blocks are always the maximum size */
-	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
 	dnode->dn_nlevels = (uint8_t)bpas->levels + 1;
 	/* Leave room for attributes in the bonus buffer. */
 	dnode->dn_nblkptr = 1;
@@ -1504,25 +1571,7 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	free(bpas);
 	(void)close(fd);
 
-	/* XXXMJ */
-	sa_hdr_phys_t *sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
-	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, 2 /* XXXMJ */, 8 /* variable-length attr */);
-	*(uint64_t *)((char *)sahdr + 8 + SA_MODE_OFFSET) = cur->inode->st.st_mode;
-	*(uint64_t *)((char *)sahdr + 8 + SA_SIZE_OFFSET) = size;
-	*(uint64_t *)((char *)sahdr + 8 + SA_GEN_OFFSET) = 1;
-	*(uint64_t *)((char *)sahdr + 8 + SA_UID_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_GID_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_PARENT_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_FLAGS_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_LINKS_OFFSET + 8) = 0; /* XXXMJ */
-	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr) + 14 * sizeof(uint64_t);
+	fsnode_populate_sattrs(cur, dnode);
 
 	/* Add an entry to the parent directory. */
 	fsnode_populate_dirent(arg, cur->name, dnid);
@@ -1560,25 +1609,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	/* XXXMJ shouldn't be here, but needed for DN_BONUS to work. */
 	dnode->dn_nblkptr = 1;
 
-	sa_hdr_phys_t *sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
-	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, 2 /* XXXMJ */, 8 /* variable-length attr */);
-	*(uint64_t *)((char *)sahdr + 8 + SA_MODE_OFFSET) = cur->inode->st.st_mode;
-	*(uint64_t *)((char *)sahdr + 8 + SA_SIZE_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_GEN_OFFSET) = 1;
-	*(uint64_t *)((char *)sahdr + 8 + SA_UID_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_GID_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_PARENT_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_FLAGS_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_ATIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_MTIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_CTIME_OFFSET + 8) = 0; /* XXXMJ */
-	*(uint64_t *)((char *)sahdr + 8 + SA_LINKS_OFFSET + 8) = 0; /* XXXMJ */
-	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr) + 14 * sizeof(uint64_t);
-	printf("%s:%d %u\n", __func__, __LINE__, dnode->dn_bonuslen);
+	fsnode_populate_sattrs(cur, dnode);
 }
 
 static void
@@ -1611,6 +1642,63 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 	}
 }
 
+static uint64_t
+fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
+{
+	zfs_zap_t sazap, salzap, sarzap;
+	zfs_objset_t *os;
+	dnode_phys_t *saobj, *salobj, *sarobj;
+	uint64_t saobjid, salobjid, sarobjid;
+	uint16_t sas[14];
+	char ti[4];
+
+	os = &fs->os;
+
+	saobj = objset_dnode_alloc(os, DMU_OT_SA_MASTER_NODE, &saobjid);
+	salobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_LAYOUTS, &salobjid);
+	sarobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_REGISTRATION, &sarobjid);
+
+	zap_init(&sarzap, sarobj);
+	for (size_t i = 0; i < nitems(zpl_attrs); i++) {
+		const zfs_sattr_t *sa;
+		uint64_t attr;
+
+		attr = 0;
+		sa = &zpl_attrs[i];
+		SA_ATTR_ENCODE(attr, sa->index, sa->size, sa->byteswap);
+		zap_add_uint64(&sarzap, sa->name, attr);
+	}
+	zap_write(fsopts, &sarzap);
+
+	sas[0] = htobe16(5);	/* ZPL_MODE */
+	sas[1] = htobe16(6);	/* ZPL_SIZE */
+	sas[2] = htobe16(4);	/* ZPL_GEN */
+	sas[3] = htobe16(12);	/* ZPL_UID */
+	sas[4] = htobe16(13);	/* ZPL_GID */
+	sas[5] = htobe16(7);	/* ZPL_PARENT */
+	sas[6] = htobe16(11);	/* ZPL_FLAGS */
+	sas[7] = htobe16(0);	/* ZPL_ATIME */
+	sas[8] = htobe16(1);	/* ZPL_MTIME */
+	sas[9] = htobe16(2);	/* ZPL_CTIME */
+	sas[10] = htobe16(3);	/* ZPL_CRTIME */
+	sas[11] = htobe16(8);	/* ZPL_LINKS */
+	sas[12] = htobe16(16);	/* ZPL_DACL_COUNT */
+	sas[13] = htobe16(19);	/* ZPL_DACL_ACES */
+
+	zap_init(&salzap, salobj);
+	snprintf(ti, sizeof(ti), "%u", SA_LAYOUT_INDEX);
+	zap_add(&salzap, ti, sizeof(sa_attr_type_t), nitems(sas),
+	    (uint8_t *)sas);
+	zap_write(fsopts, &salzap);
+
+	zap_init(&sazap, saobj);
+	zap_add_uint64(&sazap, SA_LAYOUTS, salobjid);
+	zap_add_uint64(&sazap, SA_REGISTRY, sarobjid);
+	zap_write(fsopts, &sazap);
+
+	return (saobjid);
+}
+
 static void
 mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
@@ -1618,8 +1706,8 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zio_cksum_t cksum;
 	zfs_objset_t *os;
 	zfs_opt_t *zfs_opts;
-	dnode_phys_t *masterobj, *saobj, *salobj, *sarobj;
-	uint64_t dnodecount, moid, saobjid, salobjid, sarobjid;
+	dnode_phys_t *masterobj;
+	uint64_t dnodecount, moid, saobjid;
 
 	zfs_opts = fsopts->fs_specific;
 	os = &fs->os;
@@ -1649,88 +1737,10 @@ mkfs(fsinfo_t *fsopts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	assert(moid == MASTER_NODE_OBJ);
 
 	/*
-	 * Create the SA layout(s) now, since filesystem object dnodes will
-	 * refer to them.
-	 *
-	 * SA:
-	 * - files/dirs/etc. have a bonus buffer of type DMU_OT_SA, starts with
-	 *   a sa_hdr_phys
+	 * Create the ZAP SA layout now, since filesystem object dnodes will
+	 * refer to those attributes.
 	 */
-	saobj = objset_dnode_alloc(os, DMU_OT_SA_MASTER_NODE, &saobjid);
-
-	salobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_LAYOUTS, &salobjid);
-
-	sarobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_REGISTRATION, &sarobjid);
-
-	{
-	zfs_zap_t sarzap;
-	zap_init(&sarzap, sarobj);
-#define	ATTR_REG(name, ind, size, bs) do {		\
-	uint64_t attr = 0;				\
-	SA_ATTR_ENCODE(attr, ind, size, bs);		\
-	zap_add_uint64(&sarzap, name, attr);		\
-} while (0)
-	ATTR_REG("ZPL_ATIME", 0, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_MTIME", 1, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_CTIME", 2, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_CRTIME", 3, sizeof(uint64_t) * 2, SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_GEN", 4, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_MODE", 5, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_SIZE", 6, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_PARENT", 7, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_LINKS", 8, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_XATTR", 9, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_RDEV", 10, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_FLAGS", 11, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_UID", 12, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_GID", 13, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_PAD", 14, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_ZNODE_ACL", 15, 88, SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_DACL_COUNT", 16, sizeof(uint64_t), SA_UINT64_ARRAY);
-	ATTR_REG("ZPL_SYMLINK", 17, 0, SA_UINT8_ARRAY);
-	ATTR_REG("ZPL_SCANSTAMP", 18, sizeof(uint64_t) * 4, SA_UINT8_ARRAY);
-	ATTR_REG("ZPL_DACL_ACES", 19, 0, SA_ACL);
-	ATTR_REG("ZPL_DXATTR", 20, 0, SA_UINT8_ARRAY);
-	ATTR_REG("ZPL_PROJID", 21, sizeof(uint64_t), SA_UINT64_ARRAY);
-#undef ATTR_REGISTER
-	zap_write(fsopts, &sarzap);
-	}
-
-	{
-	zfs_zap_t salzap;
-	uint16_t sas[14];
-
-	sas[0] = bswap16(5);	/* ZPL_MODE */
-	sas[1] = bswap16(6);	/* ZPL_SIZE */
-	sas[2] = bswap16(4);	/* ZPL_GEN */
-	sas[3] = bswap16(12);	/* ZPL_UID */
-	sas[4] = bswap16(13);	/* ZPL_GID */
-	sas[5] = bswap16(7);	/* ZPL_PARENT */
-	sas[6] = bswap16(11);	/* ZPL_FLAGS */
-	sas[7] = bswap16(0);	/* ZPL_ATIME */
-	sas[8] = bswap16(1);	/* ZPL_MTIME */
-	sas[9] = bswap16(2);	/* ZPL_CTIME */
-	sas[10] = bswap16(3);	/* ZPL_CRTIME */
-	sas[11] = bswap16(8);	/* ZPL_LINKS */
-	sas[12] = bswap16(16);	/* ZPL_DACL_COUNT */
-	sas[13] = bswap16(19);	/* ZPL_DACL_ACES */
-
-	char attr[16];
-	snprintf(attr, sizeof(attr), "%u", 2u);
-
-	zap_init(&salzap, salobj);
-	zap_add(&salzap, attr, sizeof(sa_attr_type_t), nitems(sas), (uint8_t *)&sas[0]);
-	zap_write(fsopts, &salzap);
-	}
-
-	{
-	zfs_zap_t sazap;
-	zap_init(&sazap, saobj);
-	printf("%s:%d layout obj %lu\n", __func__, __LINE__, salobjid);
-	zap_add_uint64(&sazap, SA_LAYOUTS, salobjid);
-	zap_add_uint64(&sazap, SA_REGISTRY, sarobjid);
-	zap_write(fsopts, &sazap);
-	}
+	saobjid = fs_add_zpl_attrs(fsopts, fs);
 
 	poparg.fsopts = fsopts;
 	poparg.fs = fs;
