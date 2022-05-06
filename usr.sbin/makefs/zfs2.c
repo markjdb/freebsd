@@ -1319,6 +1319,9 @@ pool_finish(fsinfo_t *fsopts)
 		vdev_label_write(fsopts, i, label);
 }
 
+/*
+ * Visit each node in a directory hierarchy, in pre-order depth-first order.
+ */
 static void
 fsnode_foreach(fsnode *root, const char *dir,
     void (*cb)(fsnode *, const char *, void *), void *arg)
@@ -1566,6 +1569,7 @@ static void
 fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
     const fsnode *cur, dnode_phys_t *dnode)
 {
+	const fsnode *child;
 	zfs_fs_t *fs;
 	zfs_ace_hdr_t aces[3];
 	struct stat *sb;
@@ -1573,29 +1577,35 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 	uint64_t daclcount, flags, gen, gid, links, mode, parent, size, uid;
 	char *attrbuf;
 	size_t sz;
+	unsigned int children, subdirs;
 
 	assert(dnode->dn_bonustype == DMU_OT_SA);
 	assert(dnode->dn_nblkptr == 1);
 
 	fs = arg->fs;
 
+	children = subdirs = 0;
+	if (cur->type == S_IFDIR) {
+		/* XXXMJ this doesn't work for the root directory */
+		for (child = cur->child; child != NULL; child = child->next) {
+			if (child->type == S_IFDIR)
+				subdirs++;
+			children++;
+		}
+	}
+
 	sb = &cur->inode->st;
 
-	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
-	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX,
-	    fs->savarszcnt * sizeof(uint64_t));
-	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
-
+	/* XXXMJ hard link support? */
 	daclcount = nitems(aces);
 	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED |
 	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
-	gen = sb->st_gen;
+	gen = 1;
 	gid = sb->st_gid;
-	links = 0; /* XXXMJ */
+	links = 1 + subdirs;
 	mode = sb->st_mode;
 	parent = SLIST_FIRST(&arg->dirs)->objid;
-	size = cur->type == S_IFREG ? sb->st_size : 0; /* XXXMJ */
+	size = cur->type == S_IFDIR ? children : sb->st_size; /* XXXMJ symlinks? */
 	uid = sb->st_uid;
 
 	/* XXXMJ need to review these */
@@ -1614,6 +1624,12 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 	aces[2].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
 	aces[2].z_access_mask = ACE_READ_DATA | ACE_READ_ACL |
 	    ACE_READ_ATTRIBUTES | ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
+
+	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
+	sahdr->sa_magic = SA_MAGIC;
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, SA_LAYOUT_INDEX,
+	    fs->savarszcnt * sizeof(uint64_t));
+	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
 
 	sz = 0;
 	fsnode_populate_attr(fs, attrbuf, &daclcount, ZPL_DACL_COUNT, &sz);
