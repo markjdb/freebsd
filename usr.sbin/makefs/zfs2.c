@@ -692,9 +692,11 @@ dsl_dataset_alloc(fsinfo_t *fsopts, zfs_objset_t *mos, uint64_t dir,
 	return (ds);
 }
 
+/* XXXMJ from zfssubr.c */
 static uint64_t
 zap_hash(uint64_t salt, const char *name)
 {
+#define	ZFS_CRC64_POLY	0xC96C5795D7870F42UL	/* ECMA-182, reflected form */
 	static uint64_t zfs_crc64_table[256];
 	const uint8_t *cp;
 	uint8_t c;
@@ -725,6 +727,7 @@ zap_hash(uint64_t salt, const char *name)
 	crc &= ~((1ULL << (64 - ZAP_HASHBITS)) - 1);
 
 	return (crc);
+#undef ZFS_CRC64_POLY
 }
 
 static void
