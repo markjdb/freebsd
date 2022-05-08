@@ -112,20 +112,16 @@ typedef struct {
 	const zfs_sattr_t *satab;
 	size_t		sacnt;
 	uint16_t	*saoffs;
-	unsigned int	savarszcnt;	/* number of variable-sized attrs */
 } zfs_fs_t;
 
 typedef struct {
 	/* Pool parameters. */
 	const char	*poolname;
 	int		ashift;
-	off_t		size;
 	uint64_t	originsnap;
 
 	/* Pool state. */
 	zfs_objset_t	mos;		/* meta object set */
-	bitstr_t	*spacemap;	/* space allocator */
-	int		spacemapbits;	/* one bit per ashift-sized block */
 	zfs_fs_t	rootfs;
 
 	/* vdev state. */
@@ -133,6 +129,9 @@ typedef struct {
 
 	/* I/O buffer. */
 	char		filebuf[SPA_OLDMAXBLOCKSIZE];
+	bitstr_t	*spacemap;	/* space allocator */
+	int		spacemapbits;	/* one bit per ashift-sized block */
+	off_t		vdevsize;	/* vdev size, including labels */
 } zfs_opt_t;
 
 static void zap_init(zfs_zap_t *, dnode_phys_t *);
@@ -142,6 +141,8 @@ static void zap_write(zfs_opt_t *, zfs_zap_t *);
 static dnode_phys_t *objset_dnode_alloc(zfs_objset_t *, uint8_t, uint64_t *);
 static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
     uint16_t, uint64_t *);
+
+static int spacemap_init(zfs_opt_t *);
 
 struct dnode_cursor {
 	blkptr_t	inddir[INDIR_LEVELS][BLKPTR_PER_INDIR];
@@ -351,22 +352,23 @@ vdev_init(zfs_opt_t *zfs_opts, size_t size, const char *image)
 
 	assert(zfs_opts->ashift >= SPA_MINBLOCKSHIFT);
 
-	zfs_opts->fd = open(image, oflags, 0644 /* XXXMJ */);
+	zfs_opts->fd = open(image, oflags, 0644);
 	if (zfs_opts->fd == -1) {
 		warn("Can't open `%s' for writing", image);
 		return (-1);
 	}
-	zfs_opts->size = rounddown2(size, 1 << zfs_opts->ashift);
-	if (zfs_opts->size < (off_t)SPA_MINDEVSIZE) {
+	zfs_opts->vdevsize = rounddown2(size, 1 << zfs_opts->ashift);
+	if (zfs_opts->vdevsize < (off_t)SPA_MINDEVSIZE) {
 		warnx("maximum image size %ju is too small",
-		    (uintmax_t)zfs_opts->size);
+		    (uintmax_t)zfs_opts->vdevsize);
 		return (-1);
 	}
-	if (ftruncate(zfs_opts->fd, zfs_opts->size) != 0) {
+	if (ftruncate(zfs_opts->fd, zfs_opts->vdevsize) != 0) {
 		warn("Failed to extend image file `%s'", image);
 		return (-1);
 	}
-	return (0);
+
+	return (spacemap_init(zfs_opts));
 }
 
 static void
@@ -374,10 +376,10 @@ vdev_pwrite(const zfs_opt_t *zfs_opts, const void *buf, size_t len, off_t off)
 {
 	ssize_t n;
 
-	assert(zfs_opts->size >= VDEV_LABEL_SPACE);
-	assert(off >= 0 && off < zfs_opts->size - VDEV_LABEL_SPACE);
+	assert(zfs_opts->vdevsize >= VDEV_LABEL_SPACE);
+	assert(off >= 0 && off < zfs_opts->vdevsize - VDEV_LABEL_SPACE);
 	assert((off_t)len > 0 && off + (off_t)len > off &&
-	    off + (off_t)len < zfs_opts->size);
+	    off + (off_t)len < zfs_opts->vdevsize);
 
 	off += VDEV_LABEL_START_SIZE;
 	for (size_t sofar = 0; sofar < len; sofar += n) {
@@ -394,6 +396,8 @@ vdev_label_set_checksum(void *buf, off_t off, off_t size)
 {
 	zio_cksum_t cksum;
 	zio_eck_t *eck;
+
+	assert(size > 0 && (size_t)size >= sizeof(zio_eck_t));
 
 	eck = (zio_eck_t *)((char *)buf + size) - 1;
 	eck->zec_magic = ZEC_MAGIC;
@@ -415,10 +419,12 @@ vdev_label_write(zfs_opt_t *zfs_opts, int ind, vdev_label_t *label)
 
 	blksz = 1 << zfs_opts->ashift;
 
-	if (ind < 2)
+	if (ind < 2) {
 		loff = ind * sizeof(vdev_label_t);
-	else
-		loff = zfs_opts->size - (VDEV_LABELS - ind) * sizeof(vdev_label_t);
+	} else {
+		loff = zfs_opts->vdevsize -
+		    (VDEV_LABELS - ind) * sizeof(vdev_label_t);
+	}
 
 	/*
 	 * Set the verifier checksum for the boot block.  We don't use it, but
@@ -458,7 +464,7 @@ spacemap_init(zfs_opt_t *zfs_opts)
 {
 	off_t nbits, size;
 
-	size = zfs_opts->size;
+	size = zfs_opts->vdevsize;
 
 	assert(size >= VDEV_LABEL_SPACE);
 
@@ -466,7 +472,7 @@ spacemap_init(zfs_opt_t *zfs_opts)
 	if (nbits > INT_MAX) {
 		/*
 		 * With the smallest block size of 512B, the limit on the image
-		 * size is 2TB.
+		 * size is 2TB.  That should be enough for anyone.
 		 */
 		warnx("image size %ju is too large", (uintmax_t)size);
 		return (-1);
@@ -658,13 +664,21 @@ objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
 	    roundup2(dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE));
 }
 
+/*
+ * Write the dnode array and physical object set to disk, optionally returning
+ * the checksum for the latter for use when populating the uberblock (which
+ * contains a block pointer to the MOS).
+ */
 static void
 objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, zio_cksum_t *cksump)
 {
 	zio_cksum_t cksum;
 	struct dnode_cursor *c;
 
-	/* Write out the dnode array. */
+	/*
+	 * Write out the dnode array.  For some reason data blocks must be 16KB
+	 * in size no matter how large the array is.
+	 */
 	c = dnode_cursor_init(&os->osphys->os_meta_dnode,
 	    os->dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE);
 	for (uint64_t i = 0; i < os->dnodecount; i += DNODES_PER_BLOCK) {
@@ -1120,10 +1134,10 @@ pool_init(zfs_opt_t *zfs_opts)
 	dnodecount++; /*     |   |   L-> props (ZAP)          */
 	dnodecount++; /*     |   L-> $ORIGIN (DSL dir)        */
 	dnodecount++; /*     |       |-> dataset              */ 
-	dnodecount++; /*     |       |   |-> deadlist         */ 
+	dnodecount++; /*     |       |   L-> deadlist         */ 
 	dnodecount++; /*     |       |-> snapshot             */ 
 	dnodecount++; /*     |       |   |-> deadlist         */ 
-	dnodecount++; /*     |       |   |-> snapshot names   */
+	dnodecount++; /*     |       |   L-> snapshot names   */
 	dnodecount++; /*     |       L-> props (ZAP)          */
 	dnodecount++; /*     |-> DSL root dataset             */
 	dnodecount++; /*     |   L-> deadlist                 */ 
@@ -1244,7 +1258,7 @@ pool_finish(zfs_opt_t *zfs_opts)
 	vdevconfig = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
+	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, zfs_opts->vdevsize -
 	    VDEV_LABEL_SPACE);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_GUID, guid);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
@@ -1301,7 +1315,7 @@ pool_finish(zfs_opt_t *zfs_opts)
 
 		nv = nvlist_create(NV_UNIQUE_NAME);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
-		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->size -
+		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->vdevsize -
 		    VDEV_LABEL_SPACE);
 		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
 		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, rootvdev);
@@ -2018,10 +2032,6 @@ fs_add_zpl_attrs(zfs_opt_t *zfs_opts, zfs_fs_t *fs)
 
 		fs->saoffs[zpl_attr_layout[i]] = offset;
 		size = zpl_attrs[zpl_attr_layout[i]].size;
-		if (size == 0)
-			fs->savarszcnt++;
-		else
-			assert(fs->savarszcnt == 0);
 		offset += size;
 	}
 	fs->satab = zpl_attrs;
@@ -2033,7 +2043,7 @@ static void
 mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
 	struct fsnode_foreach_populate_arg poparg;
-	zfs_zap_t deleteqzap;
+	zfs_zap_t deleteqzap, masterzap;
 	zfs_objset_t *os;
 	dnode_phys_t *deleteq, *masterobj;
 	uint64_t deleteqid, dnodecount, moid, saobjid;
@@ -2042,8 +2052,7 @@ mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 
 	/*
 	 * Figure out how many dnodes we need.  One for each ZPL object (file,
-	 * directory, etc.), one for the master object (always with ID 1), one
-	 * for the meta dnode (embedded in the object set, always with ID 0).
+	 * directory, etc.), plus some objects for metadata.
 	 */
 	dnodecount = 0;
 	fsnode_foreach(root, dir, fsnode_foreach_count, &dnodecount);
@@ -2056,9 +2065,11 @@ mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	dnodecount++; /* system attributes layout */
 
 	/*
-	 * XXXMJ allocating them all up front like this might be too painful for
-	 * really large filesystems.  Check to see how much this costs for a
-	 * FreeBSD tree.
+	 * Initialize our object set and allocate the dnode array.  Each
+	 * filesystem object gets a 512-byte dnode, so the memory usage is
+	 * significant.  However, we can build a FreeBSD distribution with less
+	 * than 50MB devoted to dnodes, which doesn't seem prohibitive, so let's
+	 * keep it simple for now.
 	 */
 	objset_init(zfs_opts, os, DMU_OST_ZFS, dnodecount);
 	masterobj = objset_dnode_alloc(os, DMU_OT_MASTER_NODE, &moid);
@@ -2070,30 +2081,35 @@ mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 */
 	saobjid = fs_add_zpl_attrs(zfs_opts, fs);
 
-	deleteq = objset_dnode_alloc(os, DMU_OT_UNLINKED_SET, &deleteqid);
-	zap_init(&deleteqzap, deleteq);
-	zap_write(zfs_opts, &deleteqzap);
-
+	/*
+	 * Build the filesystem.  This is where most of the work happens.
+	 */
 	poparg.zfs_opts = zfs_opts;
 	poparg.fs = fs;
 	SLIST_INIT(&poparg.dirs);
-
 	fsnode_populate_dir(root, dir, &poparg);
 	assert(!SLIST_EMPTY(&poparg.dirs));
 	fsnode_foreach(root, dir, fsnode_foreach_populate, &poparg);
 	assert(SLIST_EMPTY(&poparg.dirs));
 
 	/*
+	 * Create an empty delete queue.  We don't do anything with it, but
+	 * OpenZFS will refuse to mount filesystems that don't have one.
+	 */
+	deleteq = objset_dnode_alloc(os, DMU_OT_UNLINKED_SET, &deleteqid);
+	zap_init(&deleteqzap, deleteq);
+	zap_write(zfs_opts, &deleteqzap);
+
+	/*
 	 * Populate the master node object.  This is a ZAP object containing
 	 * various dataset properties and the object IDs of the root directory
 	 * and delete queue.
 	 */
-	zfs_zap_t masterzap;
 	zap_init(&masterzap, masterobj);
 	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
 	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, deleteqid);
 	zap_add_uint64(&masterzap, ZFS_SA_ATTRS, saobjid);
-	/* XXXMJ create a shares (ZFS_SHARES_DIR) directory? */
+	/* XXXMJ create a ZFS_SHARES_DIR directory, OpenZFS won't do it */
 	zap_add_uint64(&masterzap, ZPL_VERSION_OBJ, 5 /* ZPL_VERSION_SA */);
 	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
 	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
@@ -2122,9 +2138,6 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	srandom(1729);
 
 	if (vdev_init(zfs_opts, fsopts->maxsize, image) != 0)
-		goto out;
-
-	if (spacemap_init(zfs_opts) != 0)
 		goto out;
 
 	pool_init(zfs_opts);
