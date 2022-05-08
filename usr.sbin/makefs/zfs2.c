@@ -57,7 +57,6 @@
  * - dn_checksum should be set at dnode initialization time
  * - resolve fsinfo vs. zfs_opt silliness
  * - fix space map to handle arbitrarily large images
- * - implement symlinks
  * - review checksum algorithm selection (most should likely be "inherit"?)
  * - review space_alloc()
  */
@@ -154,6 +153,10 @@ static void dnode_cursor_finish(fsinfo_t *, struct dnode_cursor *);
 
 static off_t space_alloc(zfs_opt_t *, off_t *);
 
+/*
+ * The order of the attributes doesn't matter, this is simply the one hard-coded
+ * by OpenZFS.
+ */
 typedef enum zpl_attr {
 	ZPL_ATIME,
 	ZPL_MTIME,
@@ -209,6 +212,22 @@ static const zfs_sattr_t zpl_attrs[] = {
 #undef ZPL_ATTR
 };
 
+#define	ZPL_ATTR_LAYOUT		\
+	ZPL_MODE,		\
+	ZPL_SIZE,		\
+	ZPL_GEN,		\
+	ZPL_UID,		\
+	ZPL_GID,		\
+	ZPL_PARENT,		\
+	ZPL_FLAGS,		\
+	ZPL_ATIME,		\
+	ZPL_MTIME,		\
+	ZPL_CTIME,		\
+	ZPL_CRTIME,		\
+	ZPL_LINKS,		\
+	ZPL_DACL_COUNT,		\
+	ZPL_DACL_ACES
+
 /*
  * This layout matches that of a filesystem created using OpenZFS on FreeBSD.
  */
@@ -227,9 +246,13 @@ static const sa_attr_type_t zpl_attr_layout[] = {
 	ZPL_LINKS,
 	ZPL_DACL_COUNT,
 	ZPL_DACL_ACES,
+	ZPL_SYMLINK,
 };
 
-/* Key for the default ZPL attribute table in the layout ZAP. */
+/*
+ * Keys for the ZPL attribute tables in the layout ZAP.  The first two indices
+ * are reserved for legacy attribute encoding.
+ */
 #define	SA_LAYOUT_INDEX		2
 #define	SA_LAYOUT_INDEX_SYMLINK	3
 
@@ -1573,20 +1596,21 @@ fsnode_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
 
 static void
 fsnode_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
-    size_t valsz, uint16_t ind, size_t *szp)
+    size_t valsz, size_t varoff, uint16_t ind, size_t *szp)
 {
 	assert(ind < fs->sacnt);
 	assert(fs->saoffs[ind] != 0xffff);
 	assert(fs->satab[ind].size == 0);
 
-	memcpy(attrbuf + fs->saoffs[ind], val, valsz);
+	memcpy(attrbuf + fs->saoffs[ind] + varoff, val, valsz);
 	*szp += valsz;
 }
 
 static void
 fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
-    const fsnode *cur, dnode_phys_t *dnode)
+    const fsnode *cur, const char *path, dnode_phys_t *dnode)
 {
+	char symlinktarget[PATH_MAX];
 	const fsnode *child;
 	zfs_fs_t *fs;
 	zfs_ace_hdr_t aces[3];
@@ -1594,25 +1618,57 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 	sa_hdr_phys_t *sahdr;
 	uint64_t daclcount, flags, gen, gid, links, mode, parent, size, uid;
 	char *attrbuf;
-	size_t sz;
-	unsigned int children, subdirs;
+	size_t bonussz, hdrsz;
+	int layout;
 
 	assert(dnode->dn_bonustype == DMU_OT_SA);
 	assert(dnode->dn_nblkptr == 1);
 
 	fs = arg->fs;
-
-	children = subdirs = 0;
-	if (cur->type == S_IFDIR) {
-		/* XXXMJ this doesn't work for the root directory */
-		for (child = cur->child; child != NULL; child = child->next) {
-			if (child->type == S_IFDIR)
-				subdirs++;
-			children++;
-		}
-	}
-
 	sb = &cur->inode->st;
+
+	switch (cur->type) {
+	case S_IFREG:
+		layout = SA_LAYOUT_INDEX;
+		links = 1;
+		size = sb->st_size;
+		break;
+	case S_IFDIR: {
+		unsigned int children, subdirs;
+
+		children = subdirs = 0;
+		if (cur->type == S_IFDIR) {
+			/*
+			 * Handle weird non-uniformity of the root directory: if
+			 * the directory has no parent, it's the root and its
+			 * children are linked as siblings.
+			 */
+			child = (cur->parent == NULL && cur->first == cur) ?
+			    cur->next : cur->child;
+			for (; child != NULL; child = child->next) {
+				if (child->type == S_IFDIR)
+					subdirs++;
+				children++;
+			}
+		}
+
+		layout = SA_LAYOUT_INDEX;
+		links = subdirs + 1;
+		size = children;
+		break;
+	}
+	case S_IFLNK:
+		memset(symlinktarget, 0, sizeof(symlinktarget));
+		if (readlink(path, symlinktarget, sizeof(symlinktarget)) == -1)
+			err(1, "readlink(%s)", path);
+
+		layout = SA_LAYOUT_INDEX_SYMLINK;
+		links = 1;
+		size = strlen(symlinktarget);
+		break;
+	default:
+		assert(0);
+	}
 
 	/* XXXMJ hard link support? */
 	daclcount = nitems(aces);
@@ -1620,10 +1676,8 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
 	gen = 1;
 	gid = sb->st_gid;
-	links = 1 + subdirs;
 	mode = sb->st_mode;
 	parent = SLIST_FIRST(&arg->dirs)->objid;
-	size = cur->type == S_IFDIR ? children : sb->st_size; /* XXXMJ symlinks? */
 	uid = sb->st_uid;
 
 	/* XXXMJ need to review these */
@@ -1643,39 +1697,55 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 	aces[2].z_access_mask = ACE_READ_DATA | ACE_READ_ACL |
 	    ACE_READ_ATTRIBUTES | ACE_READ_NAMED_ATTRS | ACE_SYNCHRONIZE;
 
+	/*
+	 * With a header size of 8, there is room for at most 3 variable-length
+	 * attributes.
+	 */
+	if (layout == SA_LAYOUT_INDEX)
+		hdrsz = sizeof(uint64_t);
+	else
+		hdrsz = sizeof(uint64_t) * 2;
+
 	sahdr = (sa_hdr_phys_t *)DN_BONUS(dnode);
 	sahdr->sa_magic = SA_MAGIC;
-	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info,
-	    cur->type == S_IFLNK ? SA_LAYOUT_INDEX_SYMLINK : SA_LAYOUT_INDEX,
-	    fs->savarszcnt * sizeof(uint64_t));
+	SA_HDR_LAYOUT_INFO_ENCODE(sahdr->sa_layout_info, layout, hdrsz);
+
+	bonussz = SA_HDR_SIZE(sahdr);
 	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
 
-	sz = 0;
-	fsnode_populate_attr(fs, attrbuf, &daclcount, ZPL_DACL_COUNT, &sz);
-	fsnode_populate_attr(fs, attrbuf, &flags, ZPL_FLAGS, &sz);
-	fsnode_populate_attr(fs, attrbuf, &gen, ZPL_GEN, &sz);
-	fsnode_populate_attr(fs, attrbuf, &gid, ZPL_GID, &sz);
-	fsnode_populate_attr(fs, attrbuf, &links, ZPL_LINKS, &sz);
-	fsnode_populate_attr(fs, attrbuf, &mode, ZPL_MODE, &sz);
-	fsnode_populate_attr(fs, attrbuf, &parent, ZPL_PARENT, &sz);
-	fsnode_populate_attr(fs, attrbuf, &size, ZPL_SIZE, &sz);
-	fsnode_populate_attr(fs, attrbuf, &uid, ZPL_UID, &sz);
+	fsnode_populate_attr(fs, attrbuf, &daclcount, ZPL_DACL_COUNT, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &flags, ZPL_FLAGS, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &gen, ZPL_GEN, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &gid, ZPL_GID, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &links, ZPL_LINKS, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &mode, ZPL_MODE, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &parent, ZPL_PARENT, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &size, ZPL_SIZE, &bonussz);
+	fsnode_populate_attr(fs, attrbuf, &uid, ZPL_UID, &bonussz);
 
 	assert(sizeof(sb->st_atim) == fs->satab[ZPL_ATIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_atim, ZPL_ATIME, &sz);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_atim, ZPL_ATIME, &bonussz);
 	assert(sizeof(sb->st_ctim) == fs->satab[ZPL_CTIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_ctim, ZPL_CTIME, &sz);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_ctim, ZPL_CTIME, &bonussz);
 	assert(sizeof(sb->st_mtim) == fs->satab[ZPL_MTIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_mtim, ZPL_MTIME, &sz);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_mtim, ZPL_MTIME, &bonussz);
 	assert(sizeof(sb->st_birthtim) == fs->satab[ZPL_CRTIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_birthtim, ZPL_CRTIME, &sz);
+	fsnode_populate_attr(fs, attrbuf, &sb->st_birthtim, ZPL_CRTIME,
+	    &bonussz);
 
-	fsnode_populate_varszattr(fs, attrbuf, aces, sizeof(aces),
-	    ZPL_DACL_ACES, &sz);
+	fsnode_populate_varszattr(fs, attrbuf, aces, sizeof(aces), 0,
+	    ZPL_DACL_ACES, &bonussz);
 	sahdr->sa_lengths[0] = sizeof(aces);
-	assert(fs->savarszcnt == 1);
 
-	dnode->dn_bonuslen = SA_HDR_SIZE(sahdr) + sz;
+	if (cur->type == S_IFLNK) {
+		/* Need to use a spill block pointer if the target is long. */
+		assert(bonussz + size <= DN_OLD_MAX_BONUSLEN);
+		fsnode_populate_varszattr(fs, attrbuf, symlinktarget,
+		    size, sahdr->sa_lengths[0], ZPL_SYMLINK, &bonussz);
+		sahdr->sa_lengths[1] = (uint16_t)size;
+	}
+
+	dnode->dn_bonuslen = bonussz;
 }
 
 static void
@@ -1745,7 +1815,8 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 
 		bp = dnode_cursor_next(fsopts, c, foff);
 		fletcher_4_native(zfs_opts->filebuf, target, NULL, &cksum);
-		blkptr_set(bp, blkoff, target, DMU_OT_PLAIN_FILE_CONTENTS, ZIO_CHECKSUM_FLETCHER_4, &cksum);
+		blkptr_set(bp, blkoff, target, DMU_OT_PLAIN_FILE_CONTENTS,
+		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 
 		vdev_pwrite(fsopts, zfs_opts->filebuf, target, blkoff);
 	}
@@ -1753,9 +1824,8 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 
 	(void)close(fd);
 
-	fsnode_populate_sattrs(arg, cur, dnode);
+	fsnode_populate_sattrs(arg, cur, path, dnode);
 
-	/* Add an entry to the parent directory. */
 	fsnode_populate_dirent(arg, cur, dnid);
 }
 
@@ -1763,6 +1833,7 @@ static void
 fsnode_populate_dir(fsnode *cur, const char *dir __unused,
     struct fsnode_foreach_populate_arg *arg)
 {
+	char path[PATH_MAX];
 	struct fsnode_populate_dir_s *dirinfo;
 	dnode_phys_t *dnode;
 	uint64_t dnid;
@@ -1786,7 +1857,28 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	dirinfo->objid = dnid;
 	SLIST_INSERT_HEAD(&arg->dirs, dirinfo, next);
 
-	fsnode_populate_sattrs(arg, cur, dnode);
+	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
+
+	fsnode_populate_sattrs(arg, cur, path, dnode);
+}
+
+static void
+fsnode_populate_symlink(fsnode *cur, const char *dir __unused,
+    struct fsnode_foreach_populate_arg *arg)
+{
+	char path[PATH_MAX];
+	dnode_phys_t *dnode;
+	uint64_t dnid;
+
+	assert(cur->type == S_IFLNK);
+
+	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
+	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
+
+	fsnode_populate_dirent(arg, cur, dnid);
+
+	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
+	fsnode_populate_sattrs(arg, cur, path, dnode);
 }
 
 static void
@@ -1805,8 +1897,11 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 			break;
 		fsnode_populate_dir(cur, dir, arg);
 		break;
-	default:
+	case S_IFLNK:
+		fsnode_populate_symlink(cur, dir, arg);
 		break;
+	default:
+		assert(0);
 	}
 
 	if (cur->next == NULL) {
@@ -1817,6 +1912,21 @@ fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 
 		free(dirs);
 	}
+}
+
+static void
+fs_add_zpl_attr_layout(zfs_zap_t *zap, unsigned int index,
+    const sa_attr_type_t layout[], size_t sacnt)
+{
+	sa_attr_type_t *sas;
+	char ti[8];
+
+	sas = ecalloc(sacnt, sizeof(sa_attr_type_t));
+	for (size_t i = 0; i < sacnt; i++)
+		sas[i] = htobe16(layout[i]);
+	snprintf(ti, sizeof(ti), "%u", index);
+	zap_add(zap, ti, sizeof(*sas), sacnt, (uint8_t *)sas);
+	free(sas);
 }
 
 /*
@@ -1832,11 +1942,8 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	zfs_zap_t sazap, salzap, sarzap;
 	zfs_objset_t *os;
 	dnode_phys_t *saobj, *salobj, *sarobj;
-	sa_attr_type_t *sas;
 	uint64_t saobjid, salobjid, sarobjid;
-	size_t i;
 	uint16_t offset;
-	char ti[4];
 
 	os = &fs->os;
 
@@ -1854,7 +1961,7 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	sarobj = objset_dnode_alloc(os, DMU_OT_SA_ATTR_REGISTRATION, &sarobjid);
 
 	zap_init(&sarzap, sarobj);
-	for (i = 0; i < nitems(zpl_attrs); i++) {
+	for (size_t i = 0; i < nitems(zpl_attrs); i++) {
 		const zfs_sattr_t *sa;
 		uint64_t attr;
 
@@ -1866,17 +1973,17 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	zap_write(fsopts, &sarzap);
 
 	/*
-	 * Layouts are arrays of indices into the registry.  We define only a
-	 * single layout for use by the ZPL.
+	 * Layouts are arrays of indices into the registry.  We define two
+	 * layouts for use by the ZPL, one for non-symlinks and one for
+	 * symlinks.  They are identical except that the symlink layout includes
+	 * ZPL_SYMLINK as its final attribute.
 	 */
 	zap_init(&salzap, salobj);
-	sas = ecalloc(nitems(zpl_attr_layout), sizeof(sa_attr_type_t));
-	for (i = 0; i < nitems(zpl_attr_layout); i++)
-		sas[i] = htobe16(zpl_attr_layout[i]);
-	snprintf(ti, sizeof(ti), "%u", SA_LAYOUT_INDEX);
-	zap_add(&salzap, ti, sizeof(*sas), nitems(zpl_attr_layout),
-	    (uint8_t *)sas);
-	free(sas);
+	assert(zpl_attr_layout[nitems(zpl_attr_layout) - 1] == ZPL_SYMLINK);
+	fs_add_zpl_attr_layout(&salzap, SA_LAYOUT_INDEX, zpl_attr_layout,
+	    nitems(zpl_attr_layout) - 1);
+	fs_add_zpl_attr_layout(&salzap, SA_LAYOUT_INDEX_SYMLINK,
+	    zpl_attr_layout, nitems(zpl_attr_layout));
 	zap_write(fsopts, &salzap);
 
 	zap_init(&sazap, saobj);
@@ -1885,7 +1992,7 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	zap_write(fsopts, &sazap);
 
 	/* Sanity check. */
-	for (i = 0; i < nitems(zpl_attrs); i++)
+	for (size_t i = 0; i < nitems(zpl_attrs); i++)
 		assert(i == zpl_attrs[i].id);
 
 	/*
@@ -1896,9 +2003,10 @@ fs_add_zpl_attrs(fsinfo_t *fsopts, zfs_fs_t *fs)
 	 */
 	fs->sacnt = nitems(zpl_attrs);
 	fs->saoffs = ecalloc(fs->sacnt, sizeof(*fs->saoffs));
-	for (i = 0; i < fs->sacnt; i++)
+	for (size_t i = 0; i < fs->sacnt; i++)
 		fs->saoffs[i] = 0xffff;
-	for (i = 0, offset = 0; i < nitems(zpl_attr_layout); i++) {
+	offset = 0;
+	for (size_t i = 0; i < nitems(zpl_attr_layout); i++) {
 		uint16_t size;
 
 		assert(zpl_attr_layout[i] < fs->sacnt);
@@ -2004,7 +2112,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	/*
 	 * Use a fixed seed to provide reproducible pseudo-random numbers for
-	 * on-disk structures when needed.
+	 * on-disk structures when needed (e.g., ZAP hash salts).
 	 */
 	srandom(1729);
 
