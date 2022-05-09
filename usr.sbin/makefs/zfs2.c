@@ -43,8 +43,8 @@
 #include <util.h>
 
 #include "makefs.h"
-#include "zfs/zfsimpl.h"
 #include "zfs/nvlist.h"
+#include "zfs/zfsimpl.h"
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
@@ -118,11 +118,11 @@ typedef struct {
 	/* Pool parameters. */
 	const char	*poolname;
 	int		ashift;
-	uint64_t	originsnap;
 
 	/* Pool state. */
 	zfs_objset_t	mos;		/* meta object set */
 	zfs_fs_t	rootfs;
+	uint64_t	originsnap;
 
 	/* vdev state. */
 	int		fd;		/* vdev disk fd */
@@ -526,6 +526,7 @@ spacemap_write(zfs_opt_t *zfs_opts, dnode_phys_t *objarr)
 		last = last1 + 1;
 	}
 	assert(!bit_test(spacemap, last));
+
 	uint64_t *spablk = ecalloc(1, blksz);
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP,
@@ -551,13 +552,7 @@ spacemap_write(zfs_opt_t *zfs_opts, dnode_phys_t *objarr)
 	vdev_pwrite(zfs_opts, spablk, blksz, loc);
 	free(spablk);
 
-	uint64_t dnid2;
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_SPACE_MAP,
-	    DMU_OT_SPACE_MAP_HEADER, SPACE_MAP_SIZE_V0, &dnid2);
-	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
-
 	objblk[0] = dnid;
-	//objblk[1] = dnid2;
 	fletcher_4_native(objblk, blksz, NULL, &cksum);
 	blkptr_set(&objarr->dn_blkptr[0], objloc, blksz, objarr->dn_type, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 	vdev_pwrite(zfs_opts, objblk, blksz, objloc);
