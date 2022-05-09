@@ -128,9 +128,10 @@ typedef struct {
 
 	/* vdev state. */
 	int		fd;		/* vdev disk fd */
+	off_t		vdevsize;	/* vdev size, including labels */
+	dnode_phys_t	*objarr;	/* space map object array */
 	bitstr_t	*spacemap;	/* space allocator */
 	int		spacemapbits;	/* one bit per ashift-sized block */
-	off_t		vdevsize;	/* vdev size, including labels */
 	uint64_t	msshift;	/* metaslab size */
 	uint64_t	mscount;	/* number of metaslabs for this vdev */
 } zfs_opt_t;
@@ -147,12 +148,15 @@ static int spacemap_init(zfs_opt_t *);
 
 struct dnode_cursor {
 	blkptr_t	inddir[INDIR_LEVELS][BLKPTR_PER_INDIR];
+	off_t		indloc;
+	off_t		indspace;
 	dnode_phys_t	*dnode;
-	off_t		off;
+	off_t		dataoff;
 	off_t		datablksz;
 };
 
-static struct dnode_cursor *dnode_cursor_init(dnode_phys_t *, off_t, off_t);
+static struct dnode_cursor *dnode_cursor_init(zfs_opt_t *, dnode_phys_t *,
+    off_t, off_t);
 static blkptr_t *dnode_cursor_next(zfs_opt_t *, struct dnode_cursor *,
     off_t);
 static void dnode_cursor_finish(zfs_opt_t *, struct dnode_cursor *);
@@ -543,7 +547,7 @@ spacemap_init(zfs_opt_t *zfs_opts)
 	/*
 	 * XXXMJ explain
 	 */
-	for (msshift = 27; msshift < 34; msshift++) {
+	for (msshift = 25; msshift < 34; msshift++) {
 		slabs = (size - VDEV_LABEL_SPACE) / ((uint64_t)1 << msshift);
 		if (slabs >= 4 && slabs <= 200)
 			break;
@@ -561,17 +565,19 @@ typedef struct zfs_sm {
 } zfs_sm_t;
 
 static void
-spacemap_write(zfs_opt_t *zfs_opts, dnode_phys_t *objarr)
+spacemap_write(zfs_opt_t *zfs_opts)
 {
 	zio_cksum_t cksum;
+	dnode_phys_t *objarr;
 	zfs_sm_t *sma;
 	zfs_objset_t *mos;
 	bitstr_t *spacemap;
 	uint64_t *objarrblk;
 	off_t smblksz, objarrblksz, objarrloc;
 
-	spacemap = zfs_opts->spacemap;
 	mos = &zfs_opts->mos;
+	spacemap = zfs_opts->spacemap;
+	objarr = zfs_opts->objarr;
 
 	objarrblksz = sizeof(uint64_t) * zfs_opts->mscount;
 	assert(objarrblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
@@ -730,17 +736,15 @@ objset_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t type,
  * contains a block pointer to the MOS).
  */
 static void
-objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, zio_cksum_t *cksump)
+_objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, struct dnode_cursor *c,
+    zio_cksum_t *cksump)
 {
 	zio_cksum_t cksum;
-	struct dnode_cursor *c;
 
 	/*
 	 * Write out the dnode array.  For some reason data blocks must be 16KB
 	 * in size no matter how large the array is.
 	 */
-	c = dnode_cursor_init(&os->osphys->os_meta_dnode,
-	    os->dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE);
 	for (uint64_t i = 0; i < os->dnodecount; i += DNODES_PER_BLOCK) {
 		dnode_phys_t *blk;
 		blkptr_t *bp;
@@ -765,6 +769,38 @@ objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, zio_cksum_t *cksump)
 
 	if (cksump != NULL)
 		fletcher_4_native(os->osphys, os->osblksz, NULL, cksump);
+}
+
+static void
+objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os)
+{
+	struct dnode_cursor *c;
+
+	c = dnode_cursor_init(zfs_opts, &os->osphys->os_meta_dnode,
+	    os->dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE);
+	_objset_write(zfs_opts, os, c, NULL);
+}
+
+static void
+objset_write_mos(zfs_opt_t *zfs_opts, zio_cksum_t *cksump)
+{
+	struct dnode_cursor *c;
+	zfs_objset_t *mos;
+
+	mos = &zfs_opts->mos;
+
+	/*
+	 * There is a chicken-and-egg problem here: we cannot write space maps
+	 * before we're finished allocating space from the vdev, and we can't
+	 * write the MOS without having allocated space for indirect dnode
+	 * blocks.  Thus, rather than lazily allocating indirect blocks (which
+	 * would be simpler), they are allocated up-front and before writing
+	 * space maps.
+	 */
+	c = dnode_cursor_init(zfs_opts, &mos->osphys->os_meta_dnode,
+	    mos->dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE);
+	spacemap_write(zfs_opts);
+	_objset_write(zfs_opts, mos, c, cksump);
 }
 
 static dnode_phys_t *
@@ -1264,7 +1300,7 @@ pool_add_child_map(zfs_opt_t *zfs_opts, zfs_objset_t *mos, uint64_t parentdir)
 	zap_init(&childzap, childdir);
 
 	dsldir = dsl_dir_alloc(zfs_opts, mos, parentdir, &dnid);
-	dsldir->dd_used_bytes = 200 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
+	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	zap_add_uint64(&childzap, "$MOS", dnid);
 
@@ -1303,7 +1339,6 @@ pool_finish(zfs_opt_t *zfs_opts)
 	zfs_objset_t *mos;
 	nvlist_t *poolconfig, *vdevconfig;
 	uberblock_t *ub;
-	dnode_phys_t *objarr;
 	vdev_label_t *label;
 	char *vdevnv;
 	uint64_t guid, txg, msid;
@@ -1355,7 +1390,8 @@ pool_finish(zfs_opt_t *zfs_opts)
 	    DMU_OT_PACKED_NVLIST, DMU_OT_PACKED_NVLIST_SIZE, sizeof(uint64_t),
 	    &configid);
 
-	objarr = objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &msid);
+	zfs_opts->objarr = objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &msid);
+
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_METASLAB_ARRAY, msid);
 	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_METASLAB_SHIFT,
 	    zfs_opts->msshift);
@@ -1434,11 +1470,9 @@ pool_finish(zfs_opt_t *zfs_opts)
 	/* XXXMJ more fields */
 	dsldir->dd_head_dataset_obj = dslid;
 	dsldir->dd_child_dir_zapobj = childdirid;
-	dsldir->dd_used_bytes = 260 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
+	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	}
-
-	spacemap_write(zfs_opts, objarr);
 
 	label = ecalloc(1, sizeof(*label));
 
@@ -1454,7 +1488,7 @@ pool_finish(zfs_opt_t *zfs_opts)
 	nvlist_destroy(poolconfig);
 	nvlist_destroy(vdevconfig);
 
-	objset_write(zfs_opts, mos, &cksum);
+	objset_write_mos(zfs_opts, &cksum);
 
 	/*
 	 * Fill out the uberblock.  Just make each one the same.  The embedded
@@ -1515,38 +1549,48 @@ fsnode_foreach_count(fsnode *cur, const char *dir __unused, void *arg)
 }
 
 static struct dnode_cursor *
-dnode_cursor_init(dnode_phys_t *dnode, off_t size, off_t blksz)
+dnode_cursor_init(zfs_opt_t *zfs_opts, dnode_phys_t *dnode, off_t size,
+    off_t blksz)
 {
 	struct dnode_cursor *c;
-	off_t indcount, nblocks;
-	int indlevel;
+	uint64_t indlevel;
+	off_t indcount, ndatablks, nindblks;
 
 	assert(dnode->dn_nblkptr == 1);
 	assert(blksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 
-	if (blksz == 0)
+	if (blksz == 0) {
 		blksz = MIN(SPA_OLDMAXBLOCKSIZE,
 		    powerof2(size) ? size : (1ul << flsl(size)));
-	else
+	} else {
 		assert(powerof2(blksz));
-
-	c = ecalloc(1, sizeof(*c));
-	c->dnode = dnode;
-	c->off = 0;
-	c->datablksz = blksz;
+	}
 
 	/*
 	 * Do we need indirect blocks?
 	 */
-	nblocks = blksz == 0 ? 1 : howmany(size, blksz);
-	for (indlevel = 1, indcount = 1; nblocks > indcount; indlevel++)
-		indcount *= SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t);
+	ndatablks = blksz == 0 ? 1 : howmany(size, blksz);
+	nindblks = 0;
+	for (indlevel = 1, indcount = 1; ndatablks > indcount; indlevel++) {
+		indcount *= BLKPTR_PER_INDIR;
+		nindblks += howmany(size, indlevel * SPA_OLDMAXBLOCKSIZE);
+	}
 	assert(indlevel < INDIR_LEVELS);
+	printf("%s:%d size %ld nindblks %lu\n", __func__, __LINE__, size, nindblks);
 
-	dnode->dn_nlevels = indlevel;
-	dnode->dn_maxblkid = nblocks - 1;
+	dnode->dn_nlevels = (uint8_t)indlevel;
+	dnode->dn_maxblkid = ndatablks - 1;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_used = size; /* XXXMJ just data blocks or also indirect? */
+
+	c = ecalloc(1, sizeof(*c));
+	if (nindblks > 0) {
+		c->indspace = nindblks * SPA_OLDMAXBLOCKSIZE;
+		c->indloc = vdev_space_alloc(zfs_opts, &c->indspace);
+	}
+	c->dnode = dnode;
+	c->dataoff = 0;
+	c->datablksz = blksz;
 
 	return (c);
 }
@@ -1563,7 +1607,7 @@ _dnode_cursor_flush(zfs_opt_t *zfs_opts, struct dnode_cursor *c, int levels)
 	assert(levels <= c->dnode->dn_nlevels - 1);
 
 	blksz = SPA_OLDMAXBLOCKSIZE;
-	blkid = c->off / c->datablksz;
+	blkid = c->dataoff / c->datablksz;
 	for (int i = 0; i < levels; i++) {
 		buf = c->inddir[i];
 
@@ -1572,7 +1616,15 @@ _dnode_cursor_flush(zfs_opt_t *zfs_opts, struct dnode_cursor *c, int levels)
 		else
 			pbp = &c->inddir[i + 1][blkid & BLKPTR_PER_INDIR];
 
-		loc = vdev_space_alloc(zfs_opts, &blksz);
+		/*
+		 * Space for indirect blocks is allocated up-front; see the
+		 * comment in objset_write_mos().
+		 */
+		loc = c->indloc;
+		c->indloc += blksz;
+		assert(c->indspace >= blksz);
+		c->indspace -= blksz;
+
 		fletcher_4_native(buf, blksz, NULL, &cksum);
 		blkptr_set_level(pbp, loc, blksz, c->dnode->dn_type, i + 1,
 		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
@@ -1608,7 +1660,7 @@ dnode_cursor_next(zfs_opt_t *zfs_opts, struct dnode_cursor *c, off_t off)
 			_dnode_cursor_flush(zfs_opts, c, levels);
 	}
 
-	c->off = off;
+	c->dataoff = off;
 	l1id = (off / c->datablksz) & (BLKPTR_PER_INDIR - 1);
 	return (&c->inddir[0][l1id]);
 }
@@ -1621,6 +1673,7 @@ dnode_cursor_finish(zfs_opt_t *zfs_opts, struct dnode_cursor *c)
 	levels = c->dnode->dn_nlevels - 1;
 	if (levels > 0)
 		_dnode_cursor_flush(zfs_opts, c, levels);
+	assert(c->indspace == 0);
 	free(c);
 }
 
@@ -1851,7 +1904,7 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
 
-	c = dnode_cursor_init(dnode, size, 0);
+	c = dnode_cursor_init(zfs_opts, dnode, size, 0);
 
 	/* Leave room for attributes in the bonus buffer. */
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4; /* XXXMJ yes? */
@@ -2177,7 +2230,7 @@ mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	zap_write(zfs_opts, &masterzap);
 
 	/* Finally, write the dnode array and objset set itself. */
-	objset_write(zfs_opts, &fs->os, NULL);
+	objset_write(zfs_opts, &fs->os);
 }
 
 void
