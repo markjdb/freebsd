@@ -45,11 +45,11 @@ import_image()
 	atf_check -e empty -o save:$TEST_MD_DEVICE_FILE -s exit:0 \
 	    mdconfig -a -f $TEST_IMAGE
 	atf_check -e empty -o empty -s exit:0 \
-	    zpool import -R $TEST_MOUNT_DIR -o cachefile=${TMPDIR}/zpool.cache $ZFS_POOL_NAME
+	    zpool import -R $TEST_MOUNT_DIR $ZFS_POOL_NAME
 	echo "$ZFS_POOL_NAME" > $TEST_ZFS_POOL_NAME
 }
 
-atf_test_case basic
+atf_test_case basic cleanup
 basic_body()
 {
 	create_test_inputs
@@ -63,7 +63,7 @@ basic_body()
 }
 basic_cleanup()
 {
-	common_cleanup
+	#common_cleanup
 }
 
 atf_test_case file_sizes

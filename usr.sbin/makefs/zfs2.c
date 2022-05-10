@@ -1727,25 +1727,23 @@ dnode_cursor_finish(zfs_opt_t *zfs_opts, struct dnode_cursor *c)
 	free(c);
 }
 
-struct fs_populate_dir_s {
+struct fs_populate_dir {
 	zfs_zap_t		zap;
 	uint64_t		objid;
-	SLIST_ENTRY(fs_populate_dir_s) next;
+	SLIST_ENTRY(fs_populate_dir) next;
 };
 
-struct fs_foreach_populate_arg {
+struct fs_populate_arg {
 	zfs_opt_t	*zfs_opts;
-	zfs_fs_t	*fs;
-	uint64_t	rootdirid;
-	char		path[PATH_MAX];
-	SLIST_HEAD(, fs_populate_dir_s) dirs;
+	zfs_fs_t	*fs;			/* owning filesystem */
+	uint64_t	rootdirid;		/* root directory dnode ID */
+	SLIST_HEAD(, fs_populate_dir) dirs;	/* stack of directories */
 };
 
 static void
-fs_populate_dirent(struct fs_foreach_populate_arg *arg, fsnode *cur,
-    uint64_t dnid)
+fs_populate_dirent(struct fs_populate_arg *arg, fsnode *cur, uint64_t dnid)
 {
-	struct fs_populate_dir_s *dir;
+	struct fs_populate_dir *dir;
 	uint64_t type;
 
 	switch (cur->type) {
@@ -1790,7 +1788,7 @@ fs_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
 }
 
 static void
-fs_populate_sattrs(struct fs_foreach_populate_arg *arg, const fsnode *cur,
+fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
     const char *path, dnode_phys_t *dnode)
 {
 	char symlinktarget[PATH_MAX];
@@ -1931,8 +1929,7 @@ fs_populate_sattrs(struct fs_foreach_populate_arg *arg, const fsnode *cur,
 }
 
 static void
-fs_populate_file(fsnode *cur, const char *dir,
-    struct fs_foreach_populate_arg *arg)
+fs_populate_file(fsnode *cur, const char *dir, struct fs_populate_arg *arg)
 {
 	struct dnode_cursor *c;
 	dnode_phys_t *dnode;
@@ -2002,10 +1999,10 @@ fs_populate_file(fsnode *cur, const char *dir,
 
 static void
 fs_populate_dir(fsnode *cur, const char *dir __unused,
-    struct fs_foreach_populate_arg *arg)
+    struct fs_populate_arg *arg)
 {
 	char path[PATH_MAX];
-	struct fs_populate_dir_s *dirinfo;
+	struct fs_populate_dir *dirinfo;
 	dnode_phys_t *dnode;
 	zfs_objset_t *os;
 	uint64_t dnid;
@@ -2019,7 +2016,7 @@ fs_populate_dir(fsnode *cur, const char *dir __unused,
 
 	/*
 	 * Add an entry to the parent directory.  This must be done before
-	 * allocating a ZAP object for this directory's children.
+	 * pushing ourselves onto the directory stack.
 	 */
 	if (!SLIST_EMPTY(&arg->dirs))
 		fs_populate_dirent(arg, cur, dnid);
@@ -2032,13 +2029,12 @@ fs_populate_dir(fsnode *cur, const char *dir __unused,
 	SLIST_INSERT_HEAD(&arg->dirs, dirinfo, next);
 
 	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
-
 	fs_populate_sattrs(arg, cur, path, dnode);
 }
 
 static void
 fs_populate_symlink(fsnode *cur, const char *dir __unused,
-    struct fs_foreach_populate_arg *arg)
+    struct fs_populate_arg *arg)
 {
 	char path[PATH_MAX];
 	dnode_phys_t *dnode;
@@ -2058,8 +2054,8 @@ fs_populate_symlink(fsnode *cur, const char *dir __unused,
 static void
 fs_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 {
-	struct fs_foreach_populate_arg *arg;
-	struct fs_populate_dir_s *dirs;
+	struct fs_populate_arg *arg;
+	struct fs_populate_dir *dirs;
 
 	arg = _arg;
 	switch (cur->type) {
@@ -2078,6 +2074,10 @@ fs_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 		assert(0);
 	}
 
+	/*
+	 * We reached the last entry in the parent directory, so write out the
+	 * parent and pop the directory stack.
+	 */
 	if (cur->next == NULL) {
 		dirs = SLIST_FIRST(&arg->dirs);
 		SLIST_REMOVE_HEAD(&arg->dirs, next);
@@ -2197,7 +2197,7 @@ fs_add_zpl_attrs(zfs_opt_t *zfs_opts, zfs_fs_t *fs)
 static void
 fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
-	struct fs_foreach_populate_arg poparg;
+	struct fs_populate_arg poparg;
 	zfs_zap_t deleteqzap, masterzap;
 	zfs_objset_t *os;
 	dnode_phys_t *deleteq, *masterobj;
