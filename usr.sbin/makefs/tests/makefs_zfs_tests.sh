@@ -158,11 +158,11 @@ long_file_name_body()
 	create_test_dirs
 	cd $TEST_INPUTS_DIR
 	for i in $(seq 1 60); do
-		touch $(jot -s '' 60 1 1)
+		touch $(jot -s '' $i 1 1)
 	done
 	cd -
 
-	atf_check -o not-empty -e empty -s exit:0 \
+	atf_check -o empty -e empty -s exit:0 \
 	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -186,6 +186,6 @@ atf_init_test_cases()
 	# - empty filesystem
 	# - create a snapshot of a filesystem
 	# - create a long symlink target
-	# - test with different ashifts (at least, 9)
+	# - test with different ashifts (at least, 9), different image sizes
 	# - large fat ZAP directory
 }

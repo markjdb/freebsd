@@ -36,6 +36,7 @@
 #include <bitstring.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -95,7 +96,12 @@ typedef struct {
 
 typedef struct zfs_zap_entry {
 	char		*name;
-	uint8_t		*valp;
+	union {
+		uint8_t	 *valp;
+		uint16_t *val16p;
+		uint32_t *val32p;
+		uint64_t *val64p;
+	};
 	size_t		intsz;
 	size_t		intcnt;
 	STAILQ_ENTRY(zfs_zap_entry) next;
@@ -781,6 +787,8 @@ _objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, struct dnode_cursor *c,
 		}
 
 		vdev_pwrite(zfs_opts, blk, DNODE_BLOCK_SIZE, loc);
+
+		os->osphys->os_meta_dnode.dn_used += DNODE_BLOCK_SIZE;
 	}
 	dnode_cursor_finish(zfs_opts, c);
 	free(os->dnodes);
@@ -1077,6 +1085,7 @@ static void
 zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 {
 	zio_cksum_t cksum;
+	blkptr_t *indir;
 	zap_leaf_t l;
 	zap_phys_t *zaphdr;
 	zap_leaf_phys_t *leaf;
@@ -1174,6 +1183,29 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 		leaf->l_hdr.lh_freelist += nchunks;
 		leaf->l_hdr.lh_nentries++;
 
+		/* Values must be stored in big-endian format. */
+		switch (ent->intsz) {
+		case 1:
+			break;
+		case 2:
+			for (uint16_t *v = ent->val16p;
+			    v - ent->val16p < (ptrdiff_t)ent->intcnt; v++)
+				*v = htobe16(*v);
+			break;
+		case 4:
+			for (uint32_t *v = ent->val32p;
+			    v - ent->val32p < (ptrdiff_t)ent->intcnt; v++)
+				*v = htobe32(*v);
+			break;
+		case 8:
+			for (uint64_t *v = ent->val64p;
+			    v - ent->val64p < (ptrdiff_t)ent->intcnt; v++)
+				*v = htobe64(*v);
+			break;
+		default:
+			assert(0);
+		}
+
 		/* Write out the leaf chunks for this KVP. */
 		le = ZAP_LEAF_ENTRY(&l, *lptr);
 		le->le_type = ZAP_CHUNK_ENTRY;
@@ -1202,17 +1234,24 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 		if (ptrhasht[i] == 0)
 			ptrhasht[i] = blkid;
 
+	/*
+	 * We can't use more than one embedded block pointer, since this might
+	 * be a directory and we don't want to stomp on the SA bonus buffer.
+	 */
 	dnode = zap->dnode;
-	dnode->dn_nblkptr = 2;
+	dnode->dn_nblkptr = 1;
+	dnode->dn_nlevels = 2;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_maxblkid = blkid;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
-	dnode->dn_used = blksz * 2;
+	dnode->dn_used = blksz * 3;	/* two data blocks plus indir block */
+
+	indir = ecalloc(BLKPTR_PER_INDIR, sizeof(*indir));
 
 	loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
 	assert(blksz == SPA_OLDMAXBLOCKSIZE);
 	fletcher_4_native(zfs_opts->filebuf, blksz, NULL, &cksum);
-	blkptr_set(&dnode->dn_blkptr[0], loc, blksz, dnode->dn_type,
+	blkptr_set(&indir[0], loc, blksz, dnode->dn_type,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 	vdev_pwrite(zfs_opts, zfs_opts->filebuf, blksz, loc);
 
@@ -1220,10 +1259,18 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
 	assert(blksz == SPA_OLDMAXBLOCKSIZE);
 	fletcher_4_native(l.l_phys, blksz, NULL, &cksum);
-	blkptr_set(&dnode->dn_blkptr[1], loc, blksz, dnode->dn_type,
+	blkptr_set(&indir[1], loc, blksz, dnode->dn_type,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 	vdev_pwrite(zfs_opts, l.l_phys, blksz, loc);
 
+	loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
+	assert(blksz == SPA_OLDMAXBLOCKSIZE);
+	fletcher_4_native(indir, blksz, NULL, &cksum);
+	blkptr_set_level(&dnode->dn_blkptr[0], loc, blksz, dnode->dn_type, 1,
+	    2, ZIO_CHECKSUM_FLETCHER_4, &cksum);
+	vdev_pwrite(zfs_opts, indir, blksz, loc);
+
+	free(indir);
 	free(l.l_phys);
 }
 
@@ -1510,7 +1557,7 @@ pool_fini(zfs_opt_t *zfs_opts)
 
 	/* XXXMJ more fields */
 	dsldir->dd_head_dataset_obj = dslid;
-	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
+	dsldir->dd_used_bytes = ds->ds_used_bytes;
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	}
 
@@ -1620,7 +1667,7 @@ dnode_cursor_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, dnode_phys_t *dnode,
 	dnode->dn_maxblkid = ndatablks > 0 ? ndatablks - 1 : 0;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
-	dnode->dn_used = ndatablks * blksz + nindblks * SPA_OLDMAXBLOCKSIZE;
+	dnode->dn_used = nindblks * SPA_OLDMAXBLOCKSIZE;
 
 	c = ecalloc(1, sizeof(*c));
 	if (nindblks > 0) {
@@ -1986,8 +2033,9 @@ fs_populate_file(fsnode *cur, const char *dir, struct fs_populate_arg *arg)
 		fletcher_4_native(zfs_opts->filebuf, target, NULL, &cksum);
 		blkptr_set(bp, loc, target, DMU_OT_PLAIN_FILE_CONTENTS,
 		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
-
 		vdev_pwrite(zfs_opts, zfs_opts->filebuf, target, loc);
+
+		dnode->dn_used += target;
 	}
 	dnode_cursor_finish(zfs_opts, c);
 
@@ -2094,15 +2142,13 @@ static void
 fs_add_zpl_attr_layout(zfs_zap_t *zap, unsigned int index,
     const sa_attr_type_t layout[], size_t sacnt)
 {
-	sa_attr_type_t *sas;
-	char ti[8];
+	char ti[16];
 
-	sas = ecalloc(sacnt, sizeof(sa_attr_type_t));
-	for (size_t i = 0; i < sacnt; i++)
-		sas[i] = htobe16(layout[i]);
+	assert(sizeof(layout[0]) == 2);
+
 	snprintf(ti, sizeof(ti), "%u", index);
-	zap_add(zap, ti, sizeof(*sas), sacnt, (uint8_t *)sas);
-	free(sas);
+	zap_add(zap, ti, sizeof(sa_attr_type_t), sacnt,
+	    (const uint8_t *)layout);
 }
 
 /*
