@@ -1607,26 +1607,22 @@ pool_fini(zfs_opt_t *zfs_opts)
  * Visit each node in a directory hierarchy, in pre-order depth-first order.
  */
 static void
-fsnode_foreach(fsnode *root, const char *dir,
-    void (*cb)(fsnode *, const char *, void *), void *arg)
+fsnode_foreach(fsnode *root, void (*cb)(fsnode *, void *), void *arg)
 {
-	char path[PATH_MAX];
-
 	assert(root->type == S_IFDIR);
-	snprintf(path, sizeof(path), "%s/%s", dir, root->path);
 
 	for (fsnode *cur = root; cur != NULL; cur = cur->next) {
 		assert(cur->type == S_IFREG || cur->type == S_IFDIR ||
 		    cur->type == S_IFLNK);
 
-		cb(cur, path, arg);
+		cb(cur, arg);
 		if (cur->type == S_IFDIR && cur->child != NULL)
-			fsnode_foreach(cur->child, path, cb, arg);
+			fsnode_foreach(cur->child, cb, arg);
 	}
 }
 
 static void
-fs_foreach_count(fsnode *cur, const char *dir __unused, void *arg)
+fs_foreach_count(fsnode *cur, void *arg)
 {
 	uint64_t *countp;
 
@@ -1783,6 +1779,7 @@ struct fs_populate_dir {
 struct fs_populate_arg {
 	zfs_opt_t	*zfs_opts;
 	zfs_fs_t	*fs;			/* owning filesystem */
+	int		dirfd;			/* root directory fd */
 	uint64_t	rootdirid;		/* root directory dnode ID */
 	SLIST_HEAD(, fs_populate_dir) dirs;	/* stack of directories */
 };
@@ -1836,15 +1833,15 @@ fs_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
 
 static void
 fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
-    const char *path, dnode_phys_t *dnode)
+    dnode_phys_t *dnode)
 {
-	char symlinktarget[PATH_MAX];
+	char target[PATH_MAX];
 	const fsnode *child;
 	zfs_fs_t *fs;
 	zfs_ace_hdr_t aces[3];
 	struct stat *sb;
 	sa_hdr_phys_t *sahdr;
-	uint64_t daclcount, flags, gen, gid, links, mode, parent, size, uid;
+	uint64_t daclcount, flags, gen, gid, links, mode, parent, objsize, uid;
 	char *attrbuf;
 	size_t bonussz, hdrsz;
 	int layout;
@@ -1859,7 +1856,7 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	case S_IFREG:
 		layout = SA_LAYOUT_INDEX;
 		links = 1;
-		size = sb->st_size;
+		objsize = sb->st_size;
 		break;
 	case S_IFDIR: {
 		unsigned int children, subdirs;
@@ -1883,18 +1880,22 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 
 		layout = SA_LAYOUT_INDEX;
 		links = subdirs + 1;
-		size = children;
+		objsize = children;
 		break;
-	}
-	case S_IFLNK:
-		memset(symlinktarget, 0, sizeof(symlinktarget));
-		if (readlink(path, symlinktarget, sizeof(symlinktarget)) == -1)
+		}
+	case S_IFLNK: {
+		char path[PATH_MAX];
+
+		memset(target, 0, sizeof(target));
+		snprintf(path, sizeof(path), "%s/%s", cur->path, cur->name);
+		if (readlinkat(arg->dirfd, path, target, sizeof(target)) == -1)
 			err(1, "readlink(%s)", path);
 
 		layout = SA_LAYOUT_INDEX_SYMLINK;
 		links = 1;
-		size = strlen(symlinktarget);
+		objsize = strlen(target);
 		break;
+		}
 	default:
 		assert(0);
 	}
@@ -1949,7 +1950,7 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	fs_populate_attr(fs, attrbuf, &links, ZPL_LINKS, &bonussz);
 	fs_populate_attr(fs, attrbuf, &mode, ZPL_MODE, &bonussz);
 	fs_populate_attr(fs, attrbuf, &parent, ZPL_PARENT, &bonussz);
-	fs_populate_attr(fs, attrbuf, &size, ZPL_SIZE, &bonussz);
+	fs_populate_attr(fs, attrbuf, &objsize, ZPL_SIZE, &bonussz);
 	fs_populate_attr(fs, attrbuf, &uid, ZPL_UID, &bonussz);
 
 	assert(sizeof(sb->st_atim) == fs->satab[ZPL_ATIME].size);
@@ -1967,17 +1968,17 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 
 	if (cur->type == S_IFLNK) {
 		/* Need to use a spill block pointer if the target is long. */
-		assert(bonussz + size <= DN_OLD_MAX_BONUSLEN);
-		fs_populate_varszattr(fs, attrbuf, symlinktarget, size,
+		assert(bonussz + objsize <= DN_OLD_MAX_BONUSLEN);
+		fs_populate_varszattr(fs, attrbuf, target, objsize,
 		    sahdr->sa_lengths[0], ZPL_SYMLINK, &bonussz);
-		sahdr->sa_lengths[1] = (uint16_t)size;
+		sahdr->sa_lengths[1] = (uint16_t)objsize;
 	}
 
 	dnode->dn_bonuslen = bonussz;
 }
 
 static void
-fs_populate_file(fsnode *cur, const char *dir, struct fs_populate_arg *arg)
+fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 {
 	struct dnode_cursor *c;
 	dnode_phys_t *dnode;
@@ -2000,9 +2001,9 @@ fs_populate_file(fsnode *cur, const char *dir, struct fs_populate_arg *arg)
 	c = dnode_cursor_init(zfs_opts, &arg->fs->os, dnode, size, 0);
 
 	bufsz = sizeof(zfs_opts->filebuf);
-	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
+	snprintf(path, sizeof(path), "%s/%s", cur->path, cur->name);
 
-	fd = open(path, O_RDONLY);
+	fd = openat(arg->dirfd, path, O_RDONLY);
 	if (fd == -1)
 		err(1, "open(%s)", path);
 	for (off_t foff = 0; foff < size; foff += target) {
@@ -2041,16 +2042,14 @@ fs_populate_file(fsnode *cur, const char *dir, struct fs_populate_arg *arg)
 
 	(void)close(fd);
 
-	fs_populate_sattrs(arg, cur, path, dnode);
+	fs_populate_sattrs(arg, cur, dnode);
 
 	fs_populate_dirent(arg, cur, dnid);
 }
 
 static void
-fs_populate_dir(fsnode *cur, const char *dir __unused,
-    struct fs_populate_arg *arg)
+fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 {
-	char path[PATH_MAX];
 	struct fs_populate_dir *dirinfo;
 	dnode_phys_t *dnode;
 	zfs_objset_t *os;
@@ -2077,15 +2076,12 @@ fs_populate_dir(fsnode *cur, const char *dir __unused,
 	dirinfo->objid = dnid;
 	SLIST_INSERT_HEAD(&arg->dirs, dirinfo, next);
 
-	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
-	fs_populate_sattrs(arg, cur, path, dnode);
+	fs_populate_sattrs(arg, cur, dnode);
 }
 
 static void
-fs_populate_symlink(fsnode *cur, const char *dir __unused,
-    struct fs_populate_arg *arg)
+fs_populate_symlink(fsnode *cur, struct fs_populate_arg *arg)
 {
-	char path[PATH_MAX];
 	dnode_phys_t *dnode;
 	uint64_t dnid;
 
@@ -2096,12 +2092,11 @@ fs_populate_symlink(fsnode *cur, const char *dir __unused,
 
 	fs_populate_dirent(arg, cur, dnid);
 
-	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
-	fs_populate_sattrs(arg, cur, path, dnode);
+	fs_populate_sattrs(arg, cur, dnode);
 }
 
 static void
-fs_foreach_populate(fsnode *cur, const char *dir, void *_arg)
+fs_foreach_populate(fsnode *cur, void *_arg)
 {
 	struct fs_populate_arg *arg;
 	struct fs_populate_dir *dirs;
@@ -2109,15 +2104,15 @@ fs_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 	arg = _arg;
 	switch (cur->type) {
 	case S_IFREG:
-		fs_populate_file(cur, dir, arg);
+		fs_populate_file(cur, arg);
 		break;
 	case S_IFDIR:
 		if (strcmp(cur->name, ".") == 0)
 			break;
-		fs_populate_dir(cur, dir, arg);
+		fs_populate_dir(cur, arg);
 		break;
 	case S_IFLNK:
-		fs_populate_symlink(cur, dir, arg);
+		fs_populate_symlink(cur, arg);
 		break;
 	default:
 		assert(0);
@@ -2243,7 +2238,7 @@ fs_add_zpl_attrs(zfs_opt_t *zfs_opts, zfs_fs_t *fs)
 }
 
 static void
-fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
+fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int dirfd, fsnode *root)
 {
 	struct fs_populate_arg poparg;
 	zfs_zap_t deleteqzap, masterzap;
@@ -2258,7 +2253,7 @@ fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * directory, etc.), plus some objects for metadata.
 	 */
 	dnodecount = 0;
-	fsnode_foreach(root, dir, fs_foreach_count, &dnodecount);
+	fsnode_foreach(root, fs_foreach_count, &dnodecount);
 	dnodecount++; /* meta dnode */
 	dnodecount++; /* master object */
 	dnodecount++; /* delete queue */
@@ -2286,13 +2281,15 @@ fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	/*
 	 * Build the filesystem.  This is where most of the work happens.
 	 */
+	poparg.dirfd = dirfd;
 	poparg.zfs_opts = zfs_opts;
 	poparg.fs = fs;
 	SLIST_INIT(&poparg.dirs);
-	fs_populate_dir(root, dir, &poparg);
+	fs_populate_dir(root, &poparg);
 	assert(!SLIST_EMPTY(&poparg.dirs));
-	fsnode_foreach(root, dir, fs_foreach_populate, &poparg);
+	fsnode_foreach(root, fs_foreach_populate, &poparg);
 	assert(SLIST_EMPTY(&poparg.dirs));
+	(void)close(poparg.dirfd);
 
 	/*
 	 * Create an empty delete queue.  We don't do anything with it, but
@@ -2327,11 +2324,9 @@ void
 zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs_opts;
+	int dirfd;
 
 	zfs_opts = fsopts->fs_specific;
-
-	if (fsopts->offset != 0)
-		errx(1, "unhandled offset option");
 
 	/*
 	 * Use a fixed seed to provide reproducible pseudo-random numbers for
@@ -2339,9 +2334,16 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	 */
 	srandom(1729);
 
+	if (fsopts->offset != 0)
+		errx(1, "unhandled offset option");
+
+	dirfd = open(dir, O_DIRECTORY | O_RDONLY);
+	if (dirfd < 0)
+		err(1, "open(%s)", dir);
+
 	vdev_init(zfs_opts, fsopts->maxsize, image);
 	pool_init(zfs_opts);
-	fs_create(zfs_opts, &zfs_opts->rootfs, dir, root);
+	fs_create(zfs_opts, &zfs_opts->rootfs, dirfd, root);
 	pool_fini(zfs_opts);
 	vdev_fini(zfs_opts);
 }
