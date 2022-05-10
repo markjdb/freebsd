@@ -404,6 +404,14 @@ _NOTE(CONSTCOND) } while (0)
 	(bp)->blk_phys_birth = ((logical) == (physical) ? 0 : (physical)); \
 }
 
+#define	BP_GET_FILL(bp)				\
+	((BP_IS_EMBEDDED(bp)) ? 1 : (bp)->blk_fill)
+
+#define	BP_SET_FILL(bp, fill)			\
+{						\
+	(bp)->blk_fill = fill;			\
+}
+
 #define	BP_GET_ASIZE(bp)	\
 	(DVA_GET_ASIZE(&(bp)->blk_dva[0]) + DVA_GET_ASIZE(&(bp)->blk_dva[1]) + \
 		DVA_GET_ASIZE(&(bp)->blk_dva[2]))
@@ -1755,6 +1763,9 @@ typedef struct zap_leaf {
 	int l_bs;			/* block size shift */
 	zap_leaf_phys_t *l_phys;
 } zap_leaf_t;
+
+#define	ZAP_MAXNAMELEN 256
+#define	ZAP_MAXVALUELEN (1024 * 8)
 
 #define	ACE_READ_DATA		0x00000001	/* file: read data */
 #define	ACE_LIST_DIRECTORY	0x00000001	/* dir: list files */
