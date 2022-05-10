@@ -1817,7 +1817,8 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	case S_IFDIR: {
 		unsigned int children, subdirs;
 
-		children = subdirs = 0;
+		children = 1; /* .. */
+		subdirs = 0;
 		if (cur->type == S_IFDIR) {
 			/*
 			 * Handle weird non-uniformity of the root directory: if
@@ -2074,17 +2075,18 @@ fs_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 		assert(0);
 	}
 
-	/*
-	 * We reached the last entry in the parent directory, so write out the
-	 * parent and pop the directory stack.
-	 */
-	if (cur->next == NULL) {
-		dirs = SLIST_FIRST(&arg->dirs);
-		SLIST_REMOVE_HEAD(&arg->dirs, next);
-
-		zap_write(arg->zfs_opts, &dirs->zap);
-
-		free(dirs);
+	if (cur->next == NULL && cur->child == NULL) {
+		/*
+		 * We reached a terminal node in a subtree.  Walk back up and
+		 * write out directories.
+		 */
+		do {
+			dirs = SLIST_FIRST(&arg->dirs);
+			SLIST_REMOVE_HEAD(&arg->dirs, next);
+			zap_write(arg->zfs_opts, &dirs->zap);
+			free(dirs);
+			cur = cur->parent;
+		} while (cur != NULL && cur->next == NULL);
 	}
 }
 

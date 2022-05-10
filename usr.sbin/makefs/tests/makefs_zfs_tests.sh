@@ -36,6 +36,8 @@ TEST_ZFS_POOL_NAME="$TMPDIR/poolname"
 
 common_cleanup()
 {
+	sync
+
 	zpool destroy "$(cat $TEST_ZFS_POOL_NAME)"
 	mdconfig -d -u "$(cat $TEST_MD_DEVICE_FILE)"
 }
@@ -55,7 +57,7 @@ basic_body()
 	create_test_inputs
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -63,14 +65,39 @@ basic_body()
 }
 basic_cleanup()
 {
-	#common_cleanup
+	common_cleanup
 }
 
-atf_test_case file_sizes
+# Make sure that we can create and remove an empty directory.
+atf_test_case empty_dir cleanup
+empty_dir_body()
+{
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+	mkdir dir
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+
+	atf_check -s exit:0 rmdir ${TEST_MOUNT_DIR}/dir
+}
+empty_dir_cleanup()
+{
+	common_cleanup
+}
+
+atf_test_case file_sizes cleanup
 file_sizes_body()
 {
 	local i
 
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
 	i=1
 	while [ $i -lt $((1 << 20)) ]; do
 		truncate -s $i ${i}.1
@@ -78,61 +105,84 @@ file_sizes_body()
 		truncate -s $(($i + 1)) ${i}.3
 		i=$(($i << 1))
 	done
+	cd -
 
 	# XXXMJ this creates sparse files, make sure makefs doesn't
 	# preserve the sparseness.
         # XXXMJ try with different ashifts
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
-	# XXXMJ mount the pool and verify
+
+	check_image_contents
+}
+file_sizes_cleanup()
+{
+	common_cleanup
 }
 
 # Allocate enough dnodes from an object set that the meta dnode needs to use
 # indirect blocks.
-atf_test_case indirect_dnode_array
+atf_test_case indirect_dnode_array cleanup
 indirect_dnode_array_body()
 {
+	local i
+
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
 	# 512 bytes per dnode, 3*128KB of direct blocks => limit of 768 files.
         # XXXMJ actual threshold is much lower
 	for i in $(seq 1 1000); do
 		touch $i
 	done
+	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
 
-	# XXXMJ mount the pool and verify
+	import_image
+
+	check_image_contents
+}
+indirect_dnode_array_cleanup()
+{
+	common_cleanup
 }
 
-atf_test_case long_file_name
+atf_test_case long_file_name cleanup
 long_file_name_body()
 {
-	local f1 f2
+	local i
 
-	# The maximum name length for a microzap entry is 50.
-	f1=$(jot -s '' 60 1 1)
-	f2=1
-
-	touch $f1 $f2
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+	for i in $(seq 1 60); do
+		touch $(jot -s '' 60 1 1)
+	done
+	cd -
 
 	atf_check -o not-empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
 
-	# XXXMJ mount the pool and verify
+	import_image
+
+	check_image_contents
+}
+long_file_name_cleanup()
+{
+	common_cleanup
 }
 
 atf_init_test_cases()
 {
 	atf_add_test_case basic
+        atf_add_test_case empty_dir
 	atf_add_test_case file_sizes
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
 
 	# XXXMJ tests:
-	# - empty directory (empty ZAP handling)
-	#   - check that we can rmdir an empty directory
 	# - empty filesystem
 	# - create a snapshot of a filesystem
 	# - create a long symlink target
