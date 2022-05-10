@@ -51,6 +51,9 @@ import_image()
 	echo "$ZFS_POOL_NAME" > $TEST_ZFS_POOL_NAME
 }
 
+#
+# Test with some default layout defined by the common code.
+#
 atf_test_case basic cleanup
 basic_body()
 {
@@ -73,6 +76,7 @@ atf_test_case empty_dir cleanup
 empty_dir_body()
 {
 	create_test_dirs
+
 	cd $TEST_INPUTS_DIR
 	mkdir dir
 	cd -
@@ -98,6 +102,7 @@ file_sizes_body()
 
 	create_test_dirs
 	cd $TEST_INPUTS_DIR
+
 	i=1
 	while [ $i -lt $((1 << 20)) ]; do
 		truncate -s $i ${i}.1
@@ -105,6 +110,7 @@ file_sizes_body()
 		truncate -s $(($i + 1)) ${i}.3
 		i=$(($i << 1))
 	done
+
 	cd -
 
 	# XXXMJ this creates sparse files, make sure makefs doesn't
@@ -150,16 +156,27 @@ indirect_dnode_array_cleanup()
 	common_cleanup
 }
 
+#
+# Create some files with long names, so as to test fat ZAP handling.
+#
 atf_test_case long_file_name cleanup
 long_file_name_body()
 {
-	local i
+	local dir i
 
 	create_test_dirs
 	cd $TEST_INPUTS_DIR
+
+	# micro ZAP keys can be at most 50 bytes.
 	for i in $(seq 1 60); do
 		touch $(jot -s '' $i 1 1)
 	done
+	dir=$(jot -s '' 61 1 1)
+	mkdir $dir
+	for i in $(seq 1 60); do
+		touch ${dir}/$(jot -s '' $i 1 1)
+	done
+
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
@@ -187,5 +204,4 @@ atf_init_test_cases()
 	# - create a snapshot of a filesystem
 	# - create a long symlink target
 	# - test with different ashifts (at least, 9), different image sizes
-	# - large fat ZAP directory
 }

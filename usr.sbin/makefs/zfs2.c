@@ -1318,15 +1318,15 @@ pool_init(zfs_opt_t *zfs_opts)
 	dnodecount++; /*     |   |-> $FREE (DSL dir)          */
 	dnodecount++; /*     |   |   L-> props (ZAP)          */
 	dnodecount++; /*     |   L-> $ORIGIN (DSL dir)        */
-	dnodecount++; /*     |       |-> dataset              */ 
-	dnodecount++; /*     |       |   L-> deadlist         */ 
-	dnodecount++; /*     |       |-> snapshot             */ 
-	dnodecount++; /*     |       |   |-> deadlist         */ 
+	dnodecount++; /*     |       |-> dataset              */
+	dnodecount++; /*     |       |   L-> deadlist         */
+	dnodecount++; /*     |       |-> snapshot             */
+	dnodecount++; /*     |       |   |-> deadlist         */
 	dnodecount++; /*     |       |   L-> snapshot names   */
 	dnodecount++; /*     |       L-> props (ZAP)          */
 	dnodecount++; /*     |-> DSL root dataset             */
-	dnodecount++; /*     |   L-> deadlist                 */ 
-	dnodecount++; /*     L-> props (ZAP)                  */ 
+	dnodecount++; /*     |   L-> deadlist                 */
+	dnodecount++; /*     L-> props (ZAP)                  */
 	dnodecount++; /* space map object array               */
 	dnodecount += zfs_opts->mscount; /* space maps        */
 
