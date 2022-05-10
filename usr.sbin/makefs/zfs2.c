@@ -59,6 +59,7 @@
  * - objset accounting, dn_used
  * - support for multiple filesystems
  * - figure out how to handle fat ZAP collisions
+ * - hard links
  */
 
 /*
@@ -143,13 +144,14 @@ typedef struct {
 
 static void zap_init(zfs_zap_t *, zfs_objset_t *, dnode_phys_t *);
 static void zap_add_uint64(zfs_zap_t *, const char *, uint64_t);
+static void zap_add_string(zfs_zap_t *, const char *, const char *);
 static void zap_write(zfs_opt_t *, zfs_zap_t *);
 
 static dnode_phys_t *objset_dnode_alloc(zfs_objset_t *, uint8_t, uint64_t *);
 static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
     uint16_t, uint64_t *);
 
-static int spacemap_init(zfs_opt_t *);
+static void spacemap_init(zfs_opt_t *);
 
 struct dnode_cursor {
 	char		inddir[INDIR_LEVELS][SPA_OLDMAXBLOCKSIZE];
@@ -352,7 +354,7 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 	blkptr_set_level(bp, off, size, dntype, 0, 1, cksumt, cksum);
 }
 
-static int
+static void
 vdev_init(zfs_opt_t *zfs_opts, size_t size, const char *image)
 {
 	int oflags;
@@ -360,24 +362,29 @@ vdev_init(zfs_opt_t *zfs_opts, size_t size, const char *image)
 	oflags = O_RDWR | O_CREAT | O_TRUNC;
 
 	assert(zfs_opts->ashift >= SPA_MINBLOCKSHIFT);
-
-	zfs_opts->fd = open(image, oflags, 0644);
-	if (zfs_opts->fd == -1) {
-		warn("Can't open `%s' for writing", image);
-		return (-1);
-	}
 	zfs_opts->vdevsize = rounddown2(size, 1 << zfs_opts->ashift);
 	if (zfs_opts->vdevsize < (off_t)SPA_MINDEVSIZE) {
-		warnx("maximum image size %ju is too small",
+		errx(1, "Maximum image size %ju is too small",
 		    (uintmax_t)zfs_opts->vdevsize);
-		return (-1);
-	}
-	if (ftruncate(zfs_opts->fd, zfs_opts->vdevsize) != 0) {
-		warn("Failed to extend image file `%s'", image);
-		return (-1);
 	}
 
-	return (spacemap_init(zfs_opts));
+	zfs_opts->fd = open(image, oflags, 0644);
+	if (zfs_opts->fd == -1)
+		err(1, "Can't open `%s' for writing", image);
+	if (ftruncate(zfs_opts->fd, zfs_opts->vdevsize) != 0)
+		err(1, "Failed to extend image file `%s'", image);
+
+	spacemap_init(zfs_opts);
+}
+
+static void
+vdev_fini(zfs_opt_t *zfs_opts)
+{
+	assert(zfs_opts->spacemap == NULL);
+	if (zfs_opts->fd != -1) {
+		(void)close(zfs_opts->fd);
+		zfs_opts->fd = -1;
+	}
 }
 
 static void
@@ -526,7 +533,7 @@ vdev_space_alloc(zfs_opt_t *zfs_opts, zfs_objset_t *os, off_t *lenp)
 	return ((off_t)loc << zfs_opts->ashift);
 }
 
-static int
+static void
 spacemap_init(zfs_opt_t *zfs_opts)
 {
 	uint64_t msshift, slabs;
@@ -542,15 +549,12 @@ spacemap_init(zfs_opt_t *zfs_opts)
 		 * With the smallest block size of 512B, the limit on the image
 		 * size is 2TB.  That should be enough for anyone.
 		 */
-		warnx("image size %ju is too large", (uintmax_t)size);
-		return (-1);
+		errx(1, "image size %ju is too large", (uintmax_t)size);
 	}
 	zfs_opts->spacemapbits = (int)nbits;
 	zfs_opts->spacemap = bit_alloc(zfs_opts->spacemapbits);
-	if (zfs_opts->spacemap == NULL) {
-		warn("bitstring allocation failed");
-		return (-1);
-	}
+	if (zfs_opts->spacemap == NULL)
+		err(1, "bitstring allocation failed");
 
 	/*
 	 * XXXMJ explain
@@ -562,8 +566,6 @@ spacemap_init(zfs_opt_t *zfs_opts)
 	}
 	zfs_opts->msshift = msshift;
 	zfs_opts->mscount = slabs;
-
-	return (0);
 }
 
 typedef struct zfs_sm {
@@ -584,7 +586,6 @@ spacemap_write(zfs_opt_t *zfs_opts)
 	off_t smblksz, objarrblksz, objarrloc;
 
 	mos = &zfs_opts->mos;
-	spacemap = zfs_opts->spacemap;
 	objarr = zfs_opts->objarr;
 
 	objarrblksz = sizeof(uint64_t) * zfs_opts->mscount;
@@ -608,6 +609,7 @@ spacemap_write(zfs_opt_t *zfs_opts)
 		    DMU_OT_SPACE_MAP_HEADER, SPACE_MAP_SIZE_V0, &sma[i].dnid);
 		sma[i].loc = vdev_space_alloc(zfs_opts, mos, &smblksz);
 	}
+	spacemap = zfs_opts->spacemap;
 	zfs_opts->spacemap = NULL;
 
 	/*
@@ -617,7 +619,7 @@ spacemap_write(zfs_opt_t *zfs_opts)
 	for (uint64_t i = 0; i < zfs_opts->mscount; i++) {
 		space_map_phys_t *sm;
 		uint64_t alloc, length, *smblk;
-		int startb, endb, srunb, erunb;
+		int shift, startb, endb, srunb, erunb;
 
 		/*
 		 * We only allocate a single block for this space map, but OpenZFS
@@ -632,9 +634,9 @@ spacemap_write(zfs_opt_t *zfs_opts)
 		smblk = ecalloc(1, smblksz);
 
 		alloc = length = 0;
-		for (srunb = startb = i * ((uint64_t)1 << zfs_opts->msshift),
-		    endb = (i + 1) * ((uint64_t)1 << zfs_opts->msshift);
-		    srunb < endb; srunb = erunb) {
+		shift = zfs_opts->msshift - zfs_opts->ashift;
+		for (srunb = startb = i * (1 << shift),
+		    endb = (i + 1) * (1 << shift); srunb < endb; srunb = erunb) {
 			uint64_t runlen, runoff;
 
 			/* Find a run of allocated space. */
@@ -694,6 +696,7 @@ spacemap_write(zfs_opt_t *zfs_opts)
 	vdev_pwrite(zfs_opts, objarrblk, objarrblksz, objarrloc);
 	free(objarrblk);
 
+	assert(zfs_opts->spacemap == NULL);
 	free(spacemap);
 }
 
@@ -783,11 +786,19 @@ _objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, struct dnode_cursor *c,
 	free(os->dnodes);
 	os->dnodes = NULL;
 
-	/* Now write out the object set itself, including the meta dnode. */
+	/*
+	 * Now write out the object set itself, including the meta dnode.
+	 */
 	vdev_pwrite(zfs_opts, os->osphys, os->osblksz, os->osloc);
 
 	if (cksump != NULL)
 		fletcher_4_native(os->osphys, os->osblksz, NULL, cksump);
+
+	/* XXXMJ */
+#if 0
+	free(os->osphys);
+	os->osphys = NULL;
+#endif
 }
 
 static void
@@ -812,9 +823,9 @@ objset_write_mos(zfs_opt_t *zfs_opts, zio_cksum_t *cksump)
 	 * There is a chicken-and-egg problem here: we cannot write space maps
 	 * before we're finished allocating space from the vdev, and we can't
 	 * write the MOS without having allocated space for indirect dnode
-	 * blocks.  Thus, rather than lazily allocating indirect blocks (which
-	 * would be simpler), they are allocated up-front and before writing
-	 * space maps.
+	 * blocks.  Thus, rather than lazily allocating indirect blocks for the
+	 * meta-dnode (which would be simpler), they are allocated up-front and
+	 * before writing space maps.
 	 */
 	c = dnode_cursor_init(zfs_opts, mos, &mos->osphys->os_meta_dnode,
 	    mos->dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE);
@@ -853,20 +864,24 @@ objset_dnode_alloc(zfs_objset_t *os, uint8_t type, uint64_t *idp)
 }
 
 static dsl_dir_phys_t *
-dsl_dir_alloc(zfs_opt_t *zfs_opts, zfs_objset_t *os, uint64_t parentdir,
-    uint64_t *dnidp)
+dsl_dir_alloc(zfs_opt_t *zfs_opts, uint64_t parentdir, uint64_t *dnidp)
 {
 	zfs_zap_t propszap;
+	zfs_objset_t *mos;
 	dnode_phys_t *dnode, *props;
 	dsl_dir_phys_t *dsldir;
 	uint64_t propsid;
 
-	dnode = objset_dnode_bonus_alloc(os, DMU_OT_DSL_DIR, DMU_OT_DSL_DIR,
+	mos = &zfs_opts->mos;
+
+	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DIR, DMU_OT_DSL_DIR,
 	    sizeof(dsl_dir_phys_t), dnidp);
 
-	props = objset_dnode_alloc(os, DMU_OT_DSL_PROPS, &propsid);
-	zap_init(&propszap, os, props);
+	props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsid);
+	zap_init(&propszap, mos, props);
 	zap_add_uint64(&propszap, "compression", ZIO_COMPRESS_OFF);
+	/* XXXMJ just for testing */
+	zap_add_string(&propszap, "mountpoint", "/");
 	zap_write(zfs_opts, &propszap);
 
 	dsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
@@ -976,20 +991,24 @@ zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
 	ent->intcnt = intcnt;
 	ent->valp = ecalloc(intcnt, intsz);
 	memcpy(ent->valp, val, intcnt * intsz);
-	if (intcnt != 1 || intsz != sizeof(uint64_t))
-		zap->micro = false;
-	if (strlen(name) + 1 > MZAP_NAME_LEN)
-		zap->micro = false;
-	if (++zap->kvpcnt > MZAP_ENT_MAX)
-		zap->micro = false;
-
+	zap->kvpcnt++;
 	STAILQ_INSERT_TAIL(&zap->kvps, ent, next);
+
+	if (zap->micro && (intcnt != 1 || intsz != sizeof(uint64_t) ||
+	    strlen(name) + 1 > MZAP_NAME_LEN || zap->kvpcnt > MZAP_ENT_MAX))
+		zap->micro = false;
 }
 
 static void
 zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 {
 	zap_add(zap, name, sizeof(uint64_t), 1, (uint8_t *)&val);
+}
+
+static void
+zap_add_string(zfs_zap_t *zap, const char *name, const char *val)
+{
+	zap_add(zap, name, 1, strlen(val) + 1, val);
 }
 
 static void
@@ -1178,14 +1197,13 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	}
 
 	/* Initialize unused slots of the pointer table. */
-	for (uint64_t i = 0; i < ((uint64_t)1 << zaphdr->zap_ptrtbl.zt_shift);
+	for (uint64_t i = 0; i < (uint64_t)1 << zaphdr->zap_ptrtbl.zt_shift;
 	    i++)
 		if (ptrhasht[i] == 0)
 			ptrhasht[i] = blkid;
 
 	dnode = zap->dnode;
 	dnode->dn_nblkptr = 2;
-	dnode->dn_nlevels = 1;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_maxblkid = blkid;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
@@ -1237,8 +1255,6 @@ static void
 pool_init(zfs_opt_t *zfs_opts)
 {
 	uint64_t dnodecount;
-
-	assert(zfs_opts->mscount >= 2);
 
 	dnodecount = 0;
 	dnodecount++; /* object directory (ZAP)               */
@@ -1326,12 +1342,12 @@ pool_add_child_map(zfs_opt_t *zfs_opts, zfs_objset_t *mos, uint64_t parentdir)
 
 	zap_init(&childzap, mos, childdir);
 
-	dsldir = dsl_dir_alloc(zfs_opts, mos, parentdir, &dnid);
+	dsldir = dsl_dir_alloc(zfs_opts, parentdir, &dnid);
 	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	zap_add_uint64(&childzap, "$MOS", dnid);
 
-	dsldir = dsl_dir_alloc(zfs_opts, mos, parentdir, &dnid);
+	dsldir = dsl_dir_alloc(zfs_opts, parentdir, &dnid);
 	zap_add_uint64(&childzap, "$ORIGIN", dnid);
 	originds = dsl_dataset_alloc(zfs_opts, mos, dnid, &dsdnid);
 	dsldir->dd_head_dataset_obj = dsdnid;
@@ -1349,7 +1365,7 @@ pool_add_child_map(zfs_opt_t *zfs_opts, zfs_objset_t *mos, uint64_t parentdir)
 	zap_add_uint64(&snapnameszap, "$ORIGIN", snapdnid);
 	zap_write(zfs_opts, &snapnameszap);
 
-	(void)dsl_dir_alloc(zfs_opts, mos, parentdir, &dnid);
+	(void)dsl_dir_alloc(zfs_opts, parentdir, &dnid);
 	zap_add_uint64(&childzap, "$FREE", dnid);
 
 	/* XXXMJ add actual datasets here */
@@ -1360,7 +1376,7 @@ pool_add_child_map(zfs_opt_t *zfs_opts, zfs_objset_t *mos, uint64_t parentdir)
 }
 
 static void
-pool_finish(zfs_opt_t *zfs_opts)
+pool_fini(zfs_opt_t *zfs_opts)
 {
 	zio_cksum_t cksum;
 	zfs_objset_t *mos;
@@ -1468,7 +1484,7 @@ pool_finish(zfs_opt_t *zfs_opts)
 		free(buf);
 	}
 
-	dsldir = dsl_dir_alloc(zfs_opts, mos, 0, &dsldirid);
+	dsldir = dsl_dir_alloc(zfs_opts, 0, &dsldirid);
 	{
 		zfs_zap_t objdirzap;
 
@@ -1486,7 +1502,7 @@ pool_finish(zfs_opt_t *zfs_opts)
 	ds = dsl_dataset_alloc(zfs_opts, mos, dsldirid, &dslid);
 	/* XXXMJ more fields */
 	ds->ds_prev_snap_obj = zfs_opts->originsnap;
-	ds->ds_used_bytes = 1 << 20; /* XXXMJ */
+	ds->ds_used_bytes = os->space;
 	ds->ds_uncompressed_bytes = ds->ds_compressed_bytes = ds->ds_used_bytes;
 	fletcher_4_native(os->osphys, os->osblksz, NULL, &cksum);
 	blkptr_set(&ds->ds_bp, os->osloc, os->osblksz, DMU_OT_OBJSET,
@@ -1563,7 +1579,7 @@ fsnode_foreach(fsnode *root, const char *dir,
 }
 
 static void
-fsnode_foreach_count(fsnode *cur, const char *dir __unused, void *arg)
+fs_foreach_count(fsnode *cur, const char *dir __unused, void *arg)
 {
 	uint64_t *countp;
 
@@ -1711,25 +1727,25 @@ dnode_cursor_finish(zfs_opt_t *zfs_opts, struct dnode_cursor *c)
 	free(c);
 }
 
-struct fsnode_populate_dir_s {
+struct fs_populate_dir_s {
 	zfs_zap_t		zap;
 	uint64_t		objid;
-	SLIST_ENTRY(fsnode_populate_dir_s) next;
+	SLIST_ENTRY(fs_populate_dir_s) next;
 };
 
-struct fsnode_foreach_populate_arg {
+struct fs_foreach_populate_arg {
 	zfs_opt_t	*zfs_opts;
 	zfs_fs_t	*fs;
 	uint64_t	rootdirid;
 	char		path[PATH_MAX];
-	SLIST_HEAD(, fsnode_populate_dir_s) dirs;
+	SLIST_HEAD(, fs_populate_dir_s) dirs;
 };
 
 static void
-fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
-    fsnode *cur, uint64_t dnid)
+fs_populate_dirent(struct fs_foreach_populate_arg *arg, fsnode *cur,
+    uint64_t dnid)
 {
-	struct fsnode_populate_dir_s *dir;
+	struct fs_populate_dir_s *dir;
 	uint64_t type;
 
 	switch (cur->type) {
@@ -1751,7 +1767,7 @@ fsnode_populate_dirent(struct fsnode_foreach_populate_arg *arg,
 }
 
 static void
-fsnode_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
+fs_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
     size_t *szp)
 {
 	assert(ind < fs->sacnt);
@@ -1762,7 +1778,7 @@ fsnode_populate_attr(zfs_fs_t *fs, char *attrbuf, const void *val, uint16_t ind,
 }
 
 static void
-fsnode_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
+fs_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
     size_t valsz, size_t varoff, uint16_t ind, size_t *szp)
 {
 	assert(ind < fs->sacnt);
@@ -1774,8 +1790,8 @@ fsnode_populate_varszattr(zfs_fs_t *fs, char *attrbuf, const void *val,
 }
 
 static void
-fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
-    const fsnode *cur, const char *path, dnode_phys_t *dnode)
+fs_populate_sattrs(struct fs_foreach_populate_arg *arg, const fsnode *cur,
+    const char *path, dnode_phys_t *dnode)
 {
 	char symlinktarget[PATH_MAX];
 	const fsnode *child;
@@ -1880,35 +1896,34 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 	bonussz = SA_HDR_SIZE(sahdr);
 	attrbuf = (char *)sahdr + SA_HDR_SIZE(sahdr);
 
-	fsnode_populate_attr(fs, attrbuf, &daclcount, ZPL_DACL_COUNT, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &flags, ZPL_FLAGS, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &gen, ZPL_GEN, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &gid, ZPL_GID, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &links, ZPL_LINKS, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &mode, ZPL_MODE, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &parent, ZPL_PARENT, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &size, ZPL_SIZE, &bonussz);
-	fsnode_populate_attr(fs, attrbuf, &uid, ZPL_UID, &bonussz);
+	fs_populate_attr(fs, attrbuf, &daclcount, ZPL_DACL_COUNT, &bonussz);
+	fs_populate_attr(fs, attrbuf, &flags, ZPL_FLAGS, &bonussz);
+	fs_populate_attr(fs, attrbuf, &gen, ZPL_GEN, &bonussz);
+	fs_populate_attr(fs, attrbuf, &gid, ZPL_GID, &bonussz);
+	fs_populate_attr(fs, attrbuf, &links, ZPL_LINKS, &bonussz);
+	fs_populate_attr(fs, attrbuf, &mode, ZPL_MODE, &bonussz);
+	fs_populate_attr(fs, attrbuf, &parent, ZPL_PARENT, &bonussz);
+	fs_populate_attr(fs, attrbuf, &size, ZPL_SIZE, &bonussz);
+	fs_populate_attr(fs, attrbuf, &uid, ZPL_UID, &bonussz);
 
 	assert(sizeof(sb->st_atim) == fs->satab[ZPL_ATIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_atim, ZPL_ATIME, &bonussz);
+	fs_populate_attr(fs, attrbuf, &sb->st_atim, ZPL_ATIME, &bonussz);
 	assert(sizeof(sb->st_ctim) == fs->satab[ZPL_CTIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_ctim, ZPL_CTIME, &bonussz);
+	fs_populate_attr(fs, attrbuf, &sb->st_ctim, ZPL_CTIME, &bonussz);
 	assert(sizeof(sb->st_mtim) == fs->satab[ZPL_MTIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_mtim, ZPL_MTIME, &bonussz);
+	fs_populate_attr(fs, attrbuf, &sb->st_mtim, ZPL_MTIME, &bonussz);
 	assert(sizeof(sb->st_birthtim) == fs->satab[ZPL_CRTIME].size);
-	fsnode_populate_attr(fs, attrbuf, &sb->st_birthtim, ZPL_CRTIME,
-	    &bonussz);
+	fs_populate_attr(fs, attrbuf, &sb->st_birthtim, ZPL_CRTIME, &bonussz);
 
-	fsnode_populate_varszattr(fs, attrbuf, aces, sizeof(aces), 0,
+	fs_populate_varszattr(fs, attrbuf, aces, sizeof(aces), 0,
 	    ZPL_DACL_ACES, &bonussz);
 	sahdr->sa_lengths[0] = sizeof(aces);
 
 	if (cur->type == S_IFLNK) {
 		/* Need to use a spill block pointer if the target is long. */
 		assert(bonussz + size <= DN_OLD_MAX_BONUSLEN);
-		fsnode_populate_varszattr(fs, attrbuf, symlinktarget,
-		    size, sahdr->sa_lengths[0], ZPL_SYMLINK, &bonussz);
+		fs_populate_varszattr(fs, attrbuf, symlinktarget, size,
+		    sahdr->sa_lengths[0], ZPL_SYMLINK, &bonussz);
 		sahdr->sa_lengths[1] = (uint16_t)size;
 	}
 
@@ -1916,8 +1931,8 @@ fsnode_populate_sattrs(struct fsnode_foreach_populate_arg *arg,
 }
 
 static void
-fsnode_populate_file(fsnode *cur, const char *dir,
-    struct fsnode_foreach_populate_arg *arg)
+fs_populate_file(fsnode *cur, const char *dir,
+    struct fs_foreach_populate_arg *arg)
 {
 	struct dnode_cursor *c;
 	dnode_phys_t *dnode;
@@ -1980,17 +1995,17 @@ fsnode_populate_file(fsnode *cur, const char *dir,
 
 	(void)close(fd);
 
-	fsnode_populate_sattrs(arg, cur, path, dnode);
+	fs_populate_sattrs(arg, cur, path, dnode);
 
-	fsnode_populate_dirent(arg, cur, dnid);
+	fs_populate_dirent(arg, cur, dnid);
 }
 
 static void
-fsnode_populate_dir(fsnode *cur, const char *dir __unused,
-    struct fsnode_foreach_populate_arg *arg)
+fs_populate_dir(fsnode *cur, const char *dir __unused,
+    struct fs_foreach_populate_arg *arg)
 {
 	char path[PATH_MAX];
-	struct fsnode_populate_dir_s *dirinfo;
+	struct fs_populate_dir_s *dirinfo;
 	dnode_phys_t *dnode;
 	zfs_objset_t *os;
 	uint64_t dnid;
@@ -2007,7 +2022,7 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 	 * allocating a ZAP object for this directory's children.
 	 */
 	if (!SLIST_EMPTY(&arg->dirs))
-		fsnode_populate_dirent(arg, cur, dnid);
+		fs_populate_dirent(arg, cur, dnid);
 	else
 		arg->rootdirid = dnid;
 
@@ -2018,12 +2033,12 @@ fsnode_populate_dir(fsnode *cur, const char *dir __unused,
 
 	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
 
-	fsnode_populate_sattrs(arg, cur, path, dnode);
+	fs_populate_sattrs(arg, cur, path, dnode);
 }
 
 static void
-fsnode_populate_symlink(fsnode *cur, const char *dir __unused,
-    struct fsnode_foreach_populate_arg *arg)
+fs_populate_symlink(fsnode *cur, const char *dir __unused,
+    struct fs_foreach_populate_arg *arg)
 {
 	char path[PATH_MAX];
 	dnode_phys_t *dnode;
@@ -2034,30 +2049,30 @@ fsnode_populate_symlink(fsnode *cur, const char *dir __unused,
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
 
-	fsnode_populate_dirent(arg, cur, dnid);
+	fs_populate_dirent(arg, cur, dnid);
 
 	snprintf(path, sizeof(path), "%s/%s", dir, cur->name);
-	fsnode_populate_sattrs(arg, cur, path, dnode);
+	fs_populate_sattrs(arg, cur, path, dnode);
 }
 
 static void
-fsnode_foreach_populate(fsnode *cur, const char *dir, void *_arg)
+fs_foreach_populate(fsnode *cur, const char *dir, void *_arg)
 {
-	struct fsnode_foreach_populate_arg *arg;
-	struct fsnode_populate_dir_s *dirs;
+	struct fs_foreach_populate_arg *arg;
+	struct fs_populate_dir_s *dirs;
 
 	arg = _arg;
 	switch (cur->type) {
 	case S_IFREG:
-		fsnode_populate_file(cur, dir, arg);
+		fs_populate_file(cur, dir, arg);
 		break;
 	case S_IFDIR:
 		if (strcmp(cur->name, ".") == 0)
 			break;
-		fsnode_populate_dir(cur, dir, arg);
+		fs_populate_dir(cur, dir, arg);
 		break;
 	case S_IFLNK:
-		fsnode_populate_symlink(cur, dir, arg);
+		fs_populate_symlink(cur, dir, arg);
 		break;
 	default:
 		assert(0);
@@ -2180,9 +2195,9 @@ fs_add_zpl_attrs(zfs_opt_t *zfs_opts, zfs_fs_t *fs)
 }
 
 static void
-mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
+fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 {
-	struct fsnode_foreach_populate_arg poparg;
+	struct fs_foreach_populate_arg poparg;
 	zfs_zap_t deleteqzap, masterzap;
 	zfs_objset_t *os;
 	dnode_phys_t *deleteq, *masterobj;
@@ -2195,7 +2210,7 @@ mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	 * directory, etc.), plus some objects for metadata.
 	 */
 	dnodecount = 0;
-	fsnode_foreach(root, dir, fsnode_foreach_count, &dnodecount);
+	fsnode_foreach(root, dir, fs_foreach_count, &dnodecount);
 	dnodecount++; /* meta dnode */
 	dnodecount++; /* master object */
 	dnodecount++; /* delete queue */
@@ -2226,9 +2241,9 @@ mkfs(zfs_opt_t *zfs_opts, zfs_fs_t *fs, const char *dir, fsnode *root)
 	poparg.zfs_opts = zfs_opts;
 	poparg.fs = fs;
 	SLIST_INIT(&poparg.dirs);
-	fsnode_populate_dir(root, dir, &poparg);
+	fs_populate_dir(root, dir, &poparg);
 	assert(!SLIST_EMPTY(&poparg.dirs));
-	fsnode_foreach(root, dir, fsnode_foreach_populate, &poparg);
+	fsnode_foreach(root, dir, fs_foreach_populate, &poparg);
 	assert(SLIST_EMPTY(&poparg.dirs));
 
 	/*
@@ -2276,16 +2291,9 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	 */
 	srandom(1729);
 
-	if (vdev_init(zfs_opts, fsopts->maxsize, image) != 0)
-		goto out;
-
+	vdev_init(zfs_opts, fsopts->maxsize, image);
 	pool_init(zfs_opts);
-
-	mkfs(zfs_opts, &zfs_opts->rootfs, dir, root);
-
-	pool_finish(zfs_opts);
-out:
-	if (zfs_opts->fd != -1)
-		(void)close(zfs_opts->fd);
-	free(zfs_opts->spacemap);
+	fs_create(zfs_opts, &zfs_opts->rootfs, dir, root);
+	pool_fini(zfs_opts);
+	vdev_fini(zfs_opts);
 }

@@ -29,12 +29,41 @@
 #
 
 MAKEFS="makefs -t zfs"
+ZFS_POOL_NAME="makefstest$(jot -r 1 100000)"
+TEST_ZFS_POOL_NAME="$TMPDIR/poolname"
 
 . "$(dirname "$0")/makefs_tests_common.sh"
 
-mkpoolname()
+common_cleanup()
 {
-	echo "makefstest.$(jot -r 1 100000)"
+	zpool destroy "$(cat $TEST_ZFS_POOL_NAME)"
+	mdconfig -d -u "$(cat $TEST_MD_DEVICE_FILE)"
+}
+
+import_image()
+{
+	atf_check -e empty -o save:$TEST_MD_DEVICE_FILE -s exit:0 \
+	    mdconfig -a -f $TEST_IMAGE
+	atf_check -e empty -o empty -s exit:0 \
+	    zpool import -R $TEST_MOUNT_DIR -o cachefile=${TMPDIR}/zpool.cache $ZFS_POOL_NAME
+	echo "$ZFS_POOL_NAME" > $TEST_ZFS_POOL_NAME
+}
+
+atf_test_case basic
+basic_body()
+{
+	create_test_inputs
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
+
+	import_image
+
+	check_image_contents
+}
+basic_cleanup()
+{
+	common_cleanup
 }
 
 atf_test_case file_sizes
@@ -54,8 +83,9 @@ file_sizes_body()
 	# preserve the sparseness.
         # XXXMJ try with different ashifts
 	atf_check -o empty -e empty -s exit:0 \
-		$MAKEFS -s 10g -o poolname=$(mkpoolname) ./test.img .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
 
+	import_image
 	# XXXMJ mount the pool and verify
 }
 
@@ -65,12 +95,13 @@ atf_test_case indirect_dnode_array
 indirect_dnode_array_body()
 {
 	# 512 bytes per dnode, 3*128KB of direct blocks => limit of 768 files.
+        # XXXMJ actual threshold is much lower
 	for i in $(seq 1 1000); do
 		touch $i
 	done
 
 	atf_check -o empty -e empty -s exit:0 \
-		$MAKEFS -s 10g -o poolname=$(mkpoolname) ./test.img .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
 
 	# XXXMJ mount the pool and verify
 }
@@ -87,21 +118,24 @@ long_file_name_body()
 	touch $f1 $f2
 
 	atf_check -o not-empty -e empty -s exit:0 \
-		$MAKEFS -s 10g -o poolname=$(mkpoolname) ./test.img .
+	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE .
 
 	# XXXMJ mount the pool and verify
 }
 
 atf_init_test_cases()
 {
+	atf_add_test_case basic
 	atf_add_test_case file_sizes
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
 
-        # XXXMJ tests:
-        # - empty directory (empty ZAP handling)
-        # - create a snapshot of a filesystem
-        # - create a long symlink target
-        # - test with different ashifts (at least, 9)
-        # - large fat ZAP directory
+	# XXXMJ tests:
+	# - empty directory (empty ZAP handling)
+	#   - check that we can rmdir an empty directory
+	# - empty filesystem
+	# - create a snapshot of a filesystem
+	# - create a long symlink target
+	# - test with different ashifts (at least, 9)
+	# - large fat ZAP directory
 }
