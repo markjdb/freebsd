@@ -1074,6 +1074,7 @@ zap_fat_write_array_chunk(zap_leaf_t *l, uint16_t li, size_t intcnt,
 		n = MIN(resid, ZAP_LEAF_ARRAY_BYTES);
 
 		la = &ZAP_LEAF_CHUNK(l, li).l_array;
+		assert(la->la_type == ZAP_CHUNK_FREE);
 		la->la_type = ZAP_CHUNK_ARRAY;
 		memcpy(la->la_array, val, n);
 		la->la_next = li + 1;
@@ -1159,7 +1160,17 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 			    ZAP_LEAF_HASH_NUMENTRIES(&l) *
 			    sizeof(*leaf->l_hash));
 
-			/* XXXMJ should we initialize the leaves too? */
+			/* Initialize the leaf chunks. */
+			for (uint16_t i = 0; i < ZAP_LEAF_NUMCHUNKS(&l); i++) {
+				struct zap_leaf_free *lf;
+
+				lf = &ZAP_LEAF_CHUNK(&l, i).l_free;
+				lf->lf_type = ZAP_CHUNK_FREE;
+				if (i + 1 == ZAP_LEAF_NUMCHUNKS(&l))
+					lf->lf_next = 0xffff;
+				else
+					lf->lf_next = i + 1;
+			}
 		}
 
 		/* How many leaf chunks do we need for this KVP? */
@@ -1208,6 +1219,7 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 
 		/* Write out the leaf chunks for this KVP. */
 		le = ZAP_LEAF_ENTRY(&l, *lptr);
+		assert(le->le_type == ZAP_CHUNK_FREE);
 		le->le_type = ZAP_CHUNK_ENTRY;
 		le->le_value_intlen = ent->intsz;
 		le->le_next = 0xffff;
@@ -2238,7 +2250,7 @@ fs_add_zpl_attrs(zfs_opt_t *zfs_opts, zfs_fs_t *fs)
 }
 
 static void
-fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int dirfd, fsnode *root)
+fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 {
 	struct fs_populate_arg poparg;
 	zfs_zap_t deleteqzap, masterzap;
@@ -2281,7 +2293,7 @@ fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int dirfd, fsnode *root)
 	/*
 	 * Build the filesystem.  This is where most of the work happens.
 	 */
-	poparg.dirfd = dirfd;
+	poparg.dirfd = rootdirfd;
 	poparg.zfs_opts = zfs_opts;
 	poparg.fs = fs;
 	SLIST_INIT(&poparg.dirs);
@@ -2289,7 +2301,6 @@ fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int dirfd, fsnode *root)
 	assert(!SLIST_EMPTY(&poparg.dirs));
 	fsnode_foreach(root, fs_foreach_populate, &poparg);
 	assert(SLIST_EMPTY(&poparg.dirs));
-	(void)close(poparg.dirfd);
 
 	/*
 	 * Create an empty delete queue.  We don't do anything with it, but
@@ -2317,7 +2328,7 @@ fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int dirfd, fsnode *root)
 	zap_write(zfs_opts, &masterzap);
 
 	/* Finally, write the dnode array and objset set itself. */
-	objset_write(zfs_opts, &fs->os);
+	objset_write(zfs_opts, os);
 }
 
 void
@@ -2346,4 +2357,6 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	fs_create(zfs_opts, &zfs_opts->rootfs, dirfd, root);
 	pool_fini(zfs_opts);
 	vdev_fini(zfs_opts);
+
+	(void)close(dirfd);
 }

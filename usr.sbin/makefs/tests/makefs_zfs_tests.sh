@@ -185,6 +185,10 @@ long_file_name_body()
 	import_image
 
 	check_image_contents
+
+	# Add a directory entry in the hope that OpenZFS might catch a bug
+	# in makefs' fat ZAP encoding.
+	touch ${TEST_MOUNT_DIR}/foo
 }
 long_file_name_cleanup()
 {
