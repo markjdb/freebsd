@@ -104,14 +104,15 @@ typedef struct zfs_zap_entry {
 		uint64_t *val64p;
 	};
 	uint64_t	val64;		/* embedded value for a common case */
+	uint64_t	hash;
 	size_t		intsz;
 	size_t		intcnt;
 	STAILQ_ENTRY(zfs_zap_entry) next;
-	STAILQ_ENTRY(zfs_zap_entry) hash;
 } zfs_zap_entry_t;
 
 typedef struct zfs_zap {
 	STAILQ_HEAD(, zfs_zap_entry) kvps;
+	uint64_t		hashsalt;
 	unsigned long		kvpcnt;	/* number of key-value pairs */
 	unsigned long		chunks;	/* count of chunks needed for fat ZAP */
 	bool			micro;	/* can this be a micro ZAP? */
@@ -991,6 +992,7 @@ static void
 zap_init(zfs_zap_t *zap, zfs_objset_t *os, dnode_phys_t *dnode)
 {
 	STAILQ_INIT(&zap->kvps);
+	zap->hashsalt = random();	/* only 32 bits but that's okay */
 	zap->micro = true;
 	zap->kvpcnt = 0;
 	zap->chunks = 0;
@@ -1010,6 +1012,7 @@ zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
 
 	ent = ecalloc(1, sizeof(*ent));
 	ent->name = estrdup(name);
+	ent->hash = zap_hash(zap->hashsalt, ent->name);
 	ent->intsz = intsz;
 	ent->intcnt = intcnt;
 	if (intsz == sizeof(uint64_t) && intcnt == 1) {
@@ -1053,7 +1056,7 @@ zap_micro_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	memset(zfs_opts->filebuf, 0, sizeof(zfs_opts->filebuf));
 	mzap = (mzap_phys_t *)&zfs_opts->filebuf[0];
 	mzap->mz_block_type = ZBT_MICRO;
-	mzap->mz_salt = random();
+	mzap->mz_salt = zap->hashsalt;
 	mzap->mz_normflags = 0;
 
 	bytes = sizeof(*mzap) + (zap->kvpcnt - 1) * sizeof(*ment);
@@ -1105,11 +1108,59 @@ zap_fat_write_array_chunk(zap_leaf_t *l, uint16_t li, size_t sz,
 	la->la_next = 0xffff;
 }
 
+static unsigned int
+zap_fat_write_prefixlen(zfs_zap_t *zap, zap_leaf_t *l)
+{
+	zfs_zap_entry_t *ent;
+	unsigned int prefixlen;
+
+	if (zap->chunks <= ZAP_LEAF_NUMCHUNKS(l)) {
+		/*
+		 * All chunks will fit in a single leaf block.
+		 */
+		return (0);
+	}
+
+	for (prefixlen = 1; prefixlen < (unsigned int)l->l_bs; prefixlen++) {
+		uint32_t *leafchunks;
+
+		leafchunks = ecalloc(1u << prefixlen,
+		    sizeof(*leafchunks));
+		STAILQ_FOREACH(ent, &zap->kvps, next) {
+			uint64_t li;
+			uint16_t chunks;
+
+			li = ZAP_HASH_IDX(ent->hash, prefixlen);
+
+			chunks = zap_entry_chunks(ent);
+			if (ZAP_LEAF_NUMCHUNKS(l) - leafchunks[li] < chunks) {
+				/*
+				 * Not enough space, grow the prefix and retry.
+				 */
+				break;
+			}
+			leafchunks[li] += chunks;
+		}
+		free(leafchunks);
+
+		if (ent == NULL)
+			break;
+	}
+
+	/*
+	 * If this fails, then we need to expand the pointer table.  For now
+	 * this situation is unhandled since it is hard to trigger.
+	 */
+	assert(prefixlen < (unsigned int)l->l_bs);
+
+	return (prefixlen);
+}
+
 /*
  * Initialize a fat ZAP leaf block.
  */
 static void
-zap_fat_leaf_init(zap_leaf_t *l, uint64_t prefix, int prefixlen)
+zap_fat_write_leaf_init(zap_leaf_t *l, uint64_t prefix, int prefixlen)
 {
 	zap_leaf_phys_t *leaf;
 
@@ -1139,31 +1190,6 @@ zap_fat_leaf_init(zap_leaf_t *l, uint64_t prefix, int prefixlen)
 	}
 }
 
-#if 0
-typedef struct zfs_zap_hash_chain {
-	STAILQ_HEAD(, zfs_zap_entry) head;
-	uint32_t	chunks;
-} zfs_zap_hash_chain_t;
-
-static int
-zap_chain_cmp(const void *e1, const void *e2)
-{
-	const zfs_zap_hash_chain_t *c1, *c2;
-
-	c1 = e1;
-	c2 = e2;
-
-	if (c1->chunks > c2->chunks)
-		return (-1);
-	if (c1->chunks < c2->chunks)
-		return (1);
-	return (0);
-}
-#endif
-
-/*
- * This is a bit of a monster.
- */
 static void
 zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 {
@@ -1176,9 +1202,10 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	zfs_zap_entry_t *ent;
 	dnode_phys_t *dnode;
 	uint8_t *leafblks;
-	uint64_t hash, lblkcnt, *ptrhasht;
+	uint64_t lblkcnt, *ptrhasht;
 	off_t loc, blksz;
 	size_t blkshift;
+	unsigned int prefixlen;
 	int ptrcnt;
 
 	/*
@@ -1190,9 +1217,8 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	blksz = (off_t)1 << blkshift;
 
 	/*
-	 * Embedded pointer tables give up to 8192 entries.  Hopefully that's
-	 * enough.  If not this function will have to grow some code to create
-	 * external pointer tables.
+	 * Embedded pointer tables give up to 8192 entries.  This ought to be
+	 * enough for anything except massive directories.
 	 */
 	ptrcnt = (blksz / 2) / sizeof(uint64_t);
 
@@ -1201,7 +1227,7 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	zaphdr->zap_block_type = ZBT_HEADER;
 	zaphdr->zap_magic = ZAP_MAGIC;
 	zaphdr->zap_num_entries = zap->kvpcnt;
-	zaphdr->zap_salt = random();
+	zaphdr->zap_salt = zap->hashsalt;
 
 	l.l_bs = blkshift;
 	l.l_phys = NULL;
@@ -1213,73 +1239,42 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	zt->zt_nextblk = 0;
 	zt->zt_blks_copied = 0;
 
-	ptrhasht = (uint64_t *)(&zfs_opts->filebuf[0] + blksz / 2);
+	/*
+	 * How many leaf blocks do we need?
+	 */
+	prefixlen = zap_fat_write_prefixlen(zap, &l);
+	lblkcnt = 1 << prefixlen;
 
 	/*
-	 * How many leaf blocks will we need at minimum?
+	 * Initialize our leaf blocks.
 	 */
-	lblkcnt = howmany(zap->chunks, ZAP_LEAF_NUMCHUNKS(&l));
-
-	uint32_t *buckets;
-	int prefixlen;
-
-	if (lblkcnt == 1)
-		prefixlen = 0;
-	else
-		prefixlen = flsl(lblkcnt) - 1;
-
-	if (prefixlen > 0) {
-		for (;;) {
-			buckets = ecalloc(lblkcnt, sizeof(*buckets));
-			for (unsigned int li = 0; li < lblkcnt; li++)
-				buckets[li] = ZAP_LEAF_NUMCHUNKS(&l);
-
-			STAILQ_FOREACH(ent, &zap->kvps, next) {
-				uint64_t hashi;
-				uint16_t chunks;
-
-				hash = zap_hash(zaphdr->zap_salt, ent->name);
-				hashi = hash >> (64 - prefixlen);
-
-				chunks = zap_entry_chunks(ent);
-				if (buckets[hashi] < chunks)
-					break;
-				buckets[hashi] -= chunks;
-			}
-			free(buckets);
-			if (ent == NULL)
-				break;
-
-			prefixlen++;
-			lblkcnt = 1 << prefixlen;
-		}
-	}
-	assert((uint64_t)prefixlen < zt->zt_shift);
-
 	leafblks = ecalloc(lblkcnt, blksz);
 	for (unsigned int li = 0; li < lblkcnt; li++) {
 		l.l_phys = (zap_leaf_phys_t *)(leafblks + li * blksz);
-		zap_fat_leaf_init(&l, li, prefixlen);
+		zap_fat_write_leaf_init(&l, li, prefixlen);
 	}
 	zaphdr->zap_num_leafs = lblkcnt;
 	zaphdr->zap_freeblk = lblkcnt + 1;
 
+	/*
+	 * For each entry, figure out which leaf block it belongs to based on
+	 * the upper bits of its hash, allocate chunks from that leaf, and fill
+	 * them out.
+	 */
+	ptrhasht = (uint64_t *)(&zfs_opts->filebuf[0] + blksz / 2);
 	STAILQ_FOREACH(ent, &zap->kvps, next) {
 		struct zap_leaf_entry *le;
-		const char *name;
 		uint16_t *lptr;
 		uint64_t hi, li;
 		uint16_t namelen, nchunks, nnamechunks, nvalchunks;
 
-		name = ent->name;
-		namelen = strlen(name) + 1;
-		hash = zap_hash(zaphdr->zap_salt, name);
-
-		hi = ZAP_HASH_IDX(hash, zt->zt_shift);
-		li = ZAP_HASH_IDX(hash, prefixlen);
+		hi = ZAP_HASH_IDX(ent->hash, zt->zt_shift);
+		li = ZAP_HASH_IDX(ent->hash, prefixlen);
 		assert(ptrhasht[hi] == 0 || ptrhasht[hi] == li + 1);
 		ptrhasht[hi] = li + 1;
 		l.l_phys = (zap_leaf_phys_t *)(leafblks + li * blksz);
+
+		namelen = strlen(ent->name) + 1;
 
 		/*
 		 * How many leaf chunks do we need for this entry?
@@ -1296,7 +1291,7 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 		assert(l.l_phys->l_hdr.lh_nfree >= nchunks);
 		l.l_phys->l_hdr.lh_nfree -= nchunks;
 		l.l_phys->l_hdr.lh_nentries++;
-		lptr = ZAP_LEAF_HASH_ENTPTR(&l, hash);
+		lptr = ZAP_LEAF_HASH_ENTPTR(&l, ent->hash);
 		while (*lptr != 0xffff) {
 			assert(*lptr < ZAP_LEAF_NUMCHUNKS(&l));
 			le = ZAP_LEAF_ENTRY(&l, *lptr);
@@ -1312,7 +1307,9 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 		    ZAP_LEAF_NUMCHUNKS(&l))
 			l.l_phys->l_hdr.lh_freelist = 0xffff;
 
-		/* Integer values must be in big-endian format. */
+		/*
+		 * Integer values must be stored in big-endian format.
+		 */
 		switch (ent->intsz) {
 		case 1:
 			break;
@@ -1338,7 +1335,9 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 			assert(0);
 		}
 
-		/* Write out the leaf chunks for this entry. */
+		/*
+		 * Finally, write out the leaf chunks for this entry.
+		 */
 		le = ZAP_LEAF_ENTRY(&l, *lptr);
 		assert(le->le_type == ZAP_CHUNK_FREE);
 		le->le_type = ZAP_CHUNK_ENTRY;
@@ -1348,13 +1347,15 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 		le->le_value_chunk = *lptr + 1 + nnamechunks;
 		le->le_value_intlen = ent->intsz;
 		le->le_value_numints = ent->intcnt;
-		le->le_hash = hash;
-		zap_fat_write_array_chunk(&l, *lptr + 1, namelen, name);
+		le->le_hash = ent->hash;
+		zap_fat_write_array_chunk(&l, *lptr + 1, namelen, ent->name);
 		zap_fat_write_array_chunk(&l, *lptr + 1 + nnamechunks,
 		    ent->intcnt * ent->intsz, ent->valp);
 	}
 
-	/* Initialize unused slots of the pointer table. */
+	/*
+	 * Initialize unused slots of the pointer table.
+	 */
 	for (int i = 0; i < ptrcnt; i++)
 		if (ptrhasht[i] == 0)
 			ptrhasht[i] = (i >> (zt->zt_shift - prefixlen)) + 1;
