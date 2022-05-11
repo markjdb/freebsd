@@ -28,6 +28,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/param.h>
 #include <sys/dirent.h>
 #include <sys/endian.h>
 #include <sys/queue.h>
@@ -102,22 +103,25 @@ typedef struct zfs_zap_entry {
 		uint32_t *val32p;
 		uint64_t *val64p;
 	};
+	uint64_t	val64;		/* embedded value for a common case */
 	size_t		intsz;
 	size_t		intcnt;
 	STAILQ_ENTRY(zfs_zap_entry) next;
+	STAILQ_ENTRY(zfs_zap_entry) hash;
 } zfs_zap_entry_t;
 
 typedef struct zfs_zap {
 	STAILQ_HEAD(, zfs_zap_entry) kvps;
-	unsigned long		kvpcnt;
-	bool			micro;
+	unsigned long		kvpcnt;	/* number of key-value pairs */
+	unsigned long		chunks;	/* count of chunks needed for fat ZAP */
+	bool			micro;	/* can this be a micro ZAP? */
+
 	dnode_phys_t		*dnode;
 	zfs_objset_t		*os;
 } zfs_zap_t;
 
 typedef struct {
 	zfs_objset_t	os;
-	dnode_phys_t	*dnode;		/* meta dnode */
 
 	/* Offset table for system attributes, indexed by a zpl_attr_t. */
 	const zfs_sattr_t *satab;
@@ -387,6 +391,7 @@ static void
 vdev_fini(zfs_opt_t *zfs_opts)
 {
 	assert(zfs_opts->spacemap == NULL);
+
 	if (zfs_opts->fd != -1) {
 		(void)close(zfs_opts->fd);
 		zfs_opts->fd = -1;
@@ -509,6 +514,7 @@ vdev_space_alloc(zfs_opt_t *zfs_opts, zfs_objset_t *os, off_t *lenp)
 
 	assert(len != 0);
 	assert(len / minblksz <= INT_MAX);
+
 	if (len < (off_t)SPA_OLDMAXBLOCKSIZE) {
 		if ((len & (len - 1)) != 0)
 			len = (off_t)1 << flsll(len);
@@ -642,7 +648,8 @@ spacemap_write(zfs_opt_t *zfs_opts)
 		alloc = length = 0;
 		shift = zfs_opts->msshift - zfs_opts->ashift;
 		for (srunb = startb = i * (1 << shift),
-		    endb = (i + 1) * (1 << shift); srunb < endb; srunb = erunb) {
+		    endb = (i + 1) * (1 << shift);
+		    srunb < endb; srunb = erunb) {
 			uint64_t runlen, runoff;
 
 			/* Find a run of allocated space. */
@@ -935,6 +942,13 @@ dsl_dataset_alloc(zfs_opt_t *zfs_opts, zfs_objset_t *mos, uint64_t dir,
 	return (ds);
 }
 
+static uint16_t
+zap_entry_chunks(zfs_zap_entry_t *ent)
+{
+	return (1 + howmany(strlen(ent->name) + 1, ZAP_LEAF_ARRAY_BYTES) +
+	    howmany(ent->intsz * ent->intcnt, ZAP_LEAF_ARRAY_BYTES));
+}
+
 /* XXXMJ from zfssubr.c */
 static uint64_t
 zap_hash(uint64_t salt, const char *name)
@@ -979,6 +993,7 @@ zap_init(zfs_zap_t *zap, zfs_objset_t *os, dnode_phys_t *dnode)
 	STAILQ_INIT(&zap->kvps);
 	zap->micro = true;
 	zap->kvpcnt = 0;
+	zap->chunks = 0;
 	zap->dnode = dnode;
 	zap->os = os;
 }
@@ -991,15 +1006,21 @@ zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
 
 	assert(intsz == 1 || intsz == 2 || intsz == 4 || intsz == 8);
 	assert(strlen(name) + 1 <= ZAP_MAXNAMELEN);
-	assert(intcnt * intsz <= ZAP_MAXVALUELEN);
+	assert(intcnt <= ZAP_MAXVALUELEN && intcnt * intsz <= ZAP_MAXVALUELEN);
 
 	ent = ecalloc(1, sizeof(*ent));
 	ent->name = estrdup(name);
 	ent->intsz = intsz;
 	ent->intcnt = intcnt;
-	ent->valp = ecalloc(intcnt, intsz);
-	memcpy(ent->valp, val, intcnt * intsz);
+	if (intsz == sizeof(uint64_t) && intcnt == 1) {
+		memcpy(&ent->val64, val, sizeof(uint64_t));
+		ent->val64p = &ent->val64;
+	} else {
+		ent->valp = ecalloc(intcnt, intsz);
+		memcpy(ent->valp, val, intcnt * intsz);
+	}
 	zap->kvpcnt++;
+	zap->chunks += zap_entry_chunks(ent);
 	STAILQ_INSERT_TAIL(&zap->kvps, ent, next);
 
 	if (zap->micro && (intcnt != 1 || intsz != sizeof(uint64_t) ||
@@ -1061,16 +1082,18 @@ zap_micro_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	vdev_pwrite(zfs_opts, zfs_opts->filebuf, bytes, loc);
 }
 
+/*
+ * Write some data to the fat ZAP leaf chunk starting at index "li".
+ */
 static void
-zap_fat_write_array_chunk(zap_leaf_t *l, uint16_t li, size_t intcnt,
-    size_t intsz, const uint8_t *val)
+zap_fat_write_array_chunk(zap_leaf_t *l, uint16_t li, size_t sz,
+    const uint8_t *val)
 {
 	struct zap_leaf_array *la;
 
-	assert(intsz == 1 || intsz == 2 || intsz == 4 || intsz == 8);
+	assert(sz <= ZAP_MAXVALUELEN);
 
-	for (uint16_t n, resid = intcnt * intsz; resid > 0;
-	    resid -= n, val += n, li++) {
+	for (uint16_t n, resid = sz; resid > 0; resid -= n, val += n, li++) {
 		n = MIN(resid, ZAP_LEAF_ARRAY_BYTES);
 
 		la = &ZAP_LEAF_CHUNK(l, li).l_array;
@@ -1082,208 +1105,300 @@ zap_fat_write_array_chunk(zap_leaf_t *l, uint16_t li, size_t intcnt,
 	la->la_next = 0xffff;
 }
 
+/*
+ * Initialize a fat ZAP leaf block.
+ */
+static void
+zap_fat_leaf_init(zap_leaf_t *l, uint64_t prefix, int prefixlen)
+{
+	zap_leaf_phys_t *leaf;
+
+	leaf = l->l_phys;
+
+	leaf->l_hdr.lh_block_type = ZBT_LEAF;
+	leaf->l_hdr.lh_magic = ZAP_LEAF_MAGIC;
+	leaf->l_hdr.lh_nfree = ZAP_LEAF_NUMCHUNKS(l);
+	leaf->l_hdr.lh_prefix = prefix;
+	leaf->l_hdr.lh_prefix_len = prefixlen;
+
+	/* Initialize the leaf hash table. */
+	assert(leaf->l_hdr.lh_nfree < 0xffff);
+	memset(leaf->l_hash, 0xff,
+	    ZAP_LEAF_HASH_NUMENTRIES(l) * sizeof(*leaf->l_hash));
+
+	/* Initialize the leaf chunks. */
+	for (uint16_t i = 0; i < ZAP_LEAF_NUMCHUNKS(l); i++) {
+		struct zap_leaf_free *lf;
+
+		lf = &ZAP_LEAF_CHUNK(l, i).l_free;
+		lf->lf_type = ZAP_CHUNK_FREE;
+		if (i + 1 == ZAP_LEAF_NUMCHUNKS(l))
+			lf->lf_next = 0xffff;
+		else
+			lf->lf_next = i + 1;
+	}
+}
+
+#if 0
+typedef struct zfs_zap_hash_chain {
+	STAILQ_HEAD(, zfs_zap_entry) head;
+	uint32_t	chunks;
+} zfs_zap_hash_chain_t;
+
+static int
+zap_chain_cmp(const void *e1, const void *e2)
+{
+	const zfs_zap_hash_chain_t *c1, *c2;
+
+	c1 = e1;
+	c2 = e2;
+
+	if (c1->chunks > c2->chunks)
+		return (-1);
+	if (c1->chunks < c2->chunks)
+		return (1);
+	return (0);
+}
+#endif
+
+/*
+ * This is a bit of a monster.
+ */
 static void
 zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 {
 	zio_cksum_t cksum;
-	blkptr_t *indir;
+	struct dnode_cursor *c;
+	blkptr_t *bp;
 	zap_leaf_t l;
 	zap_phys_t *zaphdr;
-	zap_leaf_phys_t *leaf;
+	struct zap_table_phys *zt;
 	zfs_zap_entry_t *ent;
 	dnode_phys_t *dnode;
-	uint64_t blkid, *ptrhashent, *ptrhasht;
+	uint8_t *leafblks;
+	uint64_t hash, lblkcnt, *ptrhasht;
 	off_t loc, blksz;
 	size_t blkshift;
+	int ptrcnt;
 
 	/*
-	 * For simplicity, just use the largest block size.  This should be ok
-	 * since most directories will be micro ZAPs, but it's inefficient and
-	 * might need to be revisited.
+	 * For simplicity, always use the largest block size.  This should be ok
+	 * since most directories will be micro ZAPs, but it's space inefficient
+	 * for small ZAPs and might need to be revisited.
 	 */
 	blkshift = SPA_OLDMAXBLOCKSHIFT;
 	blksz = (off_t)1 << blkshift;
+
+	/*
+	 * Embedded pointer tables give up to 8192 entries.  Hopefully that's
+	 * enough.  If not this function will have to grow some code to create
+	 * external pointer tables.
+	 */
+	ptrcnt = (blksz / 2) / sizeof(uint64_t);
 
 	memset(zfs_opts->filebuf, 0, sizeof(zfs_opts->filebuf));
 	zaphdr = (zap_phys_t *)&zfs_opts->filebuf[0];
 	zaphdr->zap_block_type = ZBT_HEADER;
 	zaphdr->zap_magic = ZAP_MAGIC;
-
-	/*
-	 * For simplicity, always embed the pointer table in the first block,
-	 * and always use the maximum block size.  This approach may need to be
-	 * re-evaluated if the output image contains many fat ZAPs or if some of
-	 * them are truly large.  Since most directories will be encoded using
-	 * the micro ZAP layout, this is not a concern for now.
-	 */
-	zaphdr->zap_ptrtbl.zt_blk = 0;
-	zaphdr->zap_ptrtbl.zt_numblks = 0;
-	zaphdr->zap_ptrtbl.zt_shift = blkshift - 1 - 3;
-	zaphdr->zap_ptrtbl.zt_nextblk = 0;
-	zaphdr->zap_ptrtbl.zt_blks_copied = 0;
-
 	zaphdr->zap_num_entries = zap->kvpcnt;
 	zaphdr->zap_salt = random();
 
-	/* The embedded pointer hash table starts half way through the block. */
-	ptrhasht = (uint64_t *)(&zfs_opts->filebuf[0] + (1 << (blkshift - 1)));
-
 	l.l_bs = blkshift;
 	l.l_phys = NULL;
-	blkid = 0;
+
+	zt = &zaphdr->zap_ptrtbl;
+	zt->zt_blk = 0;
+	zt->zt_numblks = 0;
+	zt->zt_shift = flsl(ptrcnt) - 1;
+	zt->zt_nextblk = 0;
+	zt->zt_blks_copied = 0;
+
+	ptrhasht = (uint64_t *)(&zfs_opts->filebuf[0] + blksz / 2);
+
+	/*
+	 * How many leaf blocks will we need at minimum?
+	 */
+	lblkcnt = howmany(zap->chunks, ZAP_LEAF_NUMCHUNKS(&l));
+
+	uint32_t *buckets;
+	int prefixlen;
+
+	if (lblkcnt == 1)
+		prefixlen = 0;
+	else
+		prefixlen = flsl(lblkcnt) - 1;
+
+	if (prefixlen > 0) {
+		for (;;) {
+			buckets = ecalloc(lblkcnt, sizeof(*buckets));
+			for (unsigned int li = 0; li < lblkcnt; li++)
+				buckets[li] = ZAP_LEAF_NUMCHUNKS(&l);
+
+			STAILQ_FOREACH(ent, &zap->kvps, next) {
+				uint64_t hashi;
+				uint16_t chunks;
+
+				hash = zap_hash(zaphdr->zap_salt, ent->name);
+				hashi = hash >> (64 - prefixlen);
+
+				chunks = zap_entry_chunks(ent);
+				if (buckets[hashi] < chunks)
+					break;
+				buckets[hashi] -= chunks;
+			}
+			free(buckets);
+			if (ent == NULL)
+				break;
+
+			prefixlen++;
+			lblkcnt = 1 << prefixlen;
+		}
+	}
+	assert((uint64_t)prefixlen < zt->zt_shift);
+
+	leafblks = ecalloc(lblkcnt, blksz);
+	for (unsigned int li = 0; li < lblkcnt; li++) {
+		l.l_phys = (zap_leaf_phys_t *)(leafblks + li * blksz);
+		zap_fat_leaf_init(&l, li, prefixlen);
+	}
+	zaphdr->zap_num_leafs = lblkcnt;
+	zaphdr->zap_freeblk = lblkcnt + 1;
+
 	STAILQ_FOREACH(ent, &zap->kvps, next) {
 		struct zap_leaf_entry *le;
 		const char *name;
 		uint16_t *lptr;
-		uint64_t hash;
+		uint64_t hi, li;
 		uint16_t namelen, nchunks, nnamechunks, nvalchunks;
 
 		name = ent->name;
 		namelen = strlen(name) + 1;
 		hash = zap_hash(zaphdr->zap_salt, name);
 
-		leaf = l.l_phys;
-		if (leaf == NULL) {
-			l.l_phys = leaf = ecalloc(1, SPA_OLDMAXBLOCKSIZE);
+		hi = ZAP_HASH_IDX(hash, zt->zt_shift);
+		li = ZAP_HASH_IDX(hash, prefixlen);
+		assert(ptrhasht[hi] == 0 || ptrhasht[hi] == li + 1);
+		ptrhasht[hi] = li + 1;
+		l.l_phys = (zap_leaf_phys_t *)(leafblks + li * blksz);
 
-			blkid++;
-			zaphdr->zap_num_leafs++;
-			zaphdr->zap_freeblk = blkid;
-
-			leaf->l_hdr.lh_block_type = ZBT_LEAF;
-			leaf->l_hdr.lh_magic = ZAP_LEAF_MAGIC;
-			leaf->l_hdr.lh_nfree = ZAP_LEAF_NUMCHUNKS(&l);
-
-			/* Initialize the leaf hash table. */
-			assert(leaf->l_hdr.lh_nfree < 0xffff);
-			memset(leaf->l_hash, 0xff,
-			    ZAP_LEAF_HASH_NUMENTRIES(&l) *
-			    sizeof(*leaf->l_hash));
-
-			/* Initialize the leaf chunks. */
-			for (uint16_t i = 0; i < ZAP_LEAF_NUMCHUNKS(&l); i++) {
-				struct zap_leaf_free *lf;
-
-				lf = &ZAP_LEAF_CHUNK(&l, i).l_free;
-				lf->lf_type = ZAP_CHUNK_FREE;
-				if (i + 1 == ZAP_LEAF_NUMCHUNKS(&l))
-					lf->lf_next = 0xffff;
-				else
-					lf->lf_next = i + 1;
-			}
-		}
-
-		/* How many leaf chunks do we need for this KVP? */
+		/*
+		 * How many leaf chunks do we need for this entry?
+		 */
 		nnamechunks = howmany(namelen, ZAP_LEAF_ARRAY_BYTES);
 		nvalchunks = howmany(ent->intcnt,
 		    ZAP_LEAF_ARRAY_BYTES / ent->intsz);
 		nchunks = 1 + nnamechunks + nvalchunks;
-		/* XXXMJ if this is false, we need a new leaf. */
-		assert(leaf->l_hdr.lh_nfree >= nchunks);
 
-		/* Allocate a run of free leaf chunks for this KVP. */
-		leaf->l_hdr.lh_nfree -= nchunks;
-		leaf->l_hdr.lh_nentries++;
+		/*
+		 * Allocate a run of free leaf chunks for this entry,
+		 * potentially extending a hash chain.
+		 */
+		assert(l.l_phys->l_hdr.lh_nfree >= nchunks);
+		l.l_phys->l_hdr.lh_nfree -= nchunks;
+		l.l_phys->l_hdr.lh_nentries++;
 		lptr = ZAP_LEAF_HASH_ENTPTR(&l, hash);
 		while (*lptr != 0xffff) {
+			assert(*lptr < ZAP_LEAF_NUMCHUNKS(&l));
 			le = ZAP_LEAF_ENTRY(&l, *lptr);
+			assert(le->le_type == ZAP_CHUNK_ENTRY);
+			le->le_cd++;
 			lptr = &le->le_next;
-			assert(*lptr <= 0xffff);
 		}
-		*lptr = leaf->l_hdr.lh_freelist;
-		leaf->l_hdr.lh_freelist += nchunks;
-		leaf->l_hdr.lh_nentries++;
+		*lptr = l.l_phys->l_hdr.lh_freelist;
+		l.l_phys->l_hdr.lh_freelist += nchunks;
+		assert(l.l_phys->l_hdr.lh_freelist <=
+		    ZAP_LEAF_NUMCHUNKS(&l));
+		if (l.l_phys->l_hdr.lh_freelist ==
+		    ZAP_LEAF_NUMCHUNKS(&l))
+			l.l_phys->l_hdr.lh_freelist = 0xffff;
 
-		/* Values must be stored in big-endian format. */
+		/* Integer values must be in big-endian format. */
 		switch (ent->intsz) {
 		case 1:
 			break;
 		case 2:
 			for (uint16_t *v = ent->val16p;
-			    v - ent->val16p < (ptrdiff_t)ent->intcnt; v++)
+			    v - ent->val16p < (ptrdiff_t)ent->intcnt;
+			    v++)
 				*v = htobe16(*v);
 			break;
 		case 4:
 			for (uint32_t *v = ent->val32p;
-			    v - ent->val32p < (ptrdiff_t)ent->intcnt; v++)
+			    v - ent->val32p < (ptrdiff_t)ent->intcnt;
+			    v++)
 				*v = htobe32(*v);
 			break;
 		case 8:
 			for (uint64_t *v = ent->val64p;
-			    v - ent->val64p < (ptrdiff_t)ent->intcnt; v++)
+			    v - ent->val64p < (ptrdiff_t)ent->intcnt;
+			    v++)
 				*v = htobe64(*v);
 			break;
 		default:
 			assert(0);
 		}
 
-		/* Write out the leaf chunks for this KVP. */
+		/* Write out the leaf chunks for this entry. */
 		le = ZAP_LEAF_ENTRY(&l, *lptr);
 		assert(le->le_type == ZAP_CHUNK_FREE);
 		le->le_type = ZAP_CHUNK_ENTRY;
-		le->le_value_intlen = ent->intsz;
 		le->le_next = 0xffff;
 		le->le_name_chunk = *lptr + 1;
 		le->le_name_numints = namelen;
 		le->le_value_chunk = *lptr + 1 + nnamechunks;
+		le->le_value_intlen = ent->intsz;
 		le->le_value_numints = ent->intcnt;
 		le->le_hash = hash;
-		zap_fat_write_array_chunk(&l, *lptr + 1, namelen, 1, name);
+		zap_fat_write_array_chunk(&l, *lptr + 1, namelen, name);
 		zap_fat_write_array_chunk(&l, *lptr + 1 + nnamechunks,
-		    ent->intcnt, ent->intsz, ent->valp);
-
-		/* Now update the pointer hash table. */
-		ptrhashent =
-		    &ptrhasht[ZAP_HASH_IDX(hash, zaphdr->zap_ptrtbl.zt_shift)];
-		/* XXXMJ collisions are unhandled */
-		assert(*ptrhashent == 0 || *ptrhashent == blkid);
-		*ptrhashent = blkid;
+		    ent->intcnt * ent->intsz, ent->valp);
 	}
 
 	/* Initialize unused slots of the pointer table. */
-	for (uint64_t i = 0; i < (uint64_t)1 << zaphdr->zap_ptrtbl.zt_shift;
-	    i++)
+	for (int i = 0; i < ptrcnt; i++)
 		if (ptrhasht[i] == 0)
-			ptrhasht[i] = blkid;
+			ptrhasht[i] = (i >> (zt->zt_shift - prefixlen)) + 1;
 
 	/*
 	 * We can't use more than one embedded block pointer, since this might
-	 * be a directory and we don't want to stomp on the SA bonus buffer.
+	 * be a directory and we don't want to stomp on the bonus buffer.  The
+	 * dnode type could be used to differentiate, but it's most likely not
+	 * worth bothering since most of the ZAPs we create will be directories
+	 * anyway.
 	 */
 	dnode = zap->dnode;
 	dnode->dn_nblkptr = 1;
-	dnode->dn_nlevels = 2;
 	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
-	dnode->dn_maxblkid = blkid;
+	dnode->dn_maxblkid = lblkcnt + 1;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
-	dnode->dn_used = blksz * 3;	/* two data blocks plus indir block */
 
-	indir = ecalloc(BLKPTR_PER_INDIR, sizeof(*indir));
+	c = dnode_cursor_init(zfs_opts, zap->os, zap->dnode,
+	    (lblkcnt + 1) * blksz, blksz);
 
+	bp = dnode_cursor_next(zfs_opts, c, 0);
 	loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
 	assert(blksz == SPA_OLDMAXBLOCKSIZE);
 	fletcher_4_native(zfs_opts->filebuf, blksz, NULL, &cksum);
-	blkptr_set(&indir[0], loc, blksz, dnode->dn_type,
+	blkptr_set(bp, loc, blksz, dnode->dn_type,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 	vdev_pwrite(zfs_opts, zfs_opts->filebuf, blksz, loc);
+	dnode->dn_used += blksz;
 
-	blksz = 1 << l.l_bs;
-	loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
-	assert(blksz == SPA_OLDMAXBLOCKSIZE);
-	fletcher_4_native(l.l_phys, blksz, NULL, &cksum);
-	blkptr_set(&indir[1], loc, blksz, dnode->dn_type,
-	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
-	vdev_pwrite(zfs_opts, l.l_phys, blksz, loc);
+	for (uint64_t i = 0; i < lblkcnt; i++) {
+		bp = dnode_cursor_next(zfs_opts, c, (i + 1) * blksz);
 
-	loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
-	assert(blksz == SPA_OLDMAXBLOCKSIZE);
-	fletcher_4_native(indir, blksz, NULL, &cksum);
-	blkptr_set_level(&dnode->dn_blkptr[0], loc, blksz, dnode->dn_type, 1,
-	    2, ZIO_CHECKSUM_FLETCHER_4, &cksum);
-	vdev_pwrite(zfs_opts, indir, blksz, loc);
+		loc = vdev_space_alloc(zfs_opts, zap->os, &blksz);
+		assert(blksz == SPA_OLDMAXBLOCKSIZE);
+		fletcher_4_native(leafblks + i * blksz, blksz, NULL, &cksum);
+		blkptr_set(bp, loc, blksz, dnode->dn_type,
+		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+		vdev_pwrite(zfs_opts, leafblks + i * blksz, blksz, loc);
+		dnode->dn_used += blksz;
+	}
 
-	free(indir);
-	free(l.l_phys);
+	dnode_cursor_finish(zfs_opts, c);
+
+	free(leafblks);
 }
 
 static void
@@ -1301,7 +1416,8 @@ zap_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 
 	while ((ent = STAILQ_FIRST(&zap->kvps)) != NULL) {
 		STAILQ_REMOVE_HEAD(&zap->kvps, next);
-		free(ent->valp);
+		if (ent->val64p != &ent->val64)
+			free(ent->valp);
 		free(ent->name);
 		free(ent);
 	}
@@ -1648,26 +1764,29 @@ dnode_cursor_init(zfs_opt_t *zfs_opts, zfs_objset_t *os, dnode_phys_t *dnode,
     off_t size, off_t blksz)
 {
 	struct dnode_cursor *c;
-	uint64_t indlevel;
-	off_t indcount, ndatablks, nindblks;
+	uint64_t nbppindir, indlevel, ndatablks, nindblks;
 
 	assert(dnode->dn_nblkptr == 1);
 	assert(blksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 
 	if (blksz == 0) {
+		/* Must be between 1<<ashift and 128KB. */
 		blksz = MIN(SPA_OLDMAXBLOCKSIZE, MAX(1 << zfs_opts->ashift,
 		    powerof2(size) ? size : (1ul << flsl(size))));
 	}
 	assert(powerof2(blksz));
 
 	/*
-	 * Do we need indirect blocks?
+	 * Do we need indirect blocks?  Figure out how many levels are needed
+	 * (indlevel == 1 means no indirect blocks) and how much space is needed
+	 * (it has to be allocated up-front to break the dependency cycle
+	 * described in objset_write_mos()).
 	 */
 	ndatablks = size == 0 ? 0 : howmany(size, blksz);
 	nindblks = 0;
-	for (indlevel = 1, indcount = 1; ndatablks > indcount; indlevel++) {
-		indcount *= BLKPTR_PER_INDIR;
-		nindblks += howmany(ndatablks, indlevel * SPA_OLDMAXBLOCKSIZE);
+	for (indlevel = 1, nbppindir = 1; ndatablks > nbppindir; indlevel++) {
+		nbppindir *= BLKPTR_PER_INDIR;
+		nindblks += howmany(ndatablks, indlevel * nbppindir);
 	}
 	assert(indlevel < INDIR_LEVELS);
 
