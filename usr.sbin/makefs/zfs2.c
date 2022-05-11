@@ -790,8 +790,9 @@ _objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, struct dnode_cursor *c,
 			    DMU_OT_DNODE, 0, os->dnodecount - i,
 			    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 		} else {
-			blkptr_set(bp, loc, DNODE_BLOCK_SIZE, DMU_OT_DNODE,
-			    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+			blkptr_set_level(bp, loc, DNODE_BLOCK_SIZE,
+			    DMU_OT_DNODE, 0, 0, ZIO_CHECKSUM_FLETCHER_4,
+			    &cksum);
 		}
 
 		vdev_pwrite(zfs_opts, blk, DNODE_BLOCK_SIZE, loc);
@@ -1108,6 +1109,11 @@ zap_fat_write_array_chunk(zap_leaf_t *l, uint16_t li, size_t sz,
 	la->la_next = 0xffff;
 }
 
+/*
+ * Find the shortest hash prefix length which lets us distribute keys without
+ * overflowing a leaf block.  This is not (space) optimal, but is simple, and
+ * directories large enough to overflow a single 128KB leaf block are uncommon.
+ */
 static unsigned int
 zap_fat_write_prefixlen(zfs_zap_t *zap, zap_leaf_t *l)
 {
@@ -1124,8 +1130,7 @@ zap_fat_write_prefixlen(zfs_zap_t *zap, zap_leaf_t *l)
 	for (prefixlen = 1; prefixlen < (unsigned int)l->l_bs; prefixlen++) {
 		uint32_t *leafchunks;
 
-		leafchunks = ecalloc(1u << prefixlen,
-		    sizeof(*leafchunks));
+		leafchunks = ecalloc(1u << prefixlen, sizeof(*leafchunks));
 		STAILQ_FOREACH(ent, &zap->kvps, next) {
 			uint64_t li;
 			uint16_t chunks;
@@ -1143,8 +1148,12 @@ zap_fat_write_prefixlen(zfs_zap_t *zap, zap_leaf_t *l)
 		}
 		free(leafchunks);
 
-		if (ent == NULL)
+		if (ent == NULL) {
+			/*
+			 * Everything fits, we're done.
+			 */
 			break;
+		}
 	}
 
 	/*
@@ -1240,14 +1249,11 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 	zt->zt_blks_copied = 0;
 
 	/*
-	 * How many leaf blocks do we need?
+	 * How many leaf blocks do we need?  Initialize them and update the
+	 * header.
 	 */
 	prefixlen = zap_fat_write_prefixlen(zap, &l);
 	lblkcnt = 1 << prefixlen;
-
-	/*
-	 * Initialize our leaf blocks.
-	 */
 	leafblks = ecalloc(lblkcnt, blksz);
 	for (unsigned int li = 0; li < lblkcnt; li++) {
 		l.l_phys = (zap_leaf_phys_t *)(leafblks + li * blksz);
@@ -1361,11 +1367,7 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 			ptrhasht[i] = (i >> (zt->zt_shift - prefixlen)) + 1;
 
 	/*
-	 * We can't use more than one embedded block pointer, since this might
-	 * be a directory and we don't want to stomp on the bonus buffer.  The
-	 * dnode type could be used to differentiate, but it's most likely not
-	 * worth bothering since most of the ZAPs we create will be directories
-	 * anyway.
+	 * Write the whole thing to disk.
 	 */
 	dnode = zap->dnode;
 	dnode->dn_nblkptr = 1;
@@ -1394,6 +1396,7 @@ zap_fat_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 		blkptr_set(bp, loc, blksz, dnode->dn_type,
 		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
 		vdev_pwrite(zfs_opts, leafblks + i * blksz, blksz, loc);
+
 		dnode->dn_used += blksz;
 	}
 
@@ -1822,7 +1825,7 @@ _dnode_cursor_flush(zfs_opt_t *zfs_opts, struct dnode_cursor *c, int levels)
 	assert(levels <= c->dnode->dn_nlevels - 1);
 
 	blksz = SPA_OLDMAXBLOCKSIZE;
-	blkid = c->dataoff / c->datablksz;
+	blkid = (c->dataoff / c->datablksz) / BLKPTR_PER_INDIR;
 	for (int level = 1; level <= levels; level++) {
 		buf = c->inddir[level - 1];
 		fill = 0;
