@@ -130,22 +130,27 @@ typedef struct {
 } zfs_fs_t;
 
 typedef struct {
+	/* I/O buffer, for convenience. */
+	char		filebuf[SPA_OLDMAXBLOCKSIZE];
+
 	/* Pool parameters. */
 	const char	*poolname;
 	int		ashift;		/* vdev block size */
 
 	/* Pool state. */
-	zfs_objset_t	mos;		/* meta object set */
 	zfs_fs_t	rootfs;		/* root dataset */
 	uint64_t	originsnap;
+	uint64_t	guid;		/* pool and vdev GUID */
 
-	/* I/O buffer. */
-	char		filebuf[SPA_OLDMAXBLOCKSIZE];
+	/* MOS state. */
+	zfs_objset_t	mos;		/* meta object set */
+	uint64_t	configdn;	/* pool config nvlist object */
+	uint64_t	objarrdn;	/* space map object array */
 
 	/* vdev state. */
 	int		fd;		/* vdev disk fd */
 	off_t		vdevsize;	/* vdev size, including labels */
-	dnode_phys_t	*objarr;	/* space map object array */
+	off_t		asize;		/* vdev size, excluding labels */
 	bitstr_t	*spacemap;	/* space allocator */
 	int		spacemapbits;	/* one bit per ashift-sized block */
 	uint64_t	msshift;	/* metaslab size */
@@ -157,6 +162,7 @@ static void zap_add_uint64(zfs_zap_t *, const char *, uint64_t);
 static void zap_add_string(zfs_zap_t *, const char *, const char *);
 static void zap_write(zfs_opt_t *, zfs_zap_t *);
 
+static dnode_phys_t *objset_dnode_lookup(zfs_objset_t *, uint64_t);
 static dnode_phys_t *objset_dnode_alloc(zfs_objset_t *, uint8_t, uint64_t *);
 static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
     uint16_t, uint64_t *);
@@ -330,6 +336,21 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 	free(fsopts->fs_options);
 }
 
+static size_t
+nvlist_size(const nvlist_t *nvl)
+{
+	return (sizeof(nvl->nv_header) + nvl->nv_size);
+}
+
+static void
+nvlist_copy(const nvlist_t *nvl, char *buf, size_t sz)
+{
+	assert(sz >= nvlist_size(nvl));
+
+	memcpy(buf, &nvl->nv_header, sizeof(nvl->nv_header));
+	memcpy(buf + sizeof(nvl->nv_header), nvl->nv_data, nvl->nv_size);
+}
+
 static void
 blkptr_set_level(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
     uint8_t level, uint64_t fill, enum zio_checksum cksumt, zio_cksum_t *cksum)
@@ -364,26 +385,27 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 }
 
 static void
-vdev_init(zfs_opt_t *zfs_opts, size_t size, const char *image)
+vdev_init(zfs_opt_t *zfs, size_t size, const char *image)
 {
 	int oflags;
 
 	oflags = O_RDWR | O_CREAT | O_TRUNC;
 
-	assert(zfs_opts->ashift >= SPA_MINBLOCKSHIFT);
-	zfs_opts->vdevsize = rounddown2(size, 1 << zfs_opts->ashift);
-	if (zfs_opts->vdevsize < (off_t)SPA_MINDEVSIZE) {
+	assert(zfs->ashift >= SPA_MINBLOCKSHIFT);
+	zfs->vdevsize = rounddown2(size, 1 << zfs->ashift);
+	if (zfs->vdevsize < (off_t)SPA_MINDEVSIZE) {
 		errx(1, "Maximum image size %ju is too small",
-		    (uintmax_t)zfs_opts->vdevsize);
+		    (uintmax_t)zfs->vdevsize);
 	}
+	zfs->asize = zfs->vdevsize - VDEV_LABEL_SPACE;
 
-	zfs_opts->fd = open(image, oflags, 0644);
-	if (zfs_opts->fd == -1)
+	zfs->fd = open(image, oflags, 0644);
+	if (zfs->fd == -1)
 		err(1, "Can't open `%s' for writing", image);
-	if (ftruncate(zfs_opts->fd, zfs_opts->vdevsize) != 0)
+	if (ftruncate(zfs->fd, zfs->vdevsize) != 0)
 		err(1, "Failed to extend image file `%s'", image);
 
-	spacemap_init(zfs_opts);
+	spacemap_init(zfs);
 }
 
 static void
@@ -398,18 +420,17 @@ vdev_fini(zfs_opt_t *zfs_opts)
 }
 
 static void
-vdev_pwrite(const zfs_opt_t *zfs_opts, const void *buf, size_t len, off_t off)
+vdev_pwrite(const zfs_opt_t *zfs, const void *buf, size_t len, off_t off)
 {
 	ssize_t n;
 
-	assert(zfs_opts->vdevsize >= VDEV_LABEL_SPACE);
-	assert(off >= 0 && off < zfs_opts->vdevsize - VDEV_LABEL_SPACE);
+	assert(off >= 0 && off < zfs->asize);
 	assert((off_t)len > 0 && off + (off_t)len > off &&
-	    off + (off_t)len < zfs_opts->vdevsize);
+	    off + (off_t)len < zfs->asize);
 
 	off += VDEV_LABEL_START_SIZE;
 	for (size_t sofar = 0; sofar < len; sofar += n) {
-		n = pwrite(zfs_opts->fd, (const char *)buf + sofar, len - sofar,
+		n = pwrite(zfs->fd, (const char *)buf + sofar, len - sofar,
 		    off + sofar);
 		if (n < 0)
 			err(1, "pwrite");
@@ -545,38 +566,34 @@ vdev_space_alloc(zfs_opt_t *zfs_opts, zfs_objset_t *os, off_t *lenp)
 }
 
 static void
-spacemap_init(zfs_opt_t *zfs_opts)
+spacemap_init(zfs_opt_t *zfs)
 {
 	uint64_t msshift, slabs;
-	off_t nbits, size;
+	off_t nbits;
 
-	size = zfs_opts->vdevsize;
-
-	assert(size >= VDEV_LABEL_SPACE);
-
-	nbits = (size - VDEV_LABEL_SPACE) >> zfs_opts->ashift;
+	nbits = zfs->asize >> zfs->ashift;
 	if (nbits > INT_MAX) {
 		/*
 		 * With the smallest block size of 512B, the limit on the image
 		 * size is 2TB.  That should be enough for anyone.
 		 */
-		errx(1, "image size %ju is too large", (uintmax_t)size);
+		errx(1, "image size is too large");
 	}
-	zfs_opts->spacemapbits = (int)nbits;
-	zfs_opts->spacemap = bit_alloc(zfs_opts->spacemapbits);
-	if (zfs_opts->spacemap == NULL)
+	zfs->spacemapbits = (int)nbits;
+	zfs->spacemap = bit_alloc(zfs->spacemapbits);
+	if (zfs->spacemap == NULL)
 		err(1, "bitstring allocation failed");
 
 	/*
 	 * XXXMJ explain
 	 */
 	for (msshift = 24; msshift < 34; msshift++) {
-		slabs = (size - VDEV_LABEL_SPACE) / ((uint64_t)1 << msshift);
+		slabs = zfs->asize / ((uint64_t)1 << msshift);
 		if (slabs >= 4 && slabs <= 200)
 			break;
 	}
-	zfs_opts->msshift = msshift;
-	zfs_opts->mscount = slabs;
+	zfs->msshift = msshift;
+	zfs->mscount = slabs;
 }
 
 typedef struct zfs_sm {
@@ -597,12 +614,16 @@ spacemap_write(zfs_opt_t *zfs_opts)
 	off_t smblksz, objarrblksz, objarrloc;
 
 	mos = &zfs_opts->mos;
-	objarr = zfs_opts->objarr;
 
 	objarrblksz = sizeof(uint64_t) * zfs_opts->mscount;
 	assert(objarrblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 	objarrloc = vdev_space_alloc(zfs_opts, mos, &objarrblksz);
 	objarrblk = ecalloc(1, objarrblksz);
+
+	objarr = objset_dnode_lookup(mos, zfs_opts->objarrdn);
+	objarr->dn_datablkszsec = objarrblksz >> SPA_MINBLOCKSHIFT;
+	objarr->dn_flags = DNODE_FLAG_USED_BYTES;
+	objarr->dn_used = objarrblksz;
 
 	/*
 	 * Use the smallest block size for space maps.  The space allocation
@@ -695,12 +716,6 @@ spacemap_write(zfs_opt_t *zfs_opts)
 		/* Record this space map in the space map object array. */
 		objarrblk[i] = sma[i].dnid;
 	}
-
-	objarr->dn_datablkszsec = objarrblksz >> SPA_MINBLOCKSHIFT;
-	objarr->dn_nblkptr = 1;
-	objarr->dn_nlevels = 1;
-	objarr->dn_flags = DNODE_FLAG_USED_BYTES;
-	objarr->dn_used = objarrblksz;
 
 	fletcher_4_native(objarrblk, objarrblksz, NULL, &cksum);
 	blkptr_set(&objarr->dn_blkptr[0], objarrloc, objarrblksz,
@@ -804,7 +819,7 @@ _objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, struct dnode_cursor *c,
 	if (cksump != NULL)
 		fletcher_4_native(os->osphys, os->osblksz, NULL, cksump);
 
-	/* XXXMJ */
+	/* XXXMJ, DSL layer uses this */
 #if 0
 	free(os->osphys);
 	os->osphys = NULL;
@@ -899,6 +914,13 @@ dsl_dir_alloc(zfs_opt_t *zfs_opts, uint64_t parentdir, uint64_t *dnidp)
 	dsldir->dd_props_zapobj = propsid;
 
 	return (dsldir);
+}
+
+static dnode_phys_t *
+objset_dnode_lookup(zfs_objset_t *os, uint64_t id)
+{
+	assert(id > 0 && id <= os->dnodecount);
+	return (&os->dnodes[id]);
 }
 
 static dsl_deadlist_phys_t *
@@ -1421,12 +1443,19 @@ zap_write(zfs_opt_t *zfs_opts, zfs_zap_t *zap)
 }
 
 /*
- * Initialize the meta-object set.
+ * Initialize the meta-object set.  At this point we must have determined the
+ * required number of metaslabs. XXXMJ not necessary if dnode count is not known
+ * up front.
  */
 static void
 pool_init(zfs_opt_t *zfs_opts)
 {
-	uint64_t dnodecount;
+	zfs_objset_t *mos;
+	uint64_t dnid, dnodecount;
+
+	zfs_opts->guid = 0xdeadbeefc0deface;
+
+	mos = &zfs_opts->mos;
 
 	dnodecount = 0;
 	dnodecount++; /* object directory (ZAP)               */
@@ -1455,7 +1484,15 @@ pool_init(zfs_opt_t *zfs_opts)
 	dnodecount++; /* space map object array               */
 	dnodecount += zfs_opts->mscount; /* space maps        */
 
-	objset_init(zfs_opts, &zfs_opts->mos, DMU_OST_META, dnodecount);
+	objset_init(zfs_opts, mos, DMU_OST_META, dnodecount);
+
+	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_DIRECTORY, &dnid);
+	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
+
+	(void)objset_dnode_bonus_alloc(mos, DMU_OT_PACKED_NVLIST,
+	    DMU_OT_PACKED_NVLIST_SIZE, sizeof(uint64_t), &zfs_opts->configdn);
+
+	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &zfs_opts->objarrdn);
 }
 
 static void
@@ -1547,122 +1584,132 @@ pool_add_child_map(zfs_opt_t *zfs_opts, zfs_objset_t *mos, uint64_t parentdir)
 	return (childdirid);
 }
 
+static nvlist_t *
+pool_config_create(zfs_opt_t *zfs)
+{
+	nvlist_t *featuresnv, *poolnv;
+
+	poolnv = nvlist_create(NV_UNIQUE_NAME);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_POOL_TXG, TXG_INITIAL);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_VERSION, SPA_VERSION);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_POOL_STATE, POOL_STATE_EXPORTED);
+	nvlist_add_string(poolnv, ZPOOL_CONFIG_POOL_NAME, zfs->poolname);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_POOL_GUID, zfs->guid);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_TOP_GUID, zfs->guid);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_GUID, zfs->guid);
+	nvlist_add_uint64(poolnv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
+
+	featuresnv = nvlist_create(NV_UNIQUE_NAME);
+	nvlist_add_nvlist(poolnv, ZPOOL_CONFIG_FEATURES_FOR_READ, featuresnv);
+	nvlist_destroy(featuresnv);
+
+	return (poolnv);
+}
+
+static nvlist_t *
+pool_disk_vdev_config_create(zfs_opt_t *zfs)
+{
+	nvlist_t *diskvdevnv;
+
+	diskvdevnv = nvlist_create(NV_UNIQUE_NAME);
+	nvlist_add_string(diskvdevnv, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_ASHIFT, zfs->ashift);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_ASIZE, zfs->asize);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_GUID, zfs->guid);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_ID, 0);
+	nvlist_add_string(diskvdevnv, ZPOOL_CONFIG_PATH, "/dev/null");
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_WHOLE_DISK, 1);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_CREATE_TXG, TXG_INITIAL);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_METASLAB_ARRAY,
+	    zfs->objarrdn);
+	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_METASLAB_SHIFT,
+	    zfs->msshift);
+
+	return (diskvdevnv);
+}
+
+static nvlist_t *
+pool_root_vdev_config_create(zfs_opt_t *zfs)
+{
+	nvlist_t *diskvdevnv, *rootvdevnv;
+
+	diskvdevnv = pool_disk_vdev_config_create(zfs);
+	rootvdevnv = nvlist_create(NV_UNIQUE_NAME);
+
+	nvlist_add_uint64(rootvdevnv, ZPOOL_CONFIG_ID, 0);
+	nvlist_add_uint64(rootvdevnv, ZPOOL_CONFIG_GUID, zfs->guid);
+	nvlist_add_string(rootvdevnv, ZPOOL_CONFIG_TYPE, VDEV_TYPE_ROOT);
+	nvlist_add_uint64(rootvdevnv, ZPOOL_CONFIG_CREATE_TXG, TXG_INITIAL);
+	nvlist_add_nvlist_array(rootvdevnv, ZPOOL_CONFIG_CHILDREN, &diskvdevnv,
+	    1);
+	nvlist_destroy(diskvdevnv);
+
+	return (rootvdevnv);
+}
+
 static void
 pool_fini(zfs_opt_t *zfs_opts)
 {
 	zio_cksum_t cksum;
 	zfs_objset_t *mos;
-	nvlist_t *poolconfig, *vdevconfig;
 	uberblock_t *ub;
 	vdev_label_t *label;
-	char *vdevnv;
-	uint64_t guid, txg, msid;
 	int error;
 
 	mos = &zfs_opts->mos;
 
-	txg = TXG_INITIAL;
-	guid = 0xdeadbeefc0deface;
-
-	/* XXXMJ not sure what needs to be where */
-
-	vdevconfig = nvlist_create(NV_UNIQUE_NAME);
-	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASHIFT, zfs_opts->ashift);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ASIZE, zfs_opts->vdevsize -
-	    VDEV_LABEL_SPACE);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_GUID, guid);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_ID, 0);
-	nvlist_add_string(vdevconfig, ZPOOL_CONFIG_PATH, "/dev/null");
-
-	poolconfig = nvlist_create(NV_UNIQUE_NAME);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_TXG, txg);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VERSION, SPA_VERSION);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_STATE,
-	    POOL_STATE_EXPORTED);
-	nvlist_add_string(poolconfig, ZPOOL_CONFIG_POOL_NAME,
-	    zfs_opts->poolname);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_POOL_GUID, guid);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_TOP_GUID, guid);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_GUID, guid);
-	nvlist_add_uint64(poolconfig, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
-
-	nvlist_t *features = nvlist_create(NV_UNIQUE_NAME);
-	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_FEATURES_FOR_READ,
-	    features);
-
 	/* XXXMJ most of this code should live in pool_init(). */
 	{
-	dnode_phys_t *configdn, *objdirdn;
 	dsl_dir_phys_t *dsldir;
 	dsl_dataset_phys_t *ds;
-	uint64_t dnid, dsldirid, dslid, configid;
-
-	objdirdn = objset_dnode_alloc(mos, DMU_OT_OBJECT_DIRECTORY, &dnid);
-	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
-
-	configdn = objset_dnode_bonus_alloc(mos, DMU_OT_PACKED_NVLIST,
-	    DMU_OT_PACKED_NVLIST_SIZE, sizeof(uint64_t), &configid);
-
-	zfs_opts->objarr = objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &msid);
-
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_METASLAB_ARRAY, msid);
-	nvlist_add_uint64(vdevconfig, ZPOOL_CONFIG_METASLAB_SHIFT,
-	    zfs_opts->msshift);
-	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
+	uint64_t dsldirid, dslid;
 
 	{
-		nvlist_t *nv, *rootvdev;
+		dnode_phys_t *configdn;
+		nvlist_t *poolconfig, *vdevconfig;
 		off_t configloc, configblksz;
 
-		rootvdev = nvlist_create(NV_UNIQUE_NAME);
-		nvlist_add_uint64(rootvdev, ZPOOL_CONFIG_ID, 0);
-		nvlist_add_uint64(rootvdev, ZPOOL_CONFIG_GUID, guid);
-		nvlist_add_string(rootvdev, ZPOOL_CONFIG_TYPE, VDEV_TYPE_ROOT);
-		nvlist_add_nvlist_array(rootvdev, ZPOOL_CONFIG_CHILDREN,
-		    &vdevconfig, 1);
+		poolconfig = pool_config_create(zfs_opts);
 
-		nv = nvlist_create(NV_UNIQUE_NAME);
-		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_GUID, guid);
-		nvlist_add_uint64(nv, ZPOOL_CONFIG_ASIZE, zfs_opts->vdevsize -
-		    VDEV_LABEL_SPACE);
-		nvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_CHILDREN, 1);
-		nvlist_add_nvlist(nv, ZPOOL_CONFIG_VDEV_TREE, rootvdev);
-		nvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_TXG, txg);
+		vdevconfig = pool_root_vdev_config_create(zfs_opts);
+		nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE,
+		    vdevconfig);
+		nvlist_destroy(vdevconfig);
 
-		error = nvlist_export(nv);
+		error = nvlist_export(poolconfig);
 		if (error != 0)
 			errc(1, error, "nvlist_export");
+		configblksz = nvlist_size(poolconfig);
 
-		configblksz = nv->nv_size + sizeof(nv->nv_header);
-		assert(configblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 		configloc = vdev_space_alloc(zfs_opts, mos, &configblksz);
 
 		char *buf = ecalloc(1, configblksz);
-		memcpy(buf, &nv->nv_header, sizeof(nv->nv_header));
-		memcpy(buf + sizeof(nv->nv_header), nv->nv_data, nv->nv_size);
+		nvlist_copy(poolconfig, buf, configblksz);
 
+		assert(configblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
 		vdev_pwrite(zfs_opts, buf, configblksz, configloc);
 
+		configdn = objset_dnode_lookup(mos, zfs_opts->configdn);
 		fletcher_4_native(buf, configblksz, NULL, &cksum);
 		blkptr_set(&configdn->dn_blkptr[0], configloc, configblksz,
 		    configdn->dn_type, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 		configdn->dn_datablkszsec = configblksz >> SPA_MINBLOCKSHIFT;
 		configdn->dn_flags = DNODE_FLAG_USED_BYTES;
 		configdn->dn_used = configblksz;
-		*(uint64_t *)DN_BONUS(configdn) = nv->nv_size + sizeof(nv->nv_header);
+		*(uint64_t *)DN_BONUS(configdn) = nvlist_size(poolconfig);
 
-		nvlist_destroy(nv);
+		nvlist_destroy(poolconfig);
 		free(buf);
 	}
 
 	dsldir = dsl_dir_alloc(zfs_opts, 0, &dsldirid);
 	{
 		zfs_zap_t objdirzap;
+		dnode_phys_t *objdirdn = objset_dnode_lookup(mos, DMU_POOL_DIRECTORY_OBJECT);
 
 		zap_init(&objdirzap, mos, objdirdn);
 		zap_add_uint64(&objdirzap, DMU_POOL_ROOT_DATASET, dsldirid);
-		zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, configid);
+		zap_add_uint64(&objdirzap, DMU_POOL_CONFIG, zfs_opts->configdn);
 		pool_add_bplists(mos, &objdirzap);
 		pool_add_feature_objects(zfs_opts, mos, &objdirzap);
 		zap_write(zfs_opts, &objdirzap);
@@ -1686,21 +1733,25 @@ pool_fini(zfs_opt_t *zfs_opts)
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	}
 
-	label = ecalloc(1, sizeof(*label));
+	objset_write_mos(zfs_opts, &cksum);
 
-	/* Fill out vdev metadata. */
+	nvlist_t *poolconfig, *vdevconfig;
+
+	poolconfig = pool_config_create(zfs_opts);
+
+	vdevconfig = pool_disk_vdev_config_create(zfs_opts);
+	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
+	nvlist_destroy(vdevconfig);
+
 	error = nvlist_export(poolconfig);
 	if (error != 0)
 		errc(1, error, "nvlist_export");
-	vdevnv = label->vl_vdev_phys.vp_nvlist;
-	memcpy(vdevnv, &poolconfig->nv_header, sizeof(poolconfig->nv_header));
-	memcpy(vdevnv + sizeof(poolconfig->nv_header), poolconfig->nv_data,
-	    poolconfig->nv_size);
+
+	label = ecalloc(1, sizeof(*label));
+	nvlist_copy(poolconfig, label->vl_vdev_phys.vp_nvlist,
+	    sizeof(label->vl_vdev_phys.vp_nvlist));
 
 	nvlist_destroy(poolconfig);
-	nvlist_destroy(vdevconfig);
-
-	objset_write_mos(zfs_opts, &cksum);
 
 	/*
 	 * Fill out the uberblock.  Just make each one the same.  The embedded
@@ -1711,8 +1762,8 @@ pool_fini(zfs_opt_t *zfs_opts)
 		ub = (uberblock_t *)(&label->vl_uberblock[0] + uoff);
 		ub->ub_magic = UBERBLOCK_MAGIC;
 		ub->ub_version = SPA_VERSION;
-		ub->ub_txg = txg;
-		ub->ub_guid_sum = guid + guid; /* XXXMJ */
+		ub->ub_txg = TXG_INITIAL;
+		ub->ub_guid_sum = zfs_opts->guid + zfs_opts->guid;
 		ub->ub_timestamp = 0; /* XXXMJ */
 
 		ub->ub_software_version = SPA_VERSION;
@@ -1720,8 +1771,8 @@ pool_fini(zfs_opt_t *zfs_opts)
 		ub->ub_mmp_delay = 0;
 		ub->ub_mmp_config = 0;
 		ub->ub_checkpoint_txg = 0;
-		blkptr_set(&ub->ub_rootbp, mos->osloc, mos->osblksz, DMU_OT_OBJSET,
-		    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+		blkptr_set(&ub->ub_rootbp, mos->osloc, mos->osblksz,
+		    DMU_OT_OBJSET, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 	}
 
 	for (int i = 0; i < VDEV_LABELS; i++)
@@ -2439,9 +2490,6 @@ fs_create(zfs_opt_t *zfs_opts, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
 	zap_write(zfs_opts, &masterzap);
-
-	/* Finally, write the dnode array and objset set itself. */
-	objset_write(zfs_opts, os);
 }
 
 void
@@ -2468,6 +2516,8 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	vdev_init(zfs_opts, fsopts->maxsize, image);
 	pool_init(zfs_opts);
 	fs_create(zfs_opts, &zfs_opts->rootfs, dirfd, root);
+	/* XXXMJ write together with the DSL */
+	objset_write(zfs_opts, &zfs_opts->rootfs.os);
 	pool_fini(zfs_opts);
 	vdev_fini(zfs_opts);
 
