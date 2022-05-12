@@ -60,7 +60,6 @@
  * - review vdev_space_alloc()
  * - objset accounting, dn_used
  * - support for multiple filesystems
- * - figure out how to handle fat ZAP collisions
  * - hard links
  */
 
@@ -166,7 +165,6 @@ static void spacemap_init(zfs_opt_t *);
 
 struct dnode_cursor {
 	char		inddir[INDIR_LEVELS][SPA_OLDMAXBLOCKSIZE];
-	uint32_t	fill[INDIR_LEVELS];
 	off_t		indloc;
 	off_t		indspace;
 	dnode_phys_t	*dnode;
@@ -778,23 +776,18 @@ _objset_write(zfs_opt_t *zfs_opts, zfs_objset_t *os, struct dnode_cursor *c,
 	for (uint64_t i = 0; i < os->dnodecount; i += DNODES_PER_BLOCK) {
 		dnode_phys_t *blk;
 		blkptr_t *bp;
+		uint64_t fill;
 		off_t loc;
 
 		blk = os->dnodes + i;
 		loc = os->dnodeloc + i * sizeof(dnode_phys_t);
+		fill = os->dnodecount - i < DNODES_PER_BLOCK ?
+		    os->dnodecount - i : 0;
 
 		bp = dnode_cursor_next(zfs_opts, c, i * sizeof(dnode_phys_t));
 		fletcher_4_native(blk, DNODE_BLOCK_SIZE, NULL, &cksum);
-		if (os->dnodecount - i < DNODES_PER_BLOCK) {
-			blkptr_set_level(bp, loc, DNODE_BLOCK_SIZE,
-			    DMU_OT_DNODE, 0, os->dnodecount - i,
-			    ZIO_CHECKSUM_FLETCHER_4, &cksum);
-		} else {
-			blkptr_set_level(bp, loc, DNODE_BLOCK_SIZE,
-			    DMU_OT_DNODE, 0, 0, ZIO_CHECKSUM_FLETCHER_4,
-			    &cksum);
-		}
-
+		blkptr_set_level(bp, loc, DNODE_BLOCK_SIZE,
+		    DMU_OT_DNODE, 0, fill, ZIO_CHECKSUM_FLETCHER_4, &cksum);
 		vdev_pwrite(zfs_opts, blk, DNODE_BLOCK_SIZE, loc);
 
 		os->osphys->os_meta_dnode.dn_used += DNODE_BLOCK_SIZE;
@@ -2000,13 +1993,14 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		subdirs = 0;
 		if (cur->type == S_IFDIR) {
 			/*
-			 * Handle weird non-uniformity of the root directory: if
-			 * the directory has no parent, it's the root and its
+			 * A weird special case for the root directory: if the
+			 * directory has no parent, it's the root and its
 			 * children are linked as siblings.
 			 */
-			child = (cur->parent == NULL && cur->first == cur) ?
+			for (child =
+			    (cur->parent == NULL && cur->first == cur) ?
 			    cur->next : cur->child;
-			for (; child != NULL; child = child->next) {
+			    child != NULL; child = child->next) {
 				if (child->type == S_IFDIR)
 					subdirs++;
 				children++;
@@ -2035,7 +2029,6 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		assert(0);
 	}
 
-	/* XXXMJ hard link support? */
 	daclcount = nitems(aces);
 	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED |
 	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
@@ -2162,7 +2155,6 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 			memset(zfs_opts->filebuf + target, 0, bufsz - target);
 
 		loc = vdev_space_alloc(zfs_opts, &arg->fs->os, &target);
-		assert(powerof2(target));
 		assert(target <= (off_t)SPA_OLDMAXBLOCKSIZE);
 
 		bp = dnode_cursor_next(zfs_opts, c, foff);
@@ -2173,12 +2165,10 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 
 		dnode->dn_used += target;
 	}
+	(void)close(fd);
 	dnode_cursor_finish(zfs_opts, c);
 
-	(void)close(fd);
-
 	fs_populate_sattrs(arg, cur, dnode);
-
 	fs_populate_dirent(arg, cur, dnid);
 }
 
