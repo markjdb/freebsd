@@ -55,7 +55,7 @@
 #pragma clang diagnostic pop
 
 /*
- * XXXMJ
+ * XXX-MJ
  * - review checksum algorithm selection (most should likely be "inherit"?)
  * - review vdev_space_alloc()
  * - objset accounting, dn_used
@@ -64,7 +64,7 @@
  */
 
 /*
- * XXXMJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
+ * XXX-MJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
  * comes from.  Be sure to test with large files...
  */
 #define	INDIR_LEVELS		6
@@ -80,19 +80,20 @@ typedef struct {
 	sa_bswap_type_t	bs;
 } zfs_sattr_t;
 
-typedef struct {
+typedef struct zfs_objset {
 	objset_phys_t	*osphys;
 	off_t		osloc;
 	off_t		osblksz;
 	blkptr_t	osbp;		/* set in objset_write() */
 
-	off_t		minblksz;	/* 1 << ashift */
 	off_t		space;		/* bytes allocated to this objset */
 
 	dnode_phys_t	*dnodes;	/* dnode array */
 	uint64_t	dnodenextfree;	/* dnode ID bump allocator */
 	uint64_t	dnodecount;	/* total number of dnodes */
 	off_t		dnodeloc;	/* preallocated vdev space */
+
+	STAILQ_HEAD(, zfs_objset) children;	/* child datasets */
 } zfs_objset_t;
 
 typedef struct zfs_zap_entry {
@@ -131,7 +132,7 @@ typedef struct {
 } zfs_fs_t;
 
 typedef struct {
-	/* I/O buffer, for convenience. */
+	/* I/O buffer, just for convenience. */
 	char		filebuf[SPA_OLDMAXBLOCKSIZE];
 
 	/* Pool parameters. */
@@ -139,8 +140,6 @@ typedef struct {
 	int		ashift;		/* vdev block size */
 
 	/* Pool state. */
-	zfs_fs_t	rootfs;		/* root dataset */
-	uint64_t	originsnap;
 	uint64_t	guid;		/* pool and vdev GUID */
 
 	/* MOS state. */
@@ -148,8 +147,9 @@ typedef struct {
 	uint64_t	objarrdn;	/* space map object array */
 
 	/* DSL state. */
-	uint64_t	rootdsldirdn;
-	dsl_dir_phys_t	*rootdsldir;
+	uint64_t	rootdsldirdn;	/* root DSL directory object */
+	zfs_fs_t	rootfs;		/* root dataset */
+	uint64_t	originsnap;	/* XXX-MJ don't really need this */
 
 	/* vdev state. */
 	int		fd;		/* vdev disk fd */
@@ -525,13 +525,13 @@ vdev_label_write(zfs_opt_t *zfs, int ind, const vdev_label_t *labelp)
  *    the smallest multiple of 128KB that is larger than the length.
  * 3. The returned run's length will be size-aligned up to 128KB.
  *
- * XXXMJ it seems the third rule isn't required, so this can just be a dumb
+ * XXX-MJ it seems the third rule isn't required, so this can just be a dumb
  * bump allocator.  Maybe there's some benefit to keeping large blocks aligned,
  * so let's keep it for now and hope we don't get too much fragmentation.
  * Alternately we could try to allocate all blocks of a certain size from the
  * same metaslab.
  *
- * XXXMJ must always be done in the context of an objset for accounting purposes
+ * XXX-MJ must always be done in the context of an objset for accounting purposes
  */
 static off_t
 vdev_space_alloc(zfs_opt_t *zfs, zfs_objset_t *os, off_t *lenp)
@@ -595,7 +595,7 @@ spacemap_init(zfs_opt_t *zfs)
 		err(1, "bitstring allocation failed");
 
 	/*
-	 * XXXMJ explain
+	 * XXX-MJ explain
 	 */
 	for (msshift = 24; msshift < 34; msshift++) {
 		slabs = zfs->asize / ((uint64_t)1 << msshift);
@@ -744,7 +744,7 @@ objset_init(zfs_opt_t *zfs, zfs_objset_t *os, uint64_t type,
 
 	/*
 	 * Allocate space on the vdev for the objset and dnode array.  For other
-	 * object types we do that only when going to actually write them to the
+	 * objects we do that only when going to actually write them to the
 	 * vdev, but in this case it simplifies space map accounting to do it
 	 * now.
 	 */
@@ -761,9 +761,7 @@ objset_init(zfs_opt_t *zfs, zfs_objset_t *os, uint64_t type,
 	os->dnodes = ecalloc(1,
 	    roundup2(dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE));
 
-	os->minblksz = 1 << zfs->ashift;
-
-	/* XXXMJ what else? */
+	/* XXX-MJ what else? */
 	os->osphys = ecalloc(1, os->osblksz);
 	os->osphys->os_type = type;
 	mdnode = &os->osphys->os_meta_dnode;
@@ -875,7 +873,7 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 		*idp = os->dnodenextfree;
 	dnode = &os->dnodes[os->dnodenextfree++];
 	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
-	dnode->dn_datablkszsec = os->minblksz >> SPA_MINBLOCKSHIFT;
+	dnode->dn_datablkszsec = os->osblksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_nlevels = 1;
 	dnode->dn_nblkptr = 1;
 	dnode->dn_type = type;
@@ -909,7 +907,7 @@ dsl_dir_alloc(zfs_opt_t *zfs, uint64_t parentdir, uint64_t *dnidp)
 	props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsid);
 	zap_init(&propszap, mos, props);
 	zap_add_uint64(&propszap, "compression", ZIO_COMPRESS_OFF);
-	/* XXXMJ just for testing */
+	/* XXX-MJ just for testing */
 	zap_add_string(&propszap, "mountpoint", "/");
 	zap_write(zfs, &propszap);
 
@@ -955,7 +953,7 @@ dsl_dataset_alloc(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t dir,
 	(void)dsl_deadlist_alloc(zfs, mos, &deadlistid);
 
 	ds = (dsl_dataset_phys_t *)DN_BONUS(dnode);
-	/* XXXMJ what else? */
+	/* XXX-MJ what else? */
 	ds->ds_dir_obj = dir;
 	ds->ds_deadlist_obj = deadlistid;
 	ds->ds_creation_txg = TXG_INITIAL;
@@ -970,49 +968,47 @@ zap_entry_chunks(zfs_zap_entry_t *ent)
 	    howmany(ent->intsz * ent->intcnt, ZAP_LEAF_ARRAY_BYTES));
 }
 
-/* XXXMJ from zfssubr.c */
 static uint64_t
 zap_hash(uint64_t salt, const char *name)
 {
-#define	ZFS_CRC64_POLY	0xC96C5795D7870F42UL	/* ECMA-182, reflected form */
-	static uint64_t zfs_crc64_table[256];
+	static uint64_t crc64_table[256];
+	const uint64_t crc64_poly = 0xC96C5795D7870F42UL;
 	const uint8_t *cp;
+	uint64_t crc;
 	uint8_t c;
-	uint64_t crc = salt;
 
-	assert(crc != 0);
-	if (zfs_crc64_table[128] == 0) {
+	assert(salt != 0);
+	if (crc64_table[128] == 0) {
 		for (int i = 0; i < 256; i++) {
 			uint64_t *t;
 
-			t = zfs_crc64_table + i;
+			t = crc64_table + i;
 			*t = i;
 			for (int j = 8; j > 0; j--)
-				*t = (*t >> 1) ^ (-(*t & 1) & ZFS_CRC64_POLY);
+				*t = (*t >> 1) ^ (-(*t & 1) & crc64_poly);
 		}
 	}
-	assert(zfs_crc64_table[128] == ZFS_CRC64_POLY);
+	assert(crc64_table[128] == crc64_poly);
 
-	for (cp = (const uint8_t *)name; (c = *cp) != '\0'; cp++)
-		crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ c) & 0xFF];
+	for (cp = (const uint8_t *)name, crc = salt; (c = *cp) != '\0'; cp++)
+		crc = (crc >> 8) ^ crc64_table[(crc ^ c) & 0xFF];
 
 	/*
 	 * Only use 28 bits, since we need 4 bits in the cookie for the
 	 * collision differentiator.  We MUST use the high bits, since
-	 * those are the onces that we first pay attention to when
-	 * chosing the bucket.
+	 * those are the ones that we first pay attention to when
+	 * choosing the bucket.
 	 */
 	crc &= ~((1ULL << (64 - ZAP_HASHBITS)) - 1);
 
 	return (crc);
-#undef ZFS_CRC64_POLY
 }
 
 static void
 zap_init(zfs_zap_t *zap, zfs_objset_t *os, dnode_phys_t *dnode)
 {
 	STAILQ_INIT(&zap->kvps);
-	zap->hashsalt = random();	/* only 32 bits but that's okay */
+	zap->hashsalt = ((uint64_t)random() << 32) | random();
 	zap->micro = true;
 	zap->kvpcnt = 0;
 	zap->chunks = 0;
@@ -1035,13 +1031,11 @@ zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
 	ent->hash = zap_hash(zap->hashsalt, ent->name);
 	ent->intsz = intsz;
 	ent->intcnt = intcnt;
-	if (intsz == sizeof(uint64_t) && intcnt == 1) {
-		memcpy(&ent->val64, val, sizeof(uint64_t));
+	if (intsz == sizeof(uint64_t) && intcnt == 1)
 		ent->val64p = &ent->val64;
-	} else {
+	else
 		ent->valp = ecalloc(intcnt, intsz);
-		memcpy(ent->valp, val, intcnt * intsz);
-	}
+	memcpy(ent->valp, val, intcnt * intsz);
 	zap->kvpcnt++;
 	zap->chunks += zap_entry_chunks(ent);
 	STAILQ_INSERT_TAIL(&zap->kvps, ent, next);
@@ -1085,7 +1079,7 @@ zap_micro_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	ment = &mzap->mz_chunk[0];
 	STAILQ_FOREACH(ent, &zap->kvps, next) {
 		memcpy(&ment->mze_value, ent->valp, ent->intsz * ent->intcnt);
-		ment->mze_cd = 0; /* XXXMJ */
+		ment->mze_cd = 0; /* XXX-MJ */
 		strlcpy(ment->mze_name, ent->name, sizeof(ment->mze_name));
 		ment++;
 	}
@@ -1460,7 +1454,7 @@ pool_add_child_map(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
 	zap_init(&childzap, mos, childdir);
 
 	dsldir = dsl_dir_alloc(zfs, parentdir, &dnid);
-	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXXMJ plus what else? */
+	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXX-MJ plus what else? */
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	zap_add_uint64(&childzap, "$MOS", dnid);
 
@@ -1471,7 +1465,7 @@ pool_add_child_map(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
 	snapds = dsl_dataset_alloc(zfs, mos, dnid, &snapdnid);
 	originds->ds_prev_snap_obj = snapdnid;
 	snapds->ds_next_snap_obj = dsdnid;
-	/* XXXMJ need to add one per dataset */
+	/* XXX-MJ need to add one per dataset */
 	snapds->ds_num_children = 2;
 	zfs->originsnap = snapdnid;
 
@@ -1485,7 +1479,7 @@ pool_add_child_map(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
 	(void)dsl_dir_alloc(zfs, parentdir, &dnid);
 	zap_add_uint64(&childzap, "$FREE", dnid);
 
-	/* XXXMJ add actual datasets here */
+	/* XXX-MJ add actual datasets here */
 
 	zap_write(zfs, &childzap);
 
@@ -1557,16 +1551,24 @@ pool_root_vdev_config_nvcreate(zfs_opt_t *zfs)
 	return (rootvdevnv);
 }
 
+/*
+ * Create the pool's "config" object, which contains an nvlist describing pool
+ * parameters and the vdev topology.  It is similar but not identical to the
+ * nvlist stored in vdev labels.
+ */
 static void
-pool_init_objdir_config(zfs_opt_t *zfs, zfs_objset_t *mos, zfs_zap_t *objdir)
+pool_init_objdir_config(zfs_opt_t *zfs, zfs_zap_t *objdir)
 {
 	zio_cksum_t cksum;
 	dnode_phys_t *dnode;
 	nvlist_t *poolconfig, *vdevconfig;
+	zfs_objset_t *mos;
 	void *configbuf;
 	uint64_t dnid;
 	off_t configloc, configblksz;
 	int error;
+
+	mos = &zfs->mos;
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_PACKED_NVLIST,
 	    DMU_OT_PACKED_NVLIST_SIZE, sizeof(uint64_t), &dnid);
@@ -1591,6 +1593,7 @@ pool_init_objdir_config(zfs_opt_t *zfs, zfs_objset_t *mos, zfs_zap_t *objdir)
 	fletcher_4_native(configbuf, configblksz, NULL, &cksum);
 	blkptr_set(&dnode->dn_blkptr[0], configloc, configblksz, dnode->dn_type,
 	    ZIO_CHECKSUM_FLETCHER_4, &cksum);
+
 	dnode->dn_datablkszsec = configblksz >> SPA_MINBLOCKSHIFT;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 	dnode->dn_used = configblksz;
@@ -1604,13 +1607,16 @@ pool_init_objdir_config(zfs_opt_t *zfs, zfs_objset_t *mos, zfs_zap_t *objdir)
 
 /*
  * Add objects block pointer list objects, used for deferred frees.  We don't do
- * anything with them, but they need to be present.
+ * anything with them, but they need to be present or OpenZFS will refuse to
+ * import the pool.
  */
 static void
-pool_init_objdir_bplists(zfs_opt_t *zfs __unused, zfs_objset_t *mos,
-    zfs_zap_t *objdir)
+pool_init_objdir_bplists(zfs_opt_t *zfs __unused, zfs_zap_t *objdir)
 {
+	zfs_objset_t *mos;
 	uint64_t dnid;
+
+	mos = &zfs->mos;
 
 	(void)objset_dnode_bonus_alloc(mos, DMU_OT_BPOBJ, DMU_OT_BPOBJ_HDR,
 	    BPOBJ_SIZE_V2, &dnid);
@@ -1626,12 +1632,14 @@ pool_init_objdir_bplists(zfs_opt_t *zfs __unused, zfs_objset_t *mos,
  * features, so the objects are just empty ZAPs.
  */
 static void
-pool_init_objdir_feature_maps(zfs_opt_t *zfs, zfs_objset_t *mos,
-    zfs_zap_t *objdir)
+pool_init_objdir_feature_maps(zfs_opt_t *zfs, zfs_zap_t *objdir)
 {
 	zfs_zap_t zap;
+	zfs_objset_t *mos;
 	dnode_phys_t *dnode;
 	uint64_t dnid;
+
+	mos = &zfs->mos;
 
 	dnode = objset_dnode_alloc(mos, DMU_OTN_ZAP_METADATA, &dnid);
 	zap_add_uint64(objdir, DMU_POOL_FEATURES_FOR_READ, dnid);
@@ -1650,26 +1658,32 @@ pool_init_objdir_feature_maps(zfs_opt_t *zfs, zfs_objset_t *mos,
 }
 
 static void
+pool_init_objdir_dsl(zfs_opt_t *zfs, zfs_zap_t *objdir)
+{
+	assert(zfs->rootdsldirdn > 0);
+
+	zap_add_uint64(objdir, DMU_POOL_ROOT_DATASET, zfs->rootdsldirdn);
+}
+
+static void
 pool_init_objdir(zfs_opt_t *zfs)
 {
 	zfs_zap_t zap;
-	zfs_objset_t *mos;
 	dnode_phys_t *objdir;
 
-	mos = &zfs->mos;
-	objdir = objset_dnode_lookup(mos, DMU_POOL_DIRECTORY_OBJECT);
+	objdir = objset_dnode_lookup(&zfs->mos, DMU_POOL_DIRECTORY_OBJECT);
 
-	zap_init(&zap, mos, objdir);
-	pool_init_objdir_config(zfs, mos, &zap);
-	pool_init_objdir_bplists(zfs, mos, &zap);
-	pool_init_objdir_feature_maps(zfs, mos, &zap);
-	zap_add_uint64(&zap, DMU_POOL_ROOT_DATASET, zfs->rootdsldirdn);
+	zap_init(&zap, &zfs->mos, objdir);
+	pool_init_objdir_config(zfs, &zap);
+	pool_init_objdir_bplists(zfs, &zap);
+	pool_init_objdir_feature_maps(zfs, &zap);
+	pool_init_objdir_dsl(zfs, &zap);
 	zap_write(zfs, &zap);
 }
 
 /*
  * Initialize the meta-object set and immediately write out several special
- * objects whose contents are already known.
+ * objects whose contents are already finalized, including the object directory.
  */
 static void
 pool_init(zfs_opt_t *zfs)
@@ -1714,8 +1728,7 @@ pool_init(zfs_opt_t *zfs)
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 
 	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &zfs->objarrdn);
-
-	zfs->rootdsldir = dsl_dir_alloc(zfs, 0, &zfs->rootdsldirdn);
+	(void)dsl_dir_alloc(zfs, 0, &zfs->rootdsldirdn);
 
 	pool_init_objdir(zfs);
 }
@@ -1755,7 +1768,7 @@ pool_labels_write(zfs_opt_t *zfs)
 		ub->ub_version = SPA_VERSION;
 		ub->ub_txg = TXG_INITIAL;
 		ub->ub_guid_sum = zfs->guid + zfs->guid; /* root + disk */
-		ub->ub_timestamp = 0; /* XXXMJ */
+		ub->ub_timestamp = 0; /* XXX-MJ */
 
 		ub->ub_software_version = SPA_VERSION;
 		ub->ub_mmp_magic = MMP_MAGIC;
@@ -1777,32 +1790,32 @@ pool_labels_write(zfs_opt_t *zfs)
 static void
 pool_fini(zfs_opt_t *zfs)
 {
-	zfs_objset_t *mos;
-
-	mos = &zfs->mos;
-
-	{
+	zfs_objset_t *rootos, *mos;
+	dnode_phys_t *dnode;
 	dsl_dir_phys_t *dsldir;
 	dsl_dataset_phys_t *ds;
 	uint64_t dsldirid, dslid;
-	dsldir = zfs->rootdsldir;
+
+	mos = &zfs->mos;
+	rootos = &zfs->rootfs.os;
+
 	dsldirid = zfs->rootdsldirdn;
+	dnode = objset_dnode_lookup(mos, dsldirid);
+	dsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
 
 	dsldir->dd_child_dir_zapobj = pool_add_child_map(zfs, mos, dsldirid);
-	zfs_objset_t *os = &zfs->rootfs.os;
 
 	ds = dsl_dataset_alloc(zfs, mos, dsldirid, &dslid);
-	/* XXXMJ more fields */
+	/* XXX-MJ more fields */
 	ds->ds_prev_snap_obj = zfs->originsnap;
-	ds->ds_used_bytes = os->space;
+	ds->ds_used_bytes = rootos->space;
 	ds->ds_uncompressed_bytes = ds->ds_compressed_bytes = ds->ds_used_bytes;
-	memcpy(&ds->ds_bp, &os->osbp, sizeof(blkptr_t));
+	memcpy(&ds->ds_bp, &rootos->osbp, sizeof(blkptr_t));
 
-	/* XXXMJ more fields */
+	/* XXX-MJ more fields */
 	dsldir->dd_head_dataset_obj = dslid;
 	dsldir->dd_used_bytes = ds->ds_used_bytes;
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
-	}
 
 	objset_write_mos(zfs);
 	pool_labels_write(zfs);
@@ -2111,14 +2124,14 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 
 	daclcount = nitems(aces);
 	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED |
-	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXXMJ */
+	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXX-MJ */
 	gen = 1;
 	gid = sb->st_gid;
 	mode = sb->st_mode;
 	parent = SLIST_FIRST(&arg->dirs)->objid;
 	uid = sb->st_uid;
 
-	/* XXXMJ need to review these */
+	/* XXX-MJ need to review these */
 	memset(aces, 0, sizeof(aces));
 	aces[0].z_flags = ACE_OWNER;
 	aces[0].z_type = ACE_ACCESS_ALLOWED_ACE_TYPE;
@@ -2478,16 +2491,17 @@ fs_create(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 	assert(moid == MASTER_NODE_OBJ);
 
 	/*
-	 * Create the ZAP SA layout now, since filesystem object dnodes will
+	 * Create the ZAP SA layout now since filesystem object dnodes will
 	 * refer to those attributes.
 	 */
 	saobjid = fs_add_zpl_attrs(zfs, fs);
 
 	/*
-	 * Build the filesystem.  This is where most of the work happens.
+	 * Build the filesystem hierarchy.  The bulk of this program's runtime
+	 * is spent here.
 	 */
 	poparg.dirfd = rootdirfd;
-	poparg.zfs= zfs;
+	poparg.zfs = zfs;
 	poparg.fs = fs;
 	SLIST_INIT(&poparg.dirs);
 	fs_populate_dir(root, &poparg);
@@ -2512,7 +2526,7 @@ fs_create(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
 	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, deleteqid);
 	zap_add_uint64(&masterzap, ZFS_SA_ATTRS, saobjid);
-	/* XXXMJ create a ZFS_SHARES_DIR directory, OpenZFS won't do it */
+	/* XXX-MJ create a ZFS_SHARES_DIR directory, OpenZFS won't do it */
 	zap_add_uint64(&masterzap, ZPL_VERSION_OBJ, 5 /* ZPL_VERSION_SA */);
 	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
 	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
@@ -2545,7 +2559,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	vdev_init(zfs, fsopts->maxsize, image);
 	pool_init(zfs);
 	fs_create(zfs, &zfs->rootfs, dirfd, root);
-	/* XXXMJ write together with the DSL */
+	/* XXX-MJ write together with the DSL */
 	objset_write(zfs, &zfs->rootfs.os);
 	pool_fini(zfs);
 	vdev_fini(zfs);
