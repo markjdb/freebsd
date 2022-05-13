@@ -61,6 +61,8 @@
  * - objset accounting, dn_used
  * - support for multiple filesystems
  * - hard links
+ * - review type usage (off_t vs. size_t vs. uint64_t)
+ * - inconsistency in variable/field naming (how to name a dnode vs dnode id)
  */
 
 /*
@@ -147,7 +149,7 @@ typedef struct {
 	uint64_t	objarrdn;	/* space map object array */
 
 	/* DSL state. */
-	uint64_t	rootdsldirdn;	/* root DSL directory object */
+	uint64_t	rootdsldirid;	/* root DSL directory object */
 	zfs_fs_t	rootfs;		/* root dataset */
 	uint64_t	originsnap;	/* XXX-MJ don't really need this */
 
@@ -193,7 +195,7 @@ static off_t vdev_space_alloc(zfs_opt_t *, off_t *);
 
 /*
  * The order of the attributes doesn't matter, this is simply the one hard-coded
- * by OpenZFS, based on a dump of the SA_REGISTRY table.
+ * by OpenZFS, based on a zdb dump of the SA_REGISTRY table.
  */
 typedef enum zpl_attr {
 	ZPL_ATIME,
@@ -1448,55 +1450,6 @@ zap_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	}
 }
 
-#if 0
-static uint64_t
-pool_child_map_add(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
-{
-	zfs_zap_t childzap;
-	dnode_phys_t *childdir, *snapnames;
-	dsl_dir_phys_t *dsldir;
-	dsl_dataset_phys_t *originds, *snapds;
-	uint64_t childdirid, dnid, dsdnid, snapdnid, snapmapid;
-
-	childdir = objset_dnode_alloc(mos, DMU_OT_DSL_DIR_CHILD_MAP,
-	    &childdirid);
-
-	zap_init(&childzap, mos, childdir);
-
-	dsldir = dsl_dir_alloc(zfs, parentdir, &dnid);
-	dsldir->dd_used_bytes = mos->space;
-	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
-	zap_add_uint64(&childzap, "$MOS", dnid);
-
-	dsldir = dsl_dir_alloc(zfs, parentdir, &dnid);
-	zap_add_uint64(&childzap, "$ORIGIN", dnid);
-	originds = dsl_dataset_alloc(zfs, mos, dnid, &dsdnid);
-	dsldir->dd_head_dataset_obj = dsdnid;
-	snapds = dsl_dataset_alloc(zfs, mos, dnid, &snapdnid);
-	originds->ds_prev_snap_obj = snapdnid;
-	snapds->ds_next_snap_obj = dsdnid;
-	/* XXX-MJ need to add one per dataset */
-	snapds->ds_num_children = 2;
-	zfs->originsnap = snapdnid;
-
-	snapnames = objset_dnode_alloc(mos, DMU_OT_DSL_DS_SNAP_MAP, &snapmapid);
-	originds->ds_snapnames_zapobj = snapmapid;
-	zfs_zap_t snapnameszap;
-	zap_init(&snapnameszap, mos, snapnames);
-	zap_add_uint64(&snapnameszap, "$ORIGIN", snapdnid);
-	zap_write(zfs, &snapnameszap);
-
-	(void)dsl_dir_alloc(zfs, parentdir, &dnid);
-	zap_add_uint64(&childzap, "$FREE", dnid);
-
-	/* XXX-MJ add actual datasets here */
-
-	zap_write(zfs, &childzap);
-
-	return (childdirid);
-}
-#endif
-
 static nvlist_t *
 pool_config_nvcreate(zfs_opt_t *zfs)
 {
@@ -1665,9 +1618,9 @@ pool_init_objdir_feature_maps(zfs_opt_t *zfs, zfs_zap_t *objdir)
 static void
 pool_init_objdir_dsl(zfs_opt_t *zfs, zfs_zap_t *objdir)
 {
-	assert(zfs->rootdsldirdn > 0);
+	assert(zfs->rootdsldirid > 0);
 
-	zap_add_uint64(objdir, DMU_POOL_ROOT_DATASET, zfs->rootdsldirdn);
+	zap_add_uint64(objdir, DMU_POOL_ROOT_DATASET, zfs->rootdsldirid);
 }
 
 static void
@@ -1711,10 +1664,13 @@ pool_init(zfs_opt_t *zfs)
 	dnodecount++; /* L-> root DSL directory               */
 	dnodecount++; /*     |-> DSL child directory (ZAP)    */
 	dnodecount++; /*     |   |-> $MOS (DSL dir)           */
+	dnodecount++; /*     |   |   |-> child map            */
 	dnodecount++; /*     |   |   L-> props (ZAP)          */
 	dnodecount++; /*     |   |-> $FREE (DSL dir)          */
+	dnodecount++; /*     |   |   |-> child map            */
 	dnodecount++; /*     |   |   L-> props (ZAP)          */
 	dnodecount++; /*     |   L-> $ORIGIN (DSL dir)        */
+	dnodecount++; /*     |   |   |-> child map            */
 	dnodecount++; /*     |       |-> dataset              */
 	dnodecount++; /*     |       |   L-> deadlist         */
 	dnodecount++; /*     |       |-> snapshot             */
@@ -1733,7 +1689,7 @@ pool_init(zfs_opt_t *zfs)
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 
 	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &zfs->objarrdn);
-	(void)dsl_dir_alloc(zfs, 0, &zfs->rootdsldirdn);
+	(void)dsl_dir_alloc(zfs, 0, &zfs->rootdsldirid);
 
 	pool_init_objdir(zfs);
 }
@@ -1795,51 +1751,68 @@ pool_labels_write(zfs_opt_t *zfs)
 static void
 pool_fini(zfs_opt_t *zfs)
 {
-	zfs_zap_t childdir;
+	zfs_zap_t childdirzap, snapnameszap;
 	zfs_objset_t *rootos, *mos;
-	dnode_phys_t *dnode;
-	dsl_dir_phys_t *dsldir, *rootdsldir;
-	dsl_dataset_phys_t *ds;
-	uint64_t dsldirid, dslid, freedirid, mosdirid, origindirid;
+	dnode_phys_t *dnode, *snapnames;
+	dsl_dir_phys_t *mosdsldir, *rootdsldir, *origindsldir;
+	dsl_dataset_phys_t *rootds, *originds, *snapds;
+	uint64_t freedirid, mosdirid, origindirid, origindsid, snapdsid;
+	uint64_t rootdsldirid, rootdsid, snapmapid;
 
 	objset_write(zfs, &zfs->rootfs.os);
 
 	mos = &zfs->mos;
 	rootos = &zfs->rootfs.os;
 
-	dsldirid = zfs->rootdsldirdn;
-	dnode = objset_dnode_lookup(mos, dsldirid);
+	rootdsldirid = zfs->rootdsldirid;
+	dnode = objset_dnode_lookup(mos, rootdsldirid);
 
 	rootdsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
 
-	zap_init(&childdir, mos,
+	zap_init(&childdirzap, mos,
 	    objset_dnode_lookup(mos, rootdsldir->dd_child_dir_zapobj));
 
-#if 0
-	dsldir->dd_child_dir_zapobj = pool_child_map_add(zfs, mos, dsldirid);
-#endif
-	dsldir = dsl_dir_alloc(zfs, parentdir, &mosdirid);
-	dsldir->dd_used_bytes = mos->space; /* XXXMJ not all counted yet */
-	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes =
-	    dsldir->dd_used_bytes;
-	zap_add_uint64(&childzap, "$MOS", dnid);
+	mosdsldir = dsl_dir_alloc(zfs, rootdsldirid, &mosdirid);
+	mosdsldir->dd_used_bytes = mos->space; /* XXX-MJ not all counted yet */
+	mosdsldir->dd_compressed_bytes = mosdsldir->dd_uncompressed_bytes =
+	    mosdsldir->dd_used_bytes;
+	zap_add_uint64(&childdirzap, "$MOS", mosdirid);
 
-	(void)dsl_dir_alloc(zfs, parentdir, &freedirid);
-	zap_add_uint64(&childdir, "$FREE", freedirid);
+	(void)dsl_dir_alloc(zfs, rootdsldirid, &freedirid);
+	zap_add_uint64(&childdirzap, "$FREE", freedirid);
 
-	ds = dsl_dataset_alloc(zfs, dsldirid, &dslid);
+	origindsldir = dsl_dir_alloc(zfs, rootdsldirid, &origindirid);
+	zap_add_uint64(&childdirzap, "$ORIGIN", origindirid);
+	originds = dsl_dataset_alloc(zfs, origindirid, &origindsid);
+	snapds = dsl_dataset_alloc(zfs, origindirid, &snapdsid);
+
+	snapnames = objset_dnode_alloc(mos, DMU_OT_DSL_DS_SNAP_MAP, &snapmapid);
+
+	origindsldir->dd_head_dataset_obj = origindsid;
+	originds->ds_prev_snap_obj = snapdsid;
+	originds->ds_snapnames_zapobj = snapmapid;
+	snapds->ds_next_snap_obj = origindsid;
+	snapds->ds_num_children = 2; /* XXX-MJ one for each dataset */
+
+	zap_init(&snapnameszap, mos, snapnames);
+	zap_add_uint64(&snapnameszap, "$ORIGIN", snapdsid);
+	zap_write(zfs, &snapnameszap);
+	zap_write(zfs, &childdirzap);
+
+	rootds = dsl_dataset_alloc(zfs, rootdsldirid, &rootdsid);
 	/* XXX-MJ more fields */
-	ds->ds_used_bytes = rootos->space;
-	ds->ds_uncompressed_bytes = ds->ds_compressed_bytes = ds->ds_used_bytes;
-	memcpy(&ds->ds_bp, &rootos->osbp, sizeof(blkptr_t));
+	rootds->ds_used_bytes = rootos->space;
+	/* XXX-MJ not sure what the difference is here... */
+	rootds->ds_uncompressed_bytes = rootds->ds_used_bytes;
+	rootds->ds_compressed_bytes = rootds->ds_used_bytes;
+	rootds->ds_prev_snap_obj = snapdsid;
+	memcpy(&rootds->ds_bp, &rootos->osbp, sizeof(blkptr_t));
 
 	/* XXX-MJ more fields */
-	rootdsldir->dd_head_dataset_obj = dslid;
-	rootdsldir->dd_used_bytes = ds->ds_used_bytes;
+	rootdsldir->dd_head_dataset_obj = rootdsid;
+	rootdsldir->dd_used_bytes = rootds->ds_used_bytes; /* XXX-MJ add subdirs, $MOS? */
 	rootdsldir->dd_compressed_bytes = rootdsldir->dd_uncompressed_bytes =
 	    rootdsldir->dd_used_bytes;
-
-	zap_write(&childdir);
 
 	objset_mos_write(zfs);
 	pool_labels_write(zfs);
