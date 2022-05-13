@@ -2087,6 +2087,7 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		layout = SA_LAYOUT_INDEX;
 		links = cur->inode->nlink;
 		objsize = sb->st_size;
+		parent = SLIST_FIRST(&arg->dirs)->objid;
 		break;
 	case S_IFDIR: {
 		unsigned int children, subdirs;
@@ -2112,6 +2113,8 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		layout = SA_LAYOUT_INDEX;
 		links = subdirs + 1;
 		objsize = children;
+		parent = SLIST_EMPTY(&arg->dirs) ?
+		    arg->rootdirid : SLIST_FIRST(&arg->dirs)->objid;
 		break;
 		}
 	case S_IFLNK:
@@ -2122,6 +2125,7 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		layout = SA_LAYOUT_INDEX_SYMLINK;
 		links = 1;
 		objsize = strlen(target);
+		parent = SLIST_FIRST(&arg->dirs)->objid;
 		break;
 	default:
 		assert(0);
@@ -2133,7 +2137,6 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	gen = 1;
 	gid = sb->st_gid;
 	mode = sb->st_mode;
-	parent = SLIST_FIRST(&arg->dirs)->objid;
 	uid = sb->st_uid;
 
 	/* XXX-MJ need to review these */
@@ -2315,13 +2318,13 @@ fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 		dirfd = arg->dirfd;
 	}
 
+	fs_populate_sattrs(arg, cur, dnode);
+
 	dir = ecalloc(1, sizeof(*dir));
 	dir->dirfd = dirfd;
 	dir->objid = dnid;
 	zap_init(&dir->zap, os, dnode);
 	SLIST_INSERT_HEAD(&arg->dirs, dir, next);
-
-	fs_populate_sattrs(arg, cur, dnode);
 }
 
 static void
