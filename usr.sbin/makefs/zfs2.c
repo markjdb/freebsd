@@ -810,6 +810,7 @@ objset_init(zfs_opt_t *zfs, zfs_objset_t *os, uint64_t type,
 		mdnode->dn_nlevels++;
 	mdnode->dn_nblkptr = 1;
 	mdnode->dn_maxblkid = howmany(dnodecount, DNODES_PER_BLOCK) - 1;
+	mdnode->dn_flags = DNODE_FLAG_USED_BYTES;
 }
 
 /*
@@ -1892,9 +1893,6 @@ dnode_cursor_init(zfs_opt_t *zfs, zfs_objset_t *os, dnode_phys_t *dnode,
 	dnode->dn_nlevels = (uint8_t)indlevel;
 	dnode->dn_maxblkid = ndatablks > 0 ? ndatablks - 1 : 0;
 	dnode->dn_datablkszsec = blksz >> MINBLOCKSHIFT;
-	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
-	assert(dnode->dn_used == 0);
-	dnode->dn_used = nindblks * MAXBLOCKSIZE;
 
 	c = ecalloc(1, sizeof(*c));
 	if (nindblks > 0) {
@@ -1950,7 +1948,8 @@ _dnode_cursor_flush(zfs_opt_t *zfs, struct dnode_cursor *c, int levels)
 
 		vdev_pwrite_dnode_indir(zfs, c->dnode, buf, blksz, loc, pbp);
 		/* XXXMJ ugly fixup */
-		BP_SET_FILL(bp, fill);
+		BP_SET_FILL(pbp, fill);
+		BP_SET_LEVEL(pbp, level);
 		memset(buf, 0, MAXBLOCKSIZE);
 
 		blkid /= BLKPTR_PER_INDIR;
@@ -2066,7 +2065,6 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
     dnode_phys_t *dnode)
 {
 	char target[PATH_MAX];
-	const fsnode *child;
 	zfs_fs_t *fs;
 	zfs_ace_hdr_t aces[3];
 	struct stat *sb;
@@ -2089,44 +2087,45 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		objsize = sb->st_size;
 		parent = SLIST_FIRST(&arg->dirs)->objid;
 		break;
-	case S_IFDIR: {
-		unsigned int children, subdirs;
+	case S_IFDIR:
+		links = 1; /* .. */
+		objsize = 1; /* .. */
 
-		children = 1; /* .. */
-		subdirs = 0;
-		if (cur->type == S_IFDIR) {
-			/*
-			 * A weird special case for the root directory: if the
-			 * directory has no parent, it's the root and its
-			 * children are linked as siblings.
-			 */
-			for (child =
-			    (cur->parent == NULL && cur->first == cur) ?
-			    cur->next : cur->child;
-			    child != NULL; child = child->next) {
-				if (child->type == S_IFDIR)
-					subdirs++;
-				children++;
-			}
+		/*
+		 * The size of a ZPL directory is the number of entries
+		 * (including "." and ".."), and the link count is the number of
+		 * entries which are directories (including "." and "..").
+		 *
+		 * The loop needs a weird special case for the root directory:
+		 * if the directory has no parent, it's the root and its
+		 * children are linked as siblings.
+		 */
+		for (fsnode *c = (cur->parent == NULL && cur->first == cur) ?
+		    cur->next : cur->child; c != NULL; c = c->next) {
+			if (c->type == S_IFDIR)
+				links++;
+			objsize++;
 		}
 
 		layout = SA_LAYOUT_INDEX;
-		links = subdirs + 1;
-		objsize = children;
+		/* The root directory is its own parent. */
 		parent = SLIST_EMPTY(&arg->dirs) ?
 		    arg->rootdirid : SLIST_FIRST(&arg->dirs)->objid;
 		break;
-		}
-	case S_IFLNK:
-		if (readlinkat(SLIST_FIRST(&arg->dirs)->dirfd, cur->name,
-		    target, sizeof(target)) == -1)
+	case S_IFLNK: {
+		ssize_t n;
+
+		if ((n = readlinkat(SLIST_FIRST(&arg->dirs)->dirfd, cur->name,
+		    target, sizeof(target) - 1)) == -1)
 			err(1, "readlink(%s)", cur->name);
+		target[n] = '\0';
 
 		layout = SA_LAYOUT_INDEX_SYMLINK;
 		links = 1;
 		objsize = strlen(target);
 		parent = SLIST_FIRST(&arg->dirs)->objid;
 		break;
+		}
 	default:
 		assert(0);
 	}

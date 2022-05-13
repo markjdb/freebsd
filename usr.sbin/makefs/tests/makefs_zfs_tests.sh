@@ -38,6 +38,7 @@ common_cleanup()
 {
 	sync
 
+        # XXXMJ these might not exist
 	zpool destroy "$(cat $TEST_ZFS_POOL_NAME)"
 	mdconfig -d -u "$(cat $TEST_MD_DEVICE_FILE)"
 }
