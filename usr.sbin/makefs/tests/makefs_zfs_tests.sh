@@ -60,7 +60,8 @@ basic_body()
 	create_test_inputs
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+            $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -82,7 +83,8 @@ empty_dir_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+            $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -118,7 +120,8 @@ file_sizes_body()
         # XXXMJ need to test with larger files (at least 128MB for L2 indirs)
         # XXXMJ try with different ashifts
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+            $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -146,7 +149,8 @@ indirect_dnode_array_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+            $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -181,7 +185,8 @@ long_file_name_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o poolname=$ZFS_POOL_NAME $TEST_IMAGE $TEST_INPUTS_DIR
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+            $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 

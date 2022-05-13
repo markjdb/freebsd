@@ -56,9 +56,9 @@
 
 /*
  * XXX-MJ
+ * - documentation
  * - review checksum algorithm selection (most should likely be "inherit"?)
  * - review vdev_space_alloc()
- * - objset accounting, dn_used
  * - support for multiple filesystems
  * - hard links
  * - review type usage (off_t vs. size_t vs. uint64_t)
@@ -139,6 +139,7 @@ typedef struct {
 
 	/* Pool parameters. */
 	const char	*poolname;
+	const char	*mountpoint;	/* root mountpoint */
 	int		ashift;		/* vdev block size */
 
 	/* Pool state. */
@@ -304,6 +305,8 @@ zfs_prep_opts(fsinfo_t *fsopts)
 	const option_t zfs_options[] = {
 		{ '\0', "poolname", &zfs->poolname, OPT_STRPTR,
 		  0, 0, "ZFS pool name" },
+		{ '\0', "mountpoint", &zfs->mountpoint, OPT_STRPTR,
+		  0, 0, "ZFS root dataset mount point" },
 		{ '\0', "ashift", &zfs->ashift, OPT_INT32,
 		  SPA_MINBLOCKSHIFT, SPA_OLDMAXBLOCKSHIFT, "ZFS pool ashift" },
 		{ .name = NULL }
@@ -943,8 +946,9 @@ dsl_dir_alloc(zfs_opt_t *zfs, uint64_t parentdir, uint64_t *dnidp)
 	/* XXXMJ maybe initialize in the caller as well */
 	zap_init(&propszap, mos, props);
 	zap_add_uint64(&propszap, "compression", ZIO_COMPRESS_OFF);
-	/* XXX-MJ just for testing */
-	zap_add_string(&propszap, "mountpoint", "/");
+	/* XXXMJ should only be for the root dir */
+	if (zfs->mountpoint != NULL)
+		zap_add_string(&propszap, "mountpoint", zfs->mountpoint);
 	zap_write(zfs, &propszap);
 
 	/* Initialized by the caller. */
