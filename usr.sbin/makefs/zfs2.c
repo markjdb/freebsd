@@ -56,10 +56,10 @@
 
 /*
  * XXX-MJ
+ * - support for multiple filesystems
  * - documentation
  * - review checksum algorithm selection (most should likely be "inherit"?)
  * - review vdev_space_alloc()
- * - support for multiple filesystems
  * - review type usage (off_t vs. size_t vs. uint64_t)
  * - inconsistency in variable/field naming (how to name a dnode vs dnode id)
  */
@@ -154,12 +154,11 @@ typedef struct {
 
 	/* MOS state. */
 	zfs_objset_t	mos;		/* meta object set */
-	uint64_t	objarrdn;	/* space map object array */
+	uint64_t	objarrid;	/* space map object array */
 
 	/* DSL state. */
 	uint64_t	rootdsldirid;	/* root DSL directory object */
 	zfs_fs_t	rootfs;		/* root dataset */
-	uint64_t	originsnap;	/* XXX-MJ don't really need this */
 
 	/* vdev state. */
 	int		fd;		/* vdev disk fd */
@@ -674,10 +673,8 @@ spacemap_write(zfs_opt_t *zfs)
 	objarrloc = objset_space_alloc(zfs, mos, &objarrblksz);
 	objarrblk = ecalloc(1, objarrblksz);
 
-	objarr = objset_dnode_lookup(mos, zfs->objarrdn);
+	objarr = objset_dnode_lookup(mos, zfs->objarrid);
 	objarr->dn_datablkszsec = objarrblksz >> MINBLOCKSHIFT;
-	objarr->dn_flags = DNODE_FLAG_USED_BYTES;
-	objarr->dn_used = objarrblksz;
 
 	/*
 	 * Use the smallest block size for space maps.  The space allocation
@@ -714,8 +711,6 @@ spacemap_write(zfs_opt_t *zfs)
 		 */
 		sma[i].dnode->dn_nblkptr = 3;
 		sma[i].dnode->dn_datablkszsec = smblksz >> MINBLOCKSHIFT;
-		sma[i].dnode->dn_flags = DNODE_FLAG_USED_BYTES;
-		sma[i].dnode->dn_used = smblksz;
 
 		smblk = ecalloc(1, smblksz);
 
@@ -942,14 +937,14 @@ dsl_dir_alloc(zfs_opt_t *zfs, uint64_t parentdir, uint64_t *dnidp)
 	zfs_objset_t *mos;
 	dnode_phys_t *dnode, *props;
 	dsl_dir_phys_t *dsldir;
-	uint64_t childdirdn, propsdn;
+	uint64_t childdirid, propsid;
 
 	mos = &zfs->mos;
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DIR, DMU_OT_DSL_DIR,
 	    sizeof(dsl_dir_phys_t), dnidp);
 
-	props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsdn);
+	props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsid);
 	/* XXXMJ maybe initialize in the caller as well */
 	zap_init(&propszap, mos, props);
 	zap_add_uint64(&propszap, "compression", ZIO_COMPRESS_OFF);
@@ -960,12 +955,12 @@ dsl_dir_alloc(zfs_opt_t *zfs, uint64_t parentdir, uint64_t *dnidp)
 
 	/* Initialized by the caller. */
 	(void)objset_dnode_alloc(mos, DMU_OT_DSL_DIR_CHILD_MAP,
-	    &childdirdn);
+	    &childdirid);
 
 	dsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
 	dsldir->dd_parent_obj = parentdir;
-	dsldir->dd_props_zapobj = propsdn;
-	dsldir->dd_child_dir_zapobj = childdirdn;
+	dsldir->dd_props_zapobj = propsid;
+	dsldir->dd_child_dir_zapobj = childdirid;
 
 	return (dsldir);
 }
@@ -976,22 +971,21 @@ dsl_dataset_alloc(zfs_opt_t *zfs, uint64_t dir, uint64_t *dnidp)
 	zfs_zap_t deadlistzap;
 	dnode_phys_t *dnode;
 	dsl_dataset_phys_t *ds;
-	uint64_t deadlistdn;
+	uint64_t deadlistid;
 
 	dnode = objset_dnode_bonus_alloc(&zfs->mos, DMU_OT_DSL_DATASET,
 	    DMU_OT_DSL_DATASET, sizeof(dsl_dataset_phys_t), dnidp);
 	ds = (dsl_dataset_phys_t *)DN_BONUS(dnode);
 
 	dnode = objset_dnode_bonus_alloc(&zfs->mos, DMU_OT_DEADLIST,
-	    DMU_OT_DEADLIST_HDR, sizeof(dsl_deadlist_phys_t), &deadlistdn);
+	    DMU_OT_DEADLIST_HDR, sizeof(dsl_deadlist_phys_t), &deadlistid);
 	zap_init(&deadlistzap, &zfs->mos, dnode);
 	zap_write(zfs, &deadlistzap);
 
 	/* XXX-MJ what else? */
 	ds->ds_dir_obj = dir;
-	ds->ds_deadlist_obj = deadlistdn;
+	ds->ds_deadlist_obj = deadlistid;
 	ds->ds_creation_txg = TXG_INITIAL;
-	ds->ds_prev_snap_obj = zfs->originsnap;
 
 	return (ds);
 }
@@ -1488,7 +1482,7 @@ pool_disk_vdev_config_nvcreate(zfs_opt_t *zfs)
 {
 	nvlist_t *diskvdevnv;
 
-	assert(zfs->objarrdn != 0);
+	assert(zfs->objarrid != 0);
 
 	diskvdevnv = nvlist_create(NV_UNIQUE_NAME);
 	nvlist_add_string(diskvdevnv, ZPOOL_CONFIG_TYPE, VDEV_TYPE_DISK);
@@ -1500,7 +1494,7 @@ pool_disk_vdev_config_nvcreate(zfs_opt_t *zfs)
 	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_WHOLE_DISK, 1);
 	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_CREATE_TXG, TXG_INITIAL);
 	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_METASLAB_ARRAY,
-	    zfs->objarrdn);
+	    zfs->objarrid);
 	nvlist_add_uint64(diskvdevnv, ZPOOL_CONFIG_METASLAB_SHIFT,
 	    zfs->msshift);
 
@@ -1699,7 +1693,7 @@ pool_init(zfs_opt_t *zfs)
 	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_DIRECTORY, &dnid);
 	assert(dnid == DMU_POOL_DIRECTORY_OBJECT);
 
-	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &zfs->objarrdn);
+	(void)objset_dnode_alloc(mos, DMU_OT_OBJECT_ARRAY, &zfs->objarrid);
 	(void)dsl_dir_alloc(zfs, 0, &zfs->rootdsldirid);
 
 	pool_init_objdir(zfs);
@@ -1899,6 +1893,7 @@ dnode_cursor_init(zfs_opt_t *zfs, zfs_objset_t *os, dnode_phys_t *dnode,
 	dnode->dn_maxblkid = ndatablks > 0 ? ndatablks - 1 : 0;
 	dnode->dn_datablkszsec = blksz >> MINBLOCKSHIFT;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
+	assert(dnode->dn_used == 0);
 	dnode->dn_used = nindblks * MAXBLOCKSIZE;
 
 	c = ecalloc(1, sizeof(*c));
