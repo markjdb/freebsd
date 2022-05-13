@@ -2000,9 +2000,10 @@ dnode_cursor_finish(zfs_opt_t *zfs, struct dnode_cursor *c)
 }
 
 struct fs_populate_dir {
-	zfs_zap_t		zap;
-	uint64_t		objid;
 	SLIST_ENTRY(fs_populate_dir) next;
+	int			dirfd;
+	uint64_t		objid;
+	zfs_zap_t		zap;
 };
 
 struct fs_populate_arg {
@@ -2113,19 +2114,15 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 		objsize = children;
 		break;
 		}
-	case S_IFLNK: {
-		char path[PATH_MAX];
-
-		memset(target, 0, sizeof(target));
-		snprintf(path, sizeof(path), "%s/%s", cur->path, cur->name);
-		if (readlinkat(arg->dirfd, path, target, sizeof(target)) == -1)
-			err(1, "readlink(%s)", path);
+	case S_IFLNK:
+		if (readlinkat(SLIST_FIRST(&arg->dirs)->dirfd, cur->name,
+		    target, sizeof(target)) == -1)
+			err(1, "readlink(%s)", cur->name);
 
 		layout = SA_LAYOUT_INDEX_SYMLINK;
 		links = 1;
 		objsize = strlen(target);
 		break;
-		}
 	default:
 		assert(0);
 	}
@@ -2212,7 +2209,6 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 	struct dnode_cursor *c;
 	dnode_phys_t *dnode;
 	zfs_opt_t *zfs;
-	char path[PATH_MAX];
 	uint64_t dnid;
 	ssize_t n;
 	size_t bufsz;
@@ -2243,11 +2239,10 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 	c = dnode_cursor_init(zfs, &arg->fs->os, dnode, size, 0);
 
 	bufsz = sizeof(zfs->filebuf);
-	snprintf(path, sizeof(path), "%s/%s", cur->path, cur->name);
 
-	fd = openat(arg->dirfd, path, O_RDONLY);
+	fd = openat(SLIST_FIRST(&arg->dirs)->dirfd, cur->name, O_RDONLY);
 	if (fd == -1)
-		err(1, "open(%s)", path);
+		err(1, "openat(%s)", cur->name);
 	for (off_t foff = 0; foff < size; foff += target) {
 		blkptr_t *bp;
 		off_t loc, sofar;
@@ -2258,9 +2253,10 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 		do {
 			n = read(fd, zfs->filebuf + sofar, target);
 			if (n < 0)
-				err(1, "reading from '%s'", path);
+				err(1, "reading from '%s'", cur->name);
 			if (n == 0)
-				errx(1, "unexpected EOF reading '%s'", path);
+				errx(1, "unexpected EOF reading '%s'",
+				    cur->name);
 			sofar += n;
 		} while (sofar < target);
 
@@ -2287,10 +2283,11 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 static void
 fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 {
-	struct fs_populate_dir *dirinfo;
+	struct fs_populate_dir *dir;
 	dnode_phys_t *dnode;
 	zfs_objset_t *os;
 	uint64_t dnid;
+	int dirfd;
 
 	assert(cur->type == S_IFDIR);
 	assert((cur->inode->flags & FI_ALLOCATED) == 0);
@@ -2301,18 +2298,28 @@ fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 	    DMU_OT_SA, 0, &dnid);
 
 	/*
-	 * Add an entry to the parent directory.  This must be done before
-	 * pushing ourselves onto the directory stack.
+	 * Add an entry to the parent directory and open this directory.
+	 *
+	 * fsnodes in theory provide the full path relative to the root
+	 * directory, but in practice do not when an mtree manifest is used to
+	 * describe the input tree.
 	 */
-	if (!SLIST_EMPTY(&arg->dirs))
+	if (!SLIST_EMPTY(&arg->dirs)) {
 		fs_populate_dirent(arg, cur, dnid);
-	else
+		dirfd = openat(SLIST_FIRST(&arg->dirs)->dirfd, cur->name,
+		    O_DIRECTORY);
+		if (dirfd < 0)
+			err(1, "open(%s)", cur->name);
+	} else {
 		arg->rootdirid = dnid;
+		dirfd = arg->dirfd;
+	}
 
-	dirinfo = ecalloc(1, sizeof(*dirinfo));
-	zap_init(&dirinfo->zap, os, dnode);
-	dirinfo->objid = dnid;
-	SLIST_INSERT_HEAD(&arg->dirs, dirinfo, next);
+	dir = ecalloc(1, sizeof(*dir));
+	dir->dirfd = dirfd;
+	dir->objid = dnid;
+	zap_init(&dir->zap, os, dnode);
+	SLIST_INSERT_HEAD(&arg->dirs, dir, next);
 
 	fs_populate_sattrs(arg, cur, dnode);
 }
@@ -2338,7 +2345,7 @@ static void
 fs_foreach_populate(fsnode *cur, void *_arg)
 {
 	struct fs_populate_arg *arg;
-	struct fs_populate_dir *dirs;
+	struct fs_populate_dir *dir;
 
 	arg = _arg;
 	switch (cur->type) {
@@ -2363,10 +2370,11 @@ fs_foreach_populate(fsnode *cur, void *_arg)
 		 * write out directories.
 		 */
 		do {
-			dirs = SLIST_FIRST(&arg->dirs);
+			dir = SLIST_FIRST(&arg->dirs);
 			SLIST_REMOVE_HEAD(&arg->dirs, next);
-			zap_write(arg->zfs, &dirs->zap);
-			free(dirs);
+			zap_write(arg->zfs, &dir->zap);
+			(void)close(dir->dirfd);
+			free(dir);
 			cur = cur->parent;
 		} while (cur != NULL && cur->next == NULL);
 	}
