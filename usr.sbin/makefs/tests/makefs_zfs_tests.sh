@@ -61,7 +61,7 @@ basic_body()
 
 	atf_check -o empty -e empty -s exit:0 \
 	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
-            $TEST_IMAGE $TEST_INPUTS_DIR
+	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -84,7 +84,7 @@ empty_dir_body()
 
 	atf_check -o empty -e empty -s exit:0 \
 	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
-            $TEST_IMAGE $TEST_INPUTS_DIR
+	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -93,6 +93,24 @@ empty_dir_body()
 	atf_check -s exit:0 rmdir ${TEST_MOUNT_DIR}/dir
 }
 empty_dir_cleanup()
+{
+	common_cleanup
+}
+
+atf_test_case empty_fs cleanup
+empty_fs_body()
+{
+	create_test_dirs
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+}
+empty_fs_cleanup()
 {
 	common_cleanup
 }
@@ -117,17 +135,71 @@ file_sizes_body()
 
 	# XXXMJ this creates sparse files, make sure makefs doesn't
 	#       preserve the sparseness.
-        # XXXMJ need to test with larger files (at least 128MB for L2 indirs)
-        # XXXMJ try with different ashifts
+	# XXXMJ need to test with larger files (at least 128MB for L2 indirs)
+	# XXXMJ try with different ashifts
 	atf_check -o empty -e empty -s exit:0 \
 	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
-            $TEST_IMAGE $TEST_INPUTS_DIR
+	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
 	check_image_contents
 }
 file_sizes_cleanup()
+{
+	common_cleanup
+}
+
+atf_test_case hard_links cleanup
+hard_links_body()
+{
+	local f
+
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+
+	mkdir dir
+	echo "hello" > 1
+	ln 1 2
+	ln 1 dir/1
+
+	echo "goodbye" > dir/a
+	ln dir/a dir/b
+	ln dir/a a
+
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+
+	stat -f '%i' ${TEST_MOUNT_DIR}/1 > ./ino
+	stat -f '%l' ${TEST_MOUNT_DIR}/1 > ./nlink
+	for f in 1 2 dir/1; do
+		atf_check -o file:./nlink -e empty -s exit:0 \
+		    stat -f '%l' ${TEST_MOUNT_DIR}/${f}
+		atf_check -o file:./ino -e empty -s exit:0 \
+		    stat -f '%i' ${TEST_MOUNT_DIR}/${f}
+		atf_check -o empty -e empty -s exit:0 \
+		    cmp -s ${TEST_INPUTS_DIR}/1 ${TEST_MOUNT_DIR}/${f}
+	done
+
+	stat -f '%i' ${TEST_MOUNT_DIR}/dir/a > ./ino
+	stat -f '%l' ${TEST_MOUNT_DIR}/dir/a > ./nlink
+	for f in dir/a dir/b a; do
+		atf_check -o file:./nlink -e empty -s exit:0 \
+		    stat -f '%l' ${TEST_MOUNT_DIR}/${f}
+		atf_check -o file:./ino -e empty -s exit:0 \
+		    stat -f '%i' ${TEST_MOUNT_DIR}/${f}
+		atf_check -o empty -e empty -s exit:0 \
+		    cmp -s ${TEST_INPUTS_DIR}/dir/a ${TEST_MOUNT_DIR}/${f}
+	done
+}
+hard_links_cleanup()
 {
 	common_cleanup
 }
@@ -142,7 +214,7 @@ indirect_dnode_array_body()
 	create_test_dirs
 	cd $TEST_INPUTS_DIR
 	# 512 bytes per dnode, 3*128KB of direct blocks => limit of 768 files.
-        # XXXMJ actual threshold is much lower
+	# XXXMJ actual threshold is much lower
 	for i in $(seq 1 1000); do
 		touch $i
 	done
@@ -150,7 +222,7 @@ indirect_dnode_array_body()
 
 	atf_check -o empty -e empty -s exit:0 \
 	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
-            $TEST_IMAGE $TEST_INPUTS_DIR
+	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -186,7 +258,7 @@ long_file_name_body()
 
 	atf_check -o empty -e empty -s exit:0 \
 	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
-            $TEST_IMAGE $TEST_INPUTS_DIR
+	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
 
@@ -204,13 +276,14 @@ long_file_name_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case basic
-        atf_add_test_case empty_dir
+	atf_add_test_case empty_dir
+	atf_add_test_case empty_fs
 	atf_add_test_case file_sizes
+	atf_add_test_case hard_links
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
 
 	# XXXMJ tests:
-	# - empty filesystem
 	# - create a snapshot of a filesystem
 	# - create a long symlink target
 	# - test with different ashifts (at least, 9), different image sizes

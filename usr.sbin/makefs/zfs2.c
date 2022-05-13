@@ -60,17 +60,19 @@
  * - review checksum algorithm selection (most should likely be "inherit"?)
  * - review vdev_space_alloc()
  * - support for multiple filesystems
- * - hard links
  * - review type usage (off_t vs. size_t vs. uint64_t)
  * - inconsistency in variable/field naming (how to name a dnode vs dnode id)
  */
 
+#define	MAXBLOCKSIZE		((off_t)SPA_OLDMAXBLOCKSIZE)	/* 128KB */
+#define	MAXBLOCKSHIFT		17
+#define	MINBLOCKSHIFT		9
 /*
  * XXX-MJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
  * comes from.  Be sure to test with large files...
  */
 #define	INDIR_LEVELS		6
-#define	BLKPTR_PER_INDIR	(SPA_OLDMAXBLOCKSIZE / sizeof(blkptr_t))
+#define	BLKPTR_PER_INDIR	(MAXBLOCKSIZE / sizeof(blkptr_t))
 
 #define	VDEV_LABEL_SPACE	\
 	((off_t)(VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE))
@@ -115,14 +117,19 @@ typedef struct zfs_zap_entry {
 
 typedef struct zfs_zap {
 	STAILQ_HEAD(, zfs_zap_entry) kvps;
-	uint64_t		hashsalt;
-	unsigned long		kvpcnt;	/* number of key-value pairs */
-	unsigned long		chunks;	/* count of chunks needed for fat ZAP */
-	bool			micro;	/* can this be a micro ZAP? */
+	uint64_t	hashsalt;
+	unsigned long	kvpcnt;	/* number of key-value pairs */
+	unsigned long	chunks;	/* count of chunks needed for fat ZAP */
+	bool		micro;	/* can this be a micro ZAP? */
 
-	dnode_phys_t		*dnode;
-	zfs_objset_t		*os;
+	dnode_phys_t	*dnode;
+	zfs_objset_t	*os;
 } zfs_zap_t;
+
+typedef struct zfs_dsl_dir {
+	zfs_objset_t	*heados;
+	STAILQ_HEAD(, zfs_dsl_dir) children;
+} zfs_dsl_dir_t;
 
 typedef struct {
 	zfs_objset_t	os;
@@ -135,7 +142,7 @@ typedef struct {
 
 typedef struct {
 	/* I/O buffer, just for convenience. */
-	char		filebuf[SPA_OLDMAXBLOCKSIZE];
+	char		filebuf[MAXBLOCKSIZE];
 
 	/* Pool parameters. */
 	const char	*poolname;
@@ -178,7 +185,7 @@ static off_t objset_space_alloc(zfs_opt_t *, zfs_objset_t *, off_t *);
 static void spacemap_init(zfs_opt_t *);
 
 struct dnode_cursor {
-	char		inddir[INDIR_LEVELS][SPA_OLDMAXBLOCKSIZE];
+	char		inddir[INDIR_LEVELS][MAXBLOCKSIZE];
 	off_t		indloc;
 	off_t		indspace;
 	dnode_phys_t	*dnode;
@@ -308,7 +315,7 @@ zfs_prep_opts(fsinfo_t *fsopts)
 		{ '\0', "mountpoint", &zfs->mountpoint, OPT_STRPTR,
 		  0, 0, "ZFS root dataset mount point" },
 		{ '\0', "ashift", &zfs->ashift, OPT_INT32,
-		  SPA_MINBLOCKSHIFT, SPA_OLDMAXBLOCKSHIFT, "ZFS pool ashift" },
+		  MINBLOCKSHIFT, MAXBLOCKSHIFT, "ZFS pool ashift" },
 		{ .name = NULL }
 	};
 
@@ -401,7 +408,7 @@ vdev_init(zfs_opt_t *zfs, size_t size, const char *image)
 
 	oflags = O_RDWR | O_CREAT | O_TRUNC;
 
-	assert(zfs->ashift >= SPA_MINBLOCKSHIFT);
+	assert(zfs->ashift >= MINBLOCKSHIFT);
 	zfs->vdevsize = rounddown2(size, 1 << zfs->ashift);
 	if (zfs->vdevsize < (off_t)SPA_MINDEVSIZE) {
 		errx(1, "Maximum image size %ju is too small",
@@ -586,13 +593,13 @@ vdev_space_alloc(zfs_opt_t *zfs, off_t *lenp)
 	assert(len != 0);
 	assert(len / minblksz <= INT_MAX);
 
-	if (len < (off_t)SPA_OLDMAXBLOCKSIZE) {
+	if (len < MAXBLOCKSIZE) {
 		if ((len & (len - 1)) != 0)
 			len = (off_t)1 << flsll(len);
 		align = len / minblksz;
 	} else {
-		len = roundup2(len, SPA_OLDMAXBLOCKSIZE);
-		align = SPA_OLDMAXBLOCKSIZE / minblksz;
+		len = roundup2(len, MAXBLOCKSIZE);
+		align = MAXBLOCKSIZE / minblksz;
 	}
 
 	for (loc = 0, nbits = len / minblksz;; loc = roundup2(loc, align)) {
@@ -663,12 +670,12 @@ spacemap_write(zfs_opt_t *zfs)
 	mos = &zfs->mos;
 
 	objarrblksz = sizeof(uint64_t) * zfs->mscount;
-	assert(objarrblksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
+	assert(objarrblksz <= MAXBLOCKSIZE);
 	objarrloc = objset_space_alloc(zfs, mos, &objarrblksz);
 	objarrblk = ecalloc(1, objarrblksz);
 
 	objarr = objset_dnode_lookup(mos, zfs->objarrdn);
-	objarr->dn_datablkszsec = objarrblksz >> SPA_MINBLOCKSHIFT;
+	objarr->dn_datablkszsec = objarrblksz >> MINBLOCKSHIFT;
 	objarr->dn_flags = DNODE_FLAG_USED_BYTES;
 	objarr->dn_used = objarrblksz;
 
@@ -706,7 +713,7 @@ spacemap_write(zfs_opt_t *zfs)
 		 * histograms.
 		 */
 		sma[i].dnode->dn_nblkptr = 3;
-		sma[i].dnode->dn_datablkszsec = smblksz >> SPA_MINBLOCKSHIFT;
+		sma[i].dnode->dn_datablkszsec = smblksz >> MINBLOCKSHIFT;
 		sma[i].dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 		sma[i].dnode->dn_used = smblksz;
 
@@ -797,11 +804,11 @@ objset_init(zfs_opt_t *zfs, zfs_objset_t *os, uint64_t type,
 	os->osphys = ecalloc(1, os->osblksz);
 	os->osphys->os_type = type;
 	mdnode = &os->osphys->os_meta_dnode;
-	mdnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
+	mdnode->dn_indblkshift = MAXBLOCKSHIFT;
 	mdnode->dn_type = DMU_OT_DNODE;
 	mdnode->dn_bonustype = DMU_OT_NONE;
 	mdnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
-	mdnode->dn_datablkszsec = DNODE_BLOCK_SIZE >> SPA_MINBLOCKSHIFT;
+	mdnode->dn_datablkszsec = DNODE_BLOCK_SIZE >> MINBLOCKSHIFT;
 	mdnode->dn_nlevels = 1;
 	for (uint64_t count = dnodecount / DNODES_PER_BLOCK; count > 1;
 	    count /= BLKPTR_PER_INDIR)
@@ -891,8 +898,8 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 	if (idp != NULL)
 		*idp = os->dnodenextfree;
 	dnode = &os->dnodes[os->dnodenextfree++];
-	dnode->dn_indblkshift = SPA_OLDMAXBLOCKSHIFT;
-	dnode->dn_datablkszsec = os->osblksz >> SPA_MINBLOCKSHIFT;
+	dnode->dn_indblkshift = MAXBLOCKSHIFT;
+	dnode->dn_datablkszsec = os->osblksz >> MINBLOCKSHIFT;
 	dnode->dn_nlevels = 1;
 	dnode->dn_nblkptr = 1;
 	dnode->dn_type = type;
@@ -1115,7 +1122,7 @@ zap_micro_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 
 	dnode = zap->dnode;
 	dnode->dn_maxblkid = 0;
-	dnode->dn_datablkszsec = bytes >> SPA_MINBLOCKSHIFT;
+	dnode->dn_datablkszsec = bytes >> MINBLOCKSHIFT;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 
 	vdev_pwrite_dnode_data(zfs, dnode, zfs->filebuf, bytes, loc);
@@ -1256,7 +1263,7 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	 * since most directories will be micro ZAPs, but it's space inefficient
 	 * for small ZAPs and might need to be revisited.
 	 */
-	blkshift = SPA_OLDMAXBLOCKSHIFT;
+	blkshift = MAXBLOCKSHIFT;
 	blksz = (off_t)1 << blkshift;
 
 	/*
@@ -1405,7 +1412,7 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	 */
 	dnode = zap->dnode;
 	dnode->dn_nblkptr = 1;
-	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
+	dnode->dn_datablkszsec = blksz >> MINBLOCKSHIFT;
 	dnode->dn_maxblkid = lblkcnt + 1;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 
@@ -1414,7 +1421,7 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 
 	bp = dnode_cursor_next(zfs, c, 0);
 	loc = objset_space_alloc(zfs, zap->os, &blksz);
-	assert(blksz == SPA_OLDMAXBLOCKSIZE);
+	assert(blksz == MAXBLOCKSIZE);
 
 	vdev_pwrite_dnode_indir(zfs, dnode, zfs->filebuf, blksz, loc, bp);
 
@@ -1422,7 +1429,7 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 		bp = dnode_cursor_next(zfs, c, (i + 1) * blksz);
 
 		loc = objset_space_alloc(zfs, zap->os, &blksz);
-		assert(blksz == SPA_OLDMAXBLOCKSIZE);
+		assert(blksz == MAXBLOCKSIZE);
 		vdev_pwrite_dnode_indir(zfs, dnode, leafblks + i * blksz, blksz,
 		    loc, bp);
 	}
@@ -1557,7 +1564,7 @@ pool_init_objdir_config(zfs_opt_t *zfs, zfs_zap_t *objdir)
 
 	vdev_pwrite_dnode_data(zfs, dnode, configbuf, configblksz, configloc);
 
-	dnode->dn_datablkszsec = configblksz >> SPA_MINBLOCKSHIFT;
+	dnode->dn_datablkszsec = configblksz >> MINBLOCKSHIFT;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 	*(uint64_t *)DN_BONUS(dnode) = nvlist_size(poolconfig);
 
@@ -1846,8 +1853,15 @@ fs_foreach_count(fsnode *cur, void *arg)
 	uint64_t *countp;
 
 	countp = arg;
-	if (cur->type != S_IFDIR || strcmp(cur->name, ".") != 0)
-		(*countp)++;
+	if (cur->type == S_IFDIR && strcmp(cur->name, ".") == 0)
+		return;
+
+	if (cur->inode->ino == 0) {
+		cur->inode->ino = ++(*countp);
+		cur->inode->nlink = 1;
+	} else {
+		cur->inode->nlink++;
+	}
 }
 
 static struct dnode_cursor *
@@ -1858,11 +1872,11 @@ dnode_cursor_init(zfs_opt_t *zfs, zfs_objset_t *os, dnode_phys_t *dnode,
 	uint64_t nbppindir, indlevel, ndatablks, nindblks;
 
 	assert(dnode->dn_nblkptr == 1);
-	assert(blksz <= (off_t)SPA_OLDMAXBLOCKSIZE);
+	assert(blksz <= MAXBLOCKSIZE);
 
 	if (blksz == 0) {
 		/* Must be between 1<<ashift and 128KB. */
-		blksz = MIN(SPA_OLDMAXBLOCKSIZE, MAX(1 << zfs->ashift,
+		blksz = MIN(MAXBLOCKSIZE, MAX(1 << zfs->ashift,
 		    powerof2(size) ? size : (1ul << flsl(size))));
 	}
 	assert(powerof2(blksz));
@@ -1883,13 +1897,13 @@ dnode_cursor_init(zfs_opt_t *zfs, zfs_objset_t *os, dnode_phys_t *dnode,
 
 	dnode->dn_nlevels = (uint8_t)indlevel;
 	dnode->dn_maxblkid = ndatablks > 0 ? ndatablks - 1 : 0;
-	dnode->dn_datablkszsec = blksz >> SPA_MINBLOCKSHIFT;
+	dnode->dn_datablkszsec = blksz >> MINBLOCKSHIFT;
 	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
-	dnode->dn_used = nindblks * SPA_OLDMAXBLOCKSIZE;
+	dnode->dn_used = nindblks * MAXBLOCKSIZE;
 
 	c = ecalloc(1, sizeof(*c));
 	if (nindblks > 0) {
-		c->indspace = nindblks * SPA_OLDMAXBLOCKSIZE;
+		c->indspace = nindblks * MAXBLOCKSIZE;
 		c->indloc = objset_space_alloc(zfs, os, &c->indspace);
 	}
 	c->dnode = dnode;
@@ -1910,7 +1924,7 @@ _dnode_cursor_flush(zfs_opt_t *zfs, struct dnode_cursor *c, int levels)
 	assert(levels > 0);
 	assert(levels <= c->dnode->dn_nlevels - 1);
 
-	blksz = SPA_OLDMAXBLOCKSIZE;
+	blksz = MAXBLOCKSIZE;
 	blkid = (c->dataoff / c->datablksz) / BLKPTR_PER_INDIR;
 	for (int level = 1; level <= levels; level++) {
 		buf = c->inddir[level - 1];
@@ -1942,7 +1956,7 @@ _dnode_cursor_flush(zfs_opt_t *zfs, struct dnode_cursor *c, int levels)
 		vdev_pwrite_dnode_indir(zfs, c->dnode, buf, blksz, loc, pbp);
 		/* XXXMJ ugly fixup */
 		BP_SET_FILL(bp, fill);
-		memset(buf, 0, SPA_OLDMAXBLOCKSIZE);
+		memset(buf, 0, MAXBLOCKSIZE);
 
 		blkid /= BLKPTR_PER_INDIR;
 	}
@@ -1955,7 +1969,7 @@ dnode_cursor_next(zfs_opt_t *zfs, struct dnode_cursor *c, off_t off)
 	int levels;
 
 	if (c->dnode->dn_nlevels == 1) {
-		assert(off < (off_t)SPA_OLDMAXBLOCKSIZE);
+		assert(off < MAXBLOCKSIZE);
 		return (&c->dnode->dn_blkptr[0]);
 	}
 
@@ -2075,7 +2089,7 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	switch (cur->type) {
 	case S_IFREG:
 		layout = SA_LAYOUT_INDEX;
-		links = 1;
+		links = cur->inode->nlink;
 		objsize = sb->st_size;
 		break;
 	case S_IFDIR: {
@@ -2214,6 +2228,19 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 
 	zfs = arg->zfs;
 
+	if ((cur->inode->flags & FI_ALLOCATED) != 0) {
+		/*
+		 * This is a hard link of an existing file.
+		 *
+		 * XXX-MJ need to check whether it crosses datasets, add a test
+		 * case for that
+		 */
+		fs_populate_dirent(arg, cur, cur->inode->ino);
+		return;
+	}
+
+	dnid = cur->inode->ino;
+	assert(dnid != 0);
 	size = cur->inode->st.st_size;
 
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
@@ -2246,7 +2273,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 			memset(zfs->filebuf + target, 0, bufsz - target);
 
 		loc = objset_space_alloc(zfs, &arg->fs->os, &target);
-		assert(target <= (off_t)SPA_OLDMAXBLOCKSIZE);
+		assert(target <= MAXBLOCKSIZE);
 
 		bp = dnode_cursor_next(zfs, c, foff);
 		vdev_pwrite_dnode_indir(zfs, c->dnode, zfs->filebuf, target,
@@ -2257,6 +2284,9 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 
 	fs_populate_sattrs(arg, cur, dnode);
 	fs_populate_dirent(arg, cur, dnid);
+
+	cur->inode->ino = dnid;
+	cur->inode->flags |= FI_ALLOCATED;
 }
 
 static void
@@ -2268,6 +2298,7 @@ fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 	uint64_t dnid;
 
 	assert(cur->type == S_IFDIR);
+	assert((cur->inode->flags & FI_ALLOCATED) == 0);
 
 	os = &arg->fs->os;
 
@@ -2298,6 +2329,7 @@ fs_populate_symlink(fsnode *cur, struct fs_populate_arg *arg)
 	uint64_t dnid;
 
 	assert(cur->type == S_IFLNK);
+	assert((cur->inode->flags & FI_ALLOCATED) == 0);
 
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
