@@ -853,7 +853,7 @@ objset_write(zfs_opt_t *zfs, zfs_objset_t *os)
 }
 
 static void
-objset_write_mos(zfs_opt_t *zfs)
+objset_mos_write(zfs_opt_t *zfs)
 {
 	struct dnode_cursor *c;
 	zfs_objset_t *mos;
@@ -930,59 +930,55 @@ dsl_dir_alloc(zfs_opt_t *zfs, uint64_t parentdir, uint64_t *dnidp)
 	zfs_objset_t *mos;
 	dnode_phys_t *dnode, *props;
 	dsl_dir_phys_t *dsldir;
-	uint64_t propsid;
+	uint64_t childdirdn, propsdn;
 
 	mos = &zfs->mos;
 
 	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DIR, DMU_OT_DSL_DIR,
 	    sizeof(dsl_dir_phys_t), dnidp);
 
-	props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsid);
+	props = objset_dnode_alloc(mos, DMU_OT_DSL_PROPS, &propsdn);
+	/* XXXMJ maybe initialize in the caller as well */
 	zap_init(&propszap, mos, props);
 	zap_add_uint64(&propszap, "compression", ZIO_COMPRESS_OFF);
 	/* XXX-MJ just for testing */
 	zap_add_string(&propszap, "mountpoint", "/");
 	zap_write(zfs, &propszap);
 
+	/* Initialized by the caller. */
+	(void)objset_dnode_alloc(mos, DMU_OT_DSL_DIR_CHILD_MAP,
+	    &childdirdn);
+
 	dsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
 	dsldir->dd_parent_obj = parentdir;
-	dsldir->dd_props_zapobj = propsid;
+	dsldir->dd_props_zapobj = propsdn;
+	dsldir->dd_child_dir_zapobj = childdirdn;
 
 	return (dsldir);
 }
 
-static dsl_deadlist_phys_t *
-dsl_deadlist_alloc(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t *dnidp)
+static dsl_dataset_phys_t *
+dsl_dataset_alloc(zfs_opt_t *zfs, uint64_t dir, uint64_t *dnidp)
 {
 	zfs_zap_t deadlistzap;
 	dnode_phys_t *dnode;
+	dsl_dataset_phys_t *ds;
+	uint64_t deadlistdn;
 
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DEADLIST,
-	    DMU_OT_DEADLIST_HDR, sizeof(dsl_deadlist_phys_t), dnidp);
-	zap_init(&deadlistzap, mos, dnode);
+	dnode = objset_dnode_bonus_alloc(&zfs->mos, DMU_OT_DSL_DATASET,
+	    DMU_OT_DSL_DATASET, sizeof(dsl_dataset_phys_t), dnidp);
+	ds = (dsl_dataset_phys_t *)DN_BONUS(dnode);
+
+	dnode = objset_dnode_bonus_alloc(&zfs->mos, DMU_OT_DEADLIST,
+	    DMU_OT_DEADLIST_HDR, sizeof(dsl_deadlist_phys_t), &deadlistdn);
+	zap_init(&deadlistzap, &zfs->mos, dnode);
 	zap_write(zfs, &deadlistzap);
 
-	return ((dsl_deadlist_phys_t *)DN_BONUS(dnode));
-}
-
-static dsl_dataset_phys_t *
-dsl_dataset_alloc(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t dir,
-    uint64_t *dnidp)
-{
-	dnode_phys_t *dnode;
-	dsl_dataset_phys_t *ds;
-	uint64_t deadlistid;
-
-	dnode = objset_dnode_bonus_alloc(mos, DMU_OT_DSL_DATASET,
-	    DMU_OT_DSL_DATASET, sizeof(dsl_dataset_phys_t), dnidp);
-
-	(void)dsl_deadlist_alloc(zfs, mos, &deadlistid);
-
-	ds = (dsl_dataset_phys_t *)DN_BONUS(dnode);
 	/* XXX-MJ what else? */
 	ds->ds_dir_obj = dir;
-	ds->ds_deadlist_obj = deadlistid;
+	ds->ds_deadlist_obj = deadlistdn;
 	ds->ds_creation_txg = TXG_INITIAL;
+	ds->ds_prev_snap_obj = zfs->originsnap;
 
 	return (ds);
 }
@@ -1452,8 +1448,9 @@ zap_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	}
 }
 
+#if 0
 static uint64_t
-pool_add_child_map(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
+pool_child_map_add(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
 {
 	zfs_zap_t childzap;
 	dnode_phys_t *childdir, *snapnames;
@@ -1461,12 +1458,13 @@ pool_add_child_map(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
 	dsl_dataset_phys_t *originds, *snapds;
 	uint64_t childdirid, dnid, dsdnid, snapdnid, snapmapid;
 
-	childdir = objset_dnode_alloc(mos, DMU_OT_DSL_DIR_CHILD_MAP, &childdirid);
+	childdir = objset_dnode_alloc(mos, DMU_OT_DSL_DIR_CHILD_MAP,
+	    &childdirid);
 
 	zap_init(&childzap, mos, childdir);
 
 	dsldir = dsl_dir_alloc(zfs, parentdir, &dnid);
-	dsldir->dd_used_bytes = 860 * sizeof(dnode_phys_t); /* XXX-MJ plus what else? */
+	dsldir->dd_used_bytes = mos->space;
 	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
 	zap_add_uint64(&childzap, "$MOS", dnid);
 
@@ -1497,6 +1495,7 @@ pool_add_child_map(zfs_opt_t *zfs, zfs_objset_t *mos, uint64_t parentdir)
 
 	return (childdirid);
 }
+#endif
 
 static nvlist_t *
 pool_config_nvcreate(zfs_opt_t *zfs)
@@ -1796,11 +1795,14 @@ pool_labels_write(zfs_opt_t *zfs)
 static void
 pool_fini(zfs_opt_t *zfs)
 {
+	zfs_zap_t childdir;
 	zfs_objset_t *rootos, *mos;
 	dnode_phys_t *dnode;
-	dsl_dir_phys_t *dsldir;
+	dsl_dir_phys_t *dsldir, *rootdsldir;
 	dsl_dataset_phys_t *ds;
-	uint64_t dsldirid, dslid;
+	uint64_t dsldirid, dslid, freedirid, mosdirid, origindirid;
+
+	objset_write(zfs, &zfs->rootfs.os);
 
 	mos = &zfs->mos;
 	rootos = &zfs->rootfs.os;
@@ -1808,22 +1810,38 @@ pool_fini(zfs_opt_t *zfs)
 	dsldirid = zfs->rootdsldirdn;
 	dnode = objset_dnode_lookup(mos, dsldirid);
 
-	dsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
-	dsldir->dd_child_dir_zapobj = pool_add_child_map(zfs, mos, dsldirid);
+	rootdsldir = (dsl_dir_phys_t *)DN_BONUS(dnode);
 
-	ds = dsl_dataset_alloc(zfs, mos, dsldirid, &dslid);
+	zap_init(&childdir, mos,
+	    objset_dnode_lookup(mos, rootdsldir->dd_child_dir_zapobj));
+
+#if 0
+	dsldir->dd_child_dir_zapobj = pool_child_map_add(zfs, mos, dsldirid);
+#endif
+	dsldir = dsl_dir_alloc(zfs, parentdir, &mosdirid);
+	dsldir->dd_used_bytes = mos->space; /* XXXMJ not all counted yet */
+	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes =
+	    dsldir->dd_used_bytes;
+	zap_add_uint64(&childzap, "$MOS", dnid);
+
+	(void)dsl_dir_alloc(zfs, parentdir, &freedirid);
+	zap_add_uint64(&childdir, "$FREE", freedirid);
+
+	ds = dsl_dataset_alloc(zfs, dsldirid, &dslid);
 	/* XXX-MJ more fields */
-	ds->ds_prev_snap_obj = zfs->originsnap;
 	ds->ds_used_bytes = rootos->space;
 	ds->ds_uncompressed_bytes = ds->ds_compressed_bytes = ds->ds_used_bytes;
 	memcpy(&ds->ds_bp, &rootos->osbp, sizeof(blkptr_t));
 
 	/* XXX-MJ more fields */
-	dsldir->dd_head_dataset_obj = dslid;
-	dsldir->dd_used_bytes = ds->ds_used_bytes;
-	dsldir->dd_compressed_bytes = dsldir->dd_uncompressed_bytes = dsldir->dd_used_bytes;
+	rootdsldir->dd_head_dataset_obj = dslid;
+	rootdsldir->dd_used_bytes = ds->ds_used_bytes;
+	rootdsldir->dd_compressed_bytes = rootdsldir->dd_uncompressed_bytes =
+	    rootdsldir->dd_used_bytes;
 
-	objset_write_mos(zfs);
+	zap_write(&childdir);
+
+	objset_mos_write(zfs);
 	pool_labels_write(zfs);
 }
 
@@ -1876,7 +1894,7 @@ dnode_cursor_init(zfs_opt_t *zfs, zfs_objset_t *os, dnode_phys_t *dnode,
 	 * Do we need indirect blocks?  Figure out how many levels are needed
 	 * (indlevel == 1 means no indirect blocks) and how much space is needed
 	 * (it has to be allocated up-front to break the dependency cycle
-	 * described in objset_write_mos()).
+	 * described in objset_mos_write()).
 	 */
 	ndatablks = size == 0 ? 0 : howmany(size, blksz);
 	nindblks = 0;
@@ -1932,7 +1950,7 @@ _dnode_cursor_flush(zfs_opt_t *zfs, struct dnode_cursor *c, int levels)
 
 		/*
 		 * Space for indirect blocks is allocated up-front; see the
-		 * comment in objset_write_mos().
+		 * comment in objset_mos_write().
 		 */
 		loc = c->indloc;
 		c->indloc += blksz;
@@ -2455,7 +2473,7 @@ fs_add_zpl_attrs(zfs_opt_t *zfs, zfs_fs_t *fs)
 }
 
 static void
-fs_create(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
+fs_build(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 {
 	struct fs_populate_arg poparg;
 	zfs_zap_t deleteqzap, masterzap;
@@ -2540,7 +2558,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	zfs_opt_t *zfs;
 	int dirfd;
 
-	zfs= fsopts->fs_specific;
+	zfs = fsopts->fs_specific;
 
 	/*
 	 * Use a fixed seed to provide reproducible pseudo-random numbers for
@@ -2557,9 +2575,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	vdev_init(zfs, fsopts->maxsize, image);
 	pool_init(zfs);
-	fs_create(zfs, &zfs->rootfs, dirfd, root);
-	/* XXX-MJ write together with the DSL */
-	objset_write(zfs, &zfs->rootfs.os);
+	fs_build(zfs, &zfs->rootfs, dirfd, root);
 	pool_fini(zfs);
 	vdev_fini(zfs);
 
