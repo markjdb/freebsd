@@ -368,8 +368,8 @@ nvlist_copy(const nvlist_t *nvl, char *buf, size_t sz)
 }
 
 static void
-blkptr_set_level(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
-    uint8_t level, uint64_t fill, enum zio_checksum cksumt, zio_cksum_t *cksum)
+blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype, uint8_t level,
+    uint64_t fill, enum zio_checksum cksumt, zio_cksum_t *cksum)
 {
 	dva_t *dva;
 
@@ -391,13 +391,6 @@ blkptr_set_level(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
 	DVA_SET_OFFSET(dva, off);
 	DVA_SET_ASIZE(dva, size);
 	memcpy(&bp->blk_cksum, cksum, sizeof(*cksum));
-}
-
-static void
-blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype,
-    enum zio_checksum cksumt, zio_cksum_t *cksum)
-{
-	blkptr_set_level(bp, off, size, dntype, 0, 1, cksumt, cksum);
 }
 
 static void
@@ -444,6 +437,10 @@ vdev_pwrite(const zfs_opt_t *zfs, const void *buf, size_t len, off_t off)
 	assert(powerof2(len));
 	assert((off_t)len > 0 && off + (off_t)len > off &&
 	    off + (off_t)len < zfs->asize);
+	if (zfs->spacemap != NULL) {
+		assert(bit_ntest(zfs->spacemap, off >> zfs->ashift,
+		    (off + len - 1) >> zfs->ashift, 1));
+	}
 
 	off += VDEV_LABEL_START_SIZE;
 	for (size_t sofar = 0; sofar < len; sofar += n) {
@@ -457,38 +454,35 @@ vdev_pwrite(const zfs_opt_t *zfs, const void *buf, size_t len, off_t off)
 
 static void
 vdev_pwrite_data(zfs_opt_t *zfs, uint8_t datatype, uint8_t cksumtype,
-    const void *data, off_t sz, off_t loc, blkptr_t *bp)
+    uint8_t level, uint64_t fill, const void *data, off_t sz, off_t loc,
+    blkptr_t *bp)
 {
 	zio_cksum_t cksum;
 
 	assert(cksumtype == ZIO_CHECKSUM_FLETCHER_4);
 
 	fletcher_4_native(data, sz, NULL, &cksum);
-	blkptr_set(bp, loc, sz, datatype, cksumtype, &cksum);
-	/* XXX-MJ make sure this space is marked as allocated? */
+	blkptr_set(bp, loc, sz, datatype, level, fill, cksumtype, &cksum);
 	vdev_pwrite(zfs, data, sz, loc);
+}
+
+static void
+vdev_pwrite_dnode_indir(zfs_opt_t *zfs, dnode_phys_t *dnode, uint8_t level,
+    uint64_t fill, const void *data, off_t sz, off_t loc, blkptr_t *bp)
+{
+	vdev_pwrite_data(zfs, dnode->dn_type, dnode->dn_checksum, level, fill,
+	    data, sz, loc, bp);
+
+	assert((dnode->dn_flags & DNODE_FLAG_USED_BYTES) != 0);
+	dnode->dn_used += sz;
 }
 
 static void
 vdev_pwrite_dnode_data(zfs_opt_t *zfs, dnode_phys_t *dnode, const void *data,
     off_t sz, off_t loc)
 {
-	vdev_pwrite_data(zfs, dnode->dn_type, dnode->dn_checksum, data, sz, loc,
+	vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, data, sz, loc,
 	    &dnode->dn_blkptr[0]);
-
-	assert((dnode->dn_flags & DNODE_FLAG_USED_BYTES) != 0);
-	dnode->dn_used += sz;
-}
-
-static void
-vdev_pwrite_dnode_indir(zfs_opt_t *zfs, dnode_phys_t *dnode, const void *data,
-    off_t sz, off_t loc, blkptr_t *bp)
-{
-	vdev_pwrite_data(zfs, dnode->dn_type, dnode->dn_checksum, data, sz, loc,
-	    bp);
-
-	assert((dnode->dn_flags & DNODE_FLAG_USED_BYTES) != 0);
-	dnode->dn_used += sz;
 }
 
 static void
@@ -795,9 +789,9 @@ objset_init(zfs_opt_t *zfs, zfs_objset_t *os, uint64_t type,
 	os->dnodes = ecalloc(1,
 	    roundup2(dnodecount * sizeof(dnode_phys_t), DNODE_BLOCK_SIZE));
 
-	/* XXX-MJ what else? */
 	os->osphys = ecalloc(1, os->osblksz);
 	os->osphys->os_type = type;
+
 	mdnode = &os->osphys->os_meta_dnode;
 	mdnode->dn_indblkshift = MAXBLOCKSHIFT;
 	mdnode->dn_type = DMU_OT_DNODE;
@@ -838,15 +832,13 @@ _objset_write(zfs_opt_t *zfs, zfs_objset_t *os, struct dnode_cursor *c)
 
 		bp = dnode_cursor_next(zfs, c, i * sizeof(dnode_phys_t));
 		vdev_pwrite_dnode_indir(zfs, &os->osphys->os_meta_dnode,
-		    blk, DNODE_BLOCK_SIZE, loc, bp);
-		/* XXX-MJ ugly fixup */
-		BP_SET_FILL(bp, fill);
+		    0, fill, blk, DNODE_BLOCK_SIZE, loc, bp);
 	}
 	dnode_cursor_finish(zfs, c);
 	free(os->dnodes);
 	os->dnodes = NULL;
 
-	vdev_pwrite_data(zfs, DMU_OT_OBJSET, ZIO_CHECKSUM_FLETCHER_4,
+	vdev_pwrite_data(zfs, DMU_OT_OBJSET, ZIO_CHECKSUM_FLETCHER_4, 0, 1,
 	    os->osphys, os->osblksz, os->osloc, &os->osbp);
 }
 
@@ -1418,15 +1410,15 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	loc = objset_space_alloc(zfs, zap->os, &blksz);
 	assert(blksz == MAXBLOCKSIZE);
 
-	vdev_pwrite_dnode_indir(zfs, dnode, zfs->filebuf, blksz, loc, bp);
+	vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, zfs->filebuf, blksz, loc, bp);
 
 	for (uint64_t i = 0; i < lblkcnt; i++) {
 		bp = dnode_cursor_next(zfs, c, (i + 1) * blksz);
 
 		loc = objset_space_alloc(zfs, zap->os, &blksz);
 		assert(blksz == MAXBLOCKSIZE);
-		vdev_pwrite_dnode_indir(zfs, dnode, leafblks + i * blksz, blksz,
-		    loc, bp);
+		vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, leafblks + i * blksz,
+		    blksz, loc, bp);
 	}
 
 	dnode_cursor_finish(zfs, c);
@@ -1946,10 +1938,8 @@ _dnode_cursor_flush(zfs_opt_t *zfs, struct dnode_cursor *c, int levels)
 		for (size_t i = 0; i < BLKPTR_PER_INDIR; i++)
 			fill += BP_GET_FILL(&bp[i]);
 
-		vdev_pwrite_dnode_indir(zfs, c->dnode, buf, blksz, loc, pbp);
-		/* XXXMJ ugly fixup */
-		BP_SET_FILL(pbp, fill);
-		BP_SET_LEVEL(pbp, level);
+		vdev_pwrite_dnode_indir(zfs, c->dnode, level, fill, buf, blksz,
+		    loc, pbp);
 		memset(buf, 0, MAXBLOCKSIZE);
 
 		blkid /= BLKPTR_PER_INDIR;
@@ -2269,8 +2259,8 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 		assert(target <= MAXBLOCKSIZE);
 
 		bp = dnode_cursor_next(zfs, c, foff);
-		vdev_pwrite_dnode_indir(zfs, c->dnode, zfs->filebuf, target,
-		    loc, bp);
+		vdev_pwrite_dnode_indir(zfs, c->dnode, 0, 1, zfs->filebuf,
+		    target, loc, bp);
 	}
 	(void)close(fd);
 	dnode_cursor_finish(zfs, c);
