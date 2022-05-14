@@ -274,6 +274,35 @@ long_file_name_cleanup()
 	common_cleanup
 }
 
+atf_test_case soft_links cleanup
+soft_links_body()
+{
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+
+	mkdir dir
+	ln -s a a
+	ln -s dir/../a a
+	ln -s dir/b b
+	echo 'c' > dir
+	ln -s dir/c c
+	# XXX-MJ overflows bonus buffer ln -s $(jot -s '' 320 1 1) 1
+
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+}
+soft_links_cleanup()
+{
+	common_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case basic
@@ -283,6 +312,7 @@ atf_init_test_cases()
 	atf_add_test_case hard_links
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
+	atf_add_test_case soft_links
 
 	# XXXMJ tests:
 	# - create a snapshot of a filesystem
