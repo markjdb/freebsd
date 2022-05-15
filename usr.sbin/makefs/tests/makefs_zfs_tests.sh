@@ -274,6 +274,33 @@ long_file_name_cleanup()
 	common_cleanup
 }
 
+atf_test_case snapshot cleanup
+snapshot_body()
+{
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+
+	mkdir dir
+	echo "hello" > dir/hello
+	echo "goodbye" > goodbye
+
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	atf_expect_fail "snapshots are broken for an unknown reason"
+	atf_check -o empty -e empty -s exit:0 \
+	    zfs snapshot ${ZFS_POOL_NAME}@1
+}
+snapshot_cleanup()
+{
+	common_cleanup
+}
+
 atf_test_case soft_links cleanup
 soft_links_body()
 {
@@ -312,10 +339,10 @@ atf_init_test_cases()
 	atf_add_test_case hard_links
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
+	atf_add_test_case snapshot
 	atf_add_test_case soft_links
 
 	# XXXMJ tests:
 	# - create a snapshot of a filesystem
-	# - create a long symlink target
 	# - test with different ashifts (at least, 9), different image sizes
 }
