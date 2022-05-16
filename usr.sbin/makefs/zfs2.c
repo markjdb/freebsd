@@ -31,6 +31,7 @@
 #include <sys/param.h>
 #include <sys/dirent.h>
 #include <sys/endian.h>
+#include <sys/errno.h>
 #include <sys/queue.h>
 
 #include <assert.h>
@@ -144,6 +145,7 @@ typedef STAILQ_HEAD(zfs_dsl_dir_list, zfs_dsl_dir) zfs_dsl_dir_list_t;
 typedef struct zfs_dsl_dir {
 	char		*name;
 	dsl_dir_phys_t	*phys;
+	nvlist_t	*propsnv;
 
 	zfs_dsl_dataset_t *headds;
 
@@ -153,12 +155,11 @@ typedef struct zfs_dsl_dir {
 	uint64_t	childid;	/* child map dnode */
 	zfs_zap_t	childzap;
 
-	/* XXX-MJ should this just be a tree? */
 	zfs_dsl_dir_list_t children;
 	STAILQ_ENTRY(zfs_dsl_dir) next;
 } zfs_dsl_dir_t;
 
-typedef struct {
+typedef struct zfs_fs {
 	zfs_objset_t	os;
 
 	/* Offset table for system attributes, indexed by a zpl_attr_t. */
@@ -883,7 +884,6 @@ _objset_write(zfs_opt_t *zfs, zfs_objset_t *os, struct dnode_cursor *c)
 	 */
 	for (uint64_t i = 0; i < os->dnodecount; i += DNODES_PER_BLOCK) {
 		dnode_phys_t *blk;
-		blkptr_t *bp;
 		uint64_t fill;
 		off_t loc;
 
@@ -892,9 +892,9 @@ _objset_write(zfs_opt_t *zfs, zfs_objset_t *os, struct dnode_cursor *c)
 		fill = os->dnodecount - i < DNODES_PER_BLOCK ?
 		    os->dnodecount - i : 0;
 
-		bp = dnode_cursor_next(zfs, c, i * sizeof(dnode_phys_t));
 		vdev_pwrite_dnode_indir(zfs, &os->phys->os_meta_dnode,
-		    0, fill, blk, DNODE_BLOCK_SIZE, loc, bp);
+		    0, fill, blk, DNODE_BLOCK_SIZE, loc,
+		    dnode_cursor_next(zfs, c, i * sizeof(dnode_phys_t)));
 	}
 	dnode_cursor_finish(zfs, c);
 	free(os->dnodes);
@@ -990,7 +990,7 @@ dsl_init_metadir(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dir)
 {
 	char *path;
 
-	asprintf(&path, "%s/%s", zfs->poolname, name);
+	easprintf(&path, "%s/%s", zfs->poolname, name);
 	dsl_dir_init(zfs, path, dir);
 	free(path);
 	zap_write(zfs, &dir->propszap);
@@ -1003,15 +1003,22 @@ dsl_init(zfs_opt_t *zfs)
 	zfs_dsl_dir_t *dir;
 	zfs_dsl_dataset_t *ds;
 	struct dataset_desc *d;
-	char *path, *params;
+	char *mountpoint, *path, *params, *param, *nextparam;
 
 	dsl_dir_init(zfs, NULL, &zfs->rootdsldir);
+
+	nvlist_add_uint64(zfs->rootdsldir.propsnv,
+	    "compression", ZIO_COMPRESS_OFF);
 	zap_add_uint64(&zfs->rootdsldir.propszap, "compression",
 	    ZIO_COMPRESS_OFF);
-	if (zfs->mountpoint != NULL) {
-		zap_add_string(&zfs->rootdsldir.propszap, "mountpoint",
-		    zfs->mountpoint);
-	}
+	/* XXX-MJ probably want to deal with mountpoints later */
+	if (zfs->mountpoint == NULL)
+		easprintf(&mountpoint, "/%s", zfs->poolname);
+	else
+		mountpoint = estrdup(zfs->mountpoint);
+	nvlist_add_string(zfs->rootdsldir.propsnv, "mountpoint", mountpoint);
+	zap_add_string(&zfs->rootdsldir.propszap, "mountpoint", mountpoint);
+	free(mountpoint);
 	zap_write(zfs, &zfs->rootdsldir.propszap);
 
 	dsl_init_metadir(zfs, "$MOS", &zfs->mosdsldir);
@@ -1029,8 +1036,45 @@ dsl_init(zfs_opt_t *zfs)
 		dsl_dir_init(zfs, path, dir);
 		ds = ecalloc(1, sizeof(*ds));
 		dsl_dataset_init(zfs, dir, ds);
-
 		dir->headds = ds;
+
+		for (nextparam = param = params; nextparam != NULL;) {
+			char *key, *val;
+
+			param = strsep(&nextparam, ":");
+
+			key = val = param;
+			key = strsep(&val, "=");
+			if (val == NULL || val[0] == '\0')
+				errx(1, "missing value for property `%s'", key);
+			if (nvpair_find(dir->propsnv, key) != NULL)
+				errx(1, "property `%s' already set", key);
+
+			if (strcmp(key, "mountpoint") == 0) {
+				if (val[0] != '/') {
+					errx(1, "mountpoint `%s' not absolute",
+					    val);
+				}
+				nvlist_add_string(dir->propsnv, key, val);
+			} else {
+				errx(1, "unknown property `%s'", key);
+			}
+		}
+
+		free(d->params);
+		d->params = NULL;
+	}
+}
+
+static void
+dsl_dir_foreach(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir,
+    void (*cb)(zfs_opt_t *, zfs_dsl_dir_t *, void *), void *arg)
+{
+	zfs_dsl_dir_t *cdsldir;
+
+	cb(zfs, dsldir, arg);
+	STAILQ_FOREACH(cdsldir, &dsldir->children, next) {
+		dsl_dir_foreach(zfs, cdsldir, cb, arg);
 	}
 }
 
@@ -1056,6 +1100,7 @@ dsl_dir_init(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dsldir)
 	    &dsldir->childid);
 	zap_init(&dsldir->childzap, mos, dnode);
 
+	dsldir->propsnv = nvlist_create(NV_UNIQUE_NAME);
 	STAILQ_INIT(&dsldir->children);
 
 	dsldir->phys->dd_child_dir_zapobj = dsldir->childid;
@@ -2345,6 +2390,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 	struct dnode_cursor *c;
 	dnode_phys_t *dnode;
 	zfs_opt_t *zfs;
+	char *buf;
 	uint64_t dnid;
 	ssize_t n;
 	size_t bufsz;
@@ -2355,6 +2401,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 
 	zfs = arg->zfs;
 
+	assert(cur->inode->ino != 0);
 	if ((cur->inode->flags & FI_ALLOCATED) != 0) {
 		/*
 		 * This is a hard link of an existing file.
@@ -2366,28 +2413,27 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 		return;
 	}
 
-	dnid = cur->inode->ino;
-	assert(dnid != 0);
-	size = cur->inode->st.st_size;
-
 	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
-	c = dnode_cursor_init(zfs, &arg->fs->os, dnode, size, 0);
-
-	bufsz = sizeof(zfs->filebuf);
+	cur->inode->ino = dnid;
+	cur->inode->flags |= FI_ALLOCATED;
 
 	fd = openat(SLIST_FIRST(&arg->dirs)->dirfd, cur->name, O_RDONLY);
 	if (fd == -1)
 		err(1, "openat(%s)", cur->name);
+
+	buf = zfs->filebuf;
+	bufsz = sizeof(zfs->filebuf);
+	size = cur->inode->st.st_size;
+	c = dnode_cursor_init(zfs, &arg->fs->os, dnode, size, 0);
 	for (off_t foff = 0; foff < size; foff += target) {
-		blkptr_t *bp;
 		off_t loc, sofar;
 
 		/* Fill up our buffer, handling partial reads. */
 		sofar = 0;
 		target = MIN(size - foff, (off_t)bufsz);
 		do {
-			n = read(fd, zfs->filebuf + sofar, target);
+			n = read(fd, buf + sofar, target);
 			if (n < 0)
 				err(1, "reading from '%s'", cur->name);
 			if (n == 0)
@@ -2397,23 +2443,19 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 		} while (sofar < target);
 
 		if (target < (off_t)bufsz)
-			memset(zfs->filebuf + target, 0, bufsz - target);
+			memset(buf + target, 0, bufsz - target);
 
 		loc = objset_space_alloc(zfs, &arg->fs->os, &target);
 		assert(target <= MAXBLOCKSIZE);
 
-		bp = dnode_cursor_next(zfs, c, foff);
-		vdev_pwrite_dnode_indir(zfs, c->dnode, 0, 1, zfs->filebuf,
-		    target, loc, bp);
+		vdev_pwrite_dnode_indir(zfs, c->dnode, 0, 1, buf, target, loc,
+		    dnode_cursor_next(zfs, c, foff));
 	}
 	(void)close(fd);
 	dnode_cursor_finish(zfs, c);
 
 	fs_populate_sattrs(arg, cur, dnode);
 	fs_populate_dirent(arg, cur, dnid);
-
-	cur->inode->ino = dnid;
-	cur->inode->flags |= FI_ALLOCATED;
 }
 
 static void
@@ -2621,6 +2663,72 @@ fs_add_zpl_attrs(zfs_opt_t *zfs, zfs_fs_t *fs)
 }
 
 static void
+fs_layout_one(zfs_opt_t *zfs __unused, zfs_dsl_dir_t *dsldir, void *arg)
+{
+	const char *origmountpoint;
+	char *mountpoint, *name, *next;
+	fsnode *cur, *root;
+	int error;
+
+	error = nvlist_find(dsldir->propsnv, "mountpoint", DATA_TYPE_STRING,
+	    NULL, &origmountpoint, NULL);
+	if (error == ENOENT)
+		return;
+	assert(error == 0);
+
+	mountpoint = estrdup(origmountpoint);
+	assert(mountpoint[0] == '/');
+
+	root = arg;
+	if (strcmp(mountpoint, "/") == 0) {
+		cur = root;
+	} else {
+		cur = root->next;
+		/* XXX-MJ this loop is super ugly */
+		for (next = name = mountpoint; next != NULL;) {
+			for (; *next == '/'; next++)
+				;
+			name = strsep(&next, "/");
+
+			for (; cur != NULL && strcmp(cur->name, name) != 0;
+			    cur = cur->next)
+				;
+			if (cur == NULL)
+				break;
+			if (next != NULL)
+				cur = cur->child;
+		}
+		if (cur == NULL) {
+			if (next != NULL) {
+				errx(1, "missing directory for mountpoint `%s'",
+				    origmountpoint);
+			}
+		}
+	}
+	if (cur != NULL) {
+		if (cur->type != S_IFDIR) {
+			errx(1, "mountpoint `%s' is not a directory",
+			    origmountpoint);
+		}
+
+		/*
+		 * Don't allow having multiple datasets with the same
+		 * mountpoint.
+		 */
+		assert((cur->inode->flags & FI_ROOT) == 0);
+		cur->inode->flags |= FI_ROOT;
+	}
+
+	free(mountpoint);
+}
+
+static void
+fs_layout(zfs_opt_t *zfs, fsnode *root)
+{
+	dsl_dir_foreach(zfs, &zfs->rootdsldir, fs_layout_one, root);
+}
+
+static void
 fs_build(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 {
 	struct fs_populate_arg poparg;
@@ -2632,8 +2740,8 @@ fs_build(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
 	os = &fs->os;
 
 	/*
-	 * Figure out how many dnodes we need.  One for each ZPL object (file,
-	 * directory, etc.), plus some objects for metadata.
+	 * Pass over the input file hierarchy to count dnodes and identify hard
+	 * links.
 	 */
 	dnodecount = 0;
 	fsnode_foreach(root, fs_foreach_count, &dnodecount);
@@ -2723,6 +2831,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	vdev_init(zfs, fsopts->maxsize, image);
 	pool_init(zfs);
+	fs_layout(zfs, root);
 	fs_build(zfs, &zfs->rootfs, dirfd, root);
 	pool_fini(zfs);
 	vdev_fini(zfs);
