@@ -274,6 +274,32 @@ long_file_name_cleanup()
 	common_cleanup
 }
 
+#
+# Rudimentary test to verify that two ZFS images created using the same
+# parameters and input hierarchy are byte-identical.  In particular, makefs(1)
+# does not preserve file access times.
+#
+atf_test_case reproducible cleanup
+reproducible_body()
+{
+	create_test_inputs
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 512m -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    ${TEST_IMAGE}.1 $TEST_INPUTS_DIR
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 512m -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    ${TEST_IMAGE}.2 $TEST_INPUTS_DIR
+
+        # XXX-MJ cmp(1) is really slow
+	atf_check -o empty -e empty -s exit:0 \
+	    cmp ${TEST_IMAGE}.1 ${TEST_IMAGE}.2
+}
+reproducible_cleanup()
+{
+}
+
 atf_test_case snapshot cleanup
 snapshot_body()
 {
@@ -339,10 +365,12 @@ atf_init_test_cases()
 	atf_add_test_case hard_links
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
+        atf_add_test_case reproducible
 	atf_add_test_case snapshot
 	atf_add_test_case soft_links
 
 	# XXXMJ tests:
-	# - create a snapshot of a filesystem
-	# - test with different ashifts (at least, 9), different image sizes
+	# - test with different ashifts (at least, 9 and 12), different image sizes
+	# - create datasets in imported pool
+        # - bootenvs
 }

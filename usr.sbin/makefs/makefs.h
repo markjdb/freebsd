@@ -78,12 +78,14 @@ enum fi_flags {
 	FI_SIZED =	1<<0,		/* inode sized */
 	FI_ALLOCATED =	1<<1,		/* fsinode->ino allocated */
 	FI_WRITTEN =	1<<2,		/* inode written */
+	FI_ROOT =	1<<3,		/* root of a ZFS dataset */
 };
 
 typedef struct {
 	ino_t		 ino;		/* inode number used on target fs */
 	uint32_t	 nlink;		/* number of links to this entry */
 	enum fi_flags	 flags;		/* flags used by fs specific code */
+	void		*param;
 	struct stat	 st;		/* stat entry */
 } fsinode;
 

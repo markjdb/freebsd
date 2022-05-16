@@ -201,10 +201,6 @@ typedef struct {
 	zfs_dsl_dir_t	freedsldir;
 	zfs_dsl_dir_t	mosdsldir;
 
-#if 0
-	zfs_fs_t	rootfs;		/* XXX-MJ root dataset */
-#endif
-
 	/* vdev state. */
 	int		fd;		/* vdev disk fd */
 	off_t		vdevsize;	/* vdev size, including labels */
@@ -1001,15 +997,6 @@ dsl_init_metadir(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dir)
 	easprintf(&path, "%s/%s", zfs->poolname, name);
 	dsl_dir_init(zfs, path, dir);
 	free(path);
-
-	/*
-	 * XXX-MJ do this in pool_fini().
-	 */
-#if 0
-	dsl_dir_write(zfs, dir);
-	zap_write(zfs, &dir->propszap);
-	zap_write(zfs, &dir->childzap);
-#endif
 }
 
 static void
@@ -1037,9 +1024,6 @@ dsl_init(zfs_opt_t *zfs)
 
 	dsl_dataset_init(zfs, &zfs->rootdsldir, &zfs->rootds);
 	zfs->rootdsldir.headds = &zfs->rootds;
-#if 0
-	zap_write(zfs, &zfs->rootdsldir.propszap);
-#endif
 
 	dsl_init_metadir(zfs, "$MOS", &zfs->mosdsldir);
 	dsl_init_metadir(zfs, "$FREE", &zfs->freedsldir);
@@ -1183,11 +1167,27 @@ static void
 dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 {
 	dsl_dir_write(zfs, dir);
+
 	if (dir->headds != NULL && dir->headds->os != NULL) {
+		zfs_objset_t *os;
+
+		os = dir->headds->os;
+
 		dir->phys->dd_head_dataset_obj = dir->headds->dsid;
 		dir->headds->phys->ds_prev_snap_obj = zfs->snapds.dsid;
-		memcpy(&dir->headds->phys->ds_bp, &dir->headds->os->osbp,
-		    sizeof(blkptr_t));
+		memcpy(&dir->headds->phys->ds_bp, &os->osbp, sizeof(blkptr_t));
+
+		dir->headds->phys->ds_used_bytes = os->space;
+		/* XXX-MJ not sure what the difference is here... */
+		dir->headds->phys->ds_uncompressed_bytes = os->space;
+		dir->headds->phys->ds_compressed_bytes = os->space;
+
+		/* XXX-MJ this is wrong, should be a sum of children */
+		dir->phys->dd_used_bytes = dir->headds->phys->ds_used_bytes;
+		dir->phys->dd_compressed_bytes =
+		    dir->headds->phys->ds_compressed_bytes;
+		dir->phys->dd_uncompressed_bytes =
+		    dir->headds->phys->ds_uncompressed_bytes;
 	}
 }
 
@@ -1291,10 +1291,15 @@ zap_add(zfs_zap_t *zap, const char *name, size_t intsz, size_t intcnt,
 	ent->hash = zap_hash(zap->hashsalt, ent->name);
 	ent->intsz = intsz;
 	ent->intcnt = intcnt;
-	if (intsz == sizeof(uint64_t) && intcnt == 1)
+	if (intsz == sizeof(uint64_t) && intcnt == 1) {
+		/*
+		 * Micro-optimization to elide a memory allocation in that most
+		 * common case where this is a directory entry.
+		 */
 		ent->val64p = &ent->val64;
-	else
+	} else {
 		ent->valp = ecalloc(intcnt, intsz);
+	}
 	memcpy(ent->valp, val, intcnt * intsz);
 	zap->kvpcnt++;
 	zap->chunks += zap_entry_chunks(ent);
@@ -2008,23 +2013,11 @@ pool_fini(zfs_opt_t *zfs)
 {
 	struct dataset_desc *desc;
 	zfs_zap_t snapnameszap;
-	zfs_objset_t *rootos, *mos;
+	zfs_objset_t *mos;
 	dnode_phys_t *snapnames;
 	uint64_t snapmapid;
 
-#if 0
-	objset_write(zfs, &zfs->rootfs.os);
-#endif
-
 	mos = &zfs->mos;
-	rootos = zfs->rootdsldir.headds->os; /* XXX-MJ */
-#if 0
-	objset_write(zfs, rootos);
-#endif
-
-	zfs->mosdsldir.phys->dd_used_bytes = mos->space; /* XXX-MJ not all counted yet */
-	zfs->mosdsldir.phys->dd_compressed_bytes = mos->space;
-	zfs->mosdsldir.phys->dd_uncompressed_bytes = mos->space;
 
 	snapnames = objset_dnode_alloc(mos, DMU_OT_DSL_DS_SNAP_MAP, &snapmapid);
 
@@ -2043,31 +2036,19 @@ pool_fini(zfs_opt_t *zfs)
 	zap_write(zfs, &snapnameszap);
 
 	dsl_fini(zfs);
-#if 0
-	dsl_dir_write(zfs, &zfs->rootdsldir);
-	zap_write(zfs, &zfs->rootdsldir.childzap);
-#endif
 
-	/* XXX-MJ more fields */
-	zfs->rootds.phys->ds_used_bytes = rootos->space;
-	/* XXX-MJ not sure what the difference is here... */
-	zfs->rootds.phys->ds_uncompressed_bytes = rootos->space;
-	zfs->rootds.phys->ds_compressed_bytes = rootos->space;
-#if 0
-	zfs->rootds.phys->ds_prev_snap_obj = zfs->snapds.dsid;
-	memcpy(&zfs->rootds.phys->ds_bp, &rootos->osbp, sizeof(blkptr_t));
-#endif
+	zfs->mosdsldir.phys->dd_used_bytes = mos->space;
+	zfs->mosdsldir.phys->dd_compressed_bytes = mos->space;
+	zfs->mosdsldir.phys->dd_uncompressed_bytes = mos->space;
 
-	/* XXX-MJ more fields */
 #if 0
-	zfs->rootdsldir.phys->dd_head_dataset_obj = zfs->rootds.dsid;
-#endif
 	zfs->rootdsldir.phys->dd_used_bytes =
 	    zfs->rootds.phys->ds_used_bytes; /* XXX-MJ add subdirs, $MOS? */
 	zfs->rootdsldir.phys->dd_compressed_bytes =
 	    zfs->rootds.phys->ds_used_bytes;
 	zfs->rootdsldir.phys->dd_uncompressed_bytes =
 	    zfs->rootds.phys->ds_used_bytes;
+#endif
 
 	objset_mos_write(zfs);
 	pool_labels_write(zfs);
@@ -2827,88 +2808,6 @@ fs_layout_one(zfs_opt_t *zfs __unused, zfs_dsl_dir_t *dsldir, void *arg)
 	free(mountpoint);
 }
 
-#if 0
-static void
-fs_build(zfs_opt_t *zfs, zfs_fs_t *fs, int rootdirfd, fsnode *root)
-{
-	struct fs_populate_arg poparg;
-	zfs_zap_t deleteqzap, masterzap;
-	zfs_objset_t *os;
-	dnode_phys_t *deleteq, *masterobj;
-	uint64_t deleteqid, dnodecount, moid, saobjid;
-
-	os = &fs->os;
-
-	/*
-	 * Pass over the input file hierarchy to count dnodes and identify hard
-	 * links.
-	 */
-	dnodecount = 0;
-	fsnode_foreach(root, fs_foreach_count, &dnodecount);
-	dnodecount++; /* meta dnode */
-	dnodecount++; /* master object */
-	dnodecount++; /* delete queue */
-	dnodecount++; /* system attributes master node */
-	dnodecount++; /* system attributes registry */
-	dnodecount++; /* system attributes layout */
-
-	/*
-	 * Initialize our object set and allocate the dnode array.  Each
-	 * filesystem object gets a 512-byte dnode, so the memory usage is
-	 * significant.  However, we can build a FreeBSD distribution with less
-	 * than 50MB devoted to dnodes, which doesn't seem prohibitive, so let's
-	 * keep it simple for now.
-	 */
-	objset_init(zfs, os, DMU_OST_ZFS, dnodecount);
-	masterobj = objset_dnode_alloc(os, DMU_OT_MASTER_NODE, &moid);
-	assert(moid == MASTER_NODE_OBJ);
-
-	/*
-	 * Create the ZAP SA layout now since filesystem object dnodes will
-	 * refer to those attributes.
-	 */
-	saobjid = fs_add_zpl_attrs(zfs, fs);
-
-	/*
-	 * Build the filesystem hierarchy.  The bulk of this program's runtime
-	 * is spent here.
-	 */
-	poparg.dirfd = rootdirfd;
-	poparg.zfs = zfs;
-	poparg.fs = fs;
-	SLIST_INIT(&poparg.dirs);
-	fs_populate_dir(root, &poparg);
-	assert(!SLIST_EMPTY(&poparg.dirs));
-	fsnode_foreach(root, fs_foreach_populate, &poparg);
-	assert(SLIST_EMPTY(&poparg.dirs));
-
-	/*
-	 * Create an empty delete queue.  We don't do anything with it, but
-	 * OpenZFS will refuse to mount filesystems that don't have one.
-	 */
-	deleteq = objset_dnode_alloc(os, DMU_OT_UNLINKED_SET, &deleteqid);
-	zap_init(&deleteqzap, os, deleteq);
-	zap_write(zfs, &deleteqzap);
-
-	/*
-	 * Populate the master node object.  This is a ZAP object containing
-	 * various dataset properties and the object IDs of the root directory
-	 * and delete queue.
-	 */
-	zap_init(&masterzap, os, masterobj);
-	zap_add_uint64(&masterzap, ZFS_ROOT_OBJ, poparg.rootdirid);
-	zap_add_uint64(&masterzap, ZFS_UNLINKED_SET, deleteqid);
-	zap_add_uint64(&masterzap, ZFS_SA_ATTRS, saobjid);
-	/* XXX-MJ create a ZFS_SHARES_DIR directory, OpenZFS won't do it */
-	zap_add_uint64(&masterzap, ZPL_VERSION_OBJ, 5 /* ZPL_VERSION_SA */);
-	zap_add_uint64(&masterzap, "normalization", 0 /* off */);
-	zap_add_uint64(&masterzap, "utf8only", 0 /* off */);
-	zap_add_uint64(&masterzap, "casesensitivity", 0 /* case sensitive */);
-	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
-	zap_write(zfs, &masterzap);
-}
-#endif
-
 static void
 fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 {
@@ -2928,6 +2827,7 @@ fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 
 	fs = ecalloc(1, sizeof(*fs));
 	os = &fs->os;
+	dsldir->headds->os = os;
 
 	dnodecount = 0;
 	fsnode_foreach(root, fs_foreach_count, &dnodecount);
@@ -2981,11 +2881,11 @@ fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
 	zap_write(zfs, &masterzap);
 
-	dsldir->headds->os = os;
+	/* XXX-MJ zfs_fs is leaked */
 }
 
 static void
-fs_build2(zfs_opt_t *zfs, int dirfd, fsnode *root)
+fs_build(zfs_opt_t *zfs, int dirfd, fsnode *root)
 {
 	dsl_dir_foreach(zfs, &zfs->rootdsldir, fs_layout_one, root);
 
@@ -3018,11 +2918,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 
 	vdev_init(zfs, fsopts->maxsize, image);
 	pool_init(zfs);
-#if 0
-	fs_layout(zfs, root);
-	fs_build(zfs, &zfs->rootfs, dirfd, root);
-#endif
-	fs_build2(zfs, dirfd, root);
+	fs_build(zfs, dirfd, root);
 	pool_fini(zfs);
 	vdev_fini(zfs);
 
