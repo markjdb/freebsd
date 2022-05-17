@@ -61,7 +61,7 @@ basic_body()
 	create_test_inputs
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -84,7 +84,7 @@ empty_dir_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -104,7 +104,7 @@ empty_fs_body()
 	create_test_dirs
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -139,7 +139,7 @@ file_sizes_body()
 	# XXXMJ need to test with larger files (at least 128MB for L2 indirs)
 	# XXXMJ try with different ashifts
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -171,7 +171,7 @@ hard_links_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -222,7 +222,7 @@ indirect_dnode_array_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -258,7 +258,7 @@ long_file_name_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -285,11 +285,11 @@ reproducible_body()
 	create_test_inputs
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 512m -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 512m -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    ${TEST_IMAGE}.1 $TEST_INPUTS_DIR
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 512m -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 512m -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    ${TEST_IMAGE}.2 $TEST_INPUTS_DIR
 
         # XXX-MJ cmp(1) is really slow
@@ -313,7 +313,7 @@ snapshot_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -344,7 +344,7 @@ soft_links_body()
 	cd -
 
 	atf_check -o empty -e empty -s exit:0 \
-	    $MAKEFS -s 10g -o mountpoint=/ -o poolname=$ZFS_POOL_NAME \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    $TEST_IMAGE $TEST_INPUTS_DIR
 
 	import_image
@@ -352,6 +352,34 @@ soft_links_body()
 	check_image_contents
 }
 soft_links_cleanup()
+{
+	common_cleanup
+}
+
+atf_test_case root_props cleanup
+root_props_body()
+{
+	create_test_inputs
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 10g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
+	    -o fs=${ZFS_POOL_NAME}:atime=off:setuid=off \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+
+	atf_check -o inline:off\\n -e empty -s exit:0 \
+	    zfs get -H -o value atime $ZFS_POOL_NAME
+	atf_check -o inline:local\\n -e empty -s exit:0 \
+	    zfs get -H -o source atime $ZFS_POOL_NAME
+	atf_check -o inline:off\\n -e empty -s exit:0 \
+	    zfs get -H -o value setuid $ZFS_POOL_NAME
+	atf_check -o inline:local\\n -e empty -s exit:0 \
+	    zfs get -H -o source setuid $ZFS_POOL_NAME
+}
+root_props_cleanup()
 {
 	common_cleanup
 }
@@ -368,6 +396,7 @@ atf_init_test_cases()
         atf_add_test_case reproducible
 	atf_add_test_case snapshot
 	atf_add_test_case soft_links
+        atf_add_test_case root_props
 
 	# XXXMJ tests:
 	# - test with different ashifts (at least, 9 and 12), different image sizes

@@ -139,7 +139,8 @@ typedef struct zfs_dsl_dataset {
 typedef STAILQ_HEAD(zfs_dsl_dir_list, zfs_dsl_dir) zfs_dsl_dir_list_t;
 
 typedef struct zfs_dsl_dir {
-	char		*name;
+	char		*fullname;	/* full dataset name */
+	char		*name;		/* basename(fullname) */
 	dsl_dir_phys_t	*phys;
 	nvlist_t	*propsnv;
 
@@ -158,12 +159,12 @@ typedef struct zfs_dsl_dir {
 } zfs_dsl_dir_t;
 
 typedef struct zfs_fs {
-	zfs_objset_t	os;
+	zfs_objset_t	*os;
 
 	/* Offset table for system attributes, indexed by a zpl_attr_t. */
-	const zfs_sattr_t *satab;
-	size_t		sacnt;
 	uint16_t	*saoffs;
+	size_t		sacnt;
+	const zfs_sattr_t *satab;
 } zfs_fs_t;
 
 struct dataset_desc {
@@ -177,7 +178,7 @@ typedef struct {
 
 	/* Pool parameters. */
 	const char	*poolname;
-	const char	*mountpoint;	/* root mountpoint */
+	char		*rootpath;	/* XXX-MJ */
 	int		ashift;		/* vdev block size */
 	STAILQ_HEAD(, dataset_desc) datasets;
 
@@ -219,7 +220,6 @@ static dnode_phys_t *objset_dnode_bonus_alloc(zfs_objset_t *, uint8_t, uint8_t,
 static off_t objset_space_alloc(zfs_opt_t *, zfs_objset_t *, off_t *);
 
 static void dsl_dir_init(zfs_opt_t *, const char *, zfs_dsl_dir_t *);
-static void dsl_dir_write(zfs_opt_t *, zfs_dsl_dir_t *);
 static void dsl_dataset_init(zfs_opt_t *, zfs_dsl_dir_t *, zfs_dsl_dataset_t *);
 
 static void spacemap_init(zfs_opt_t *);
@@ -300,24 +300,10 @@ static const zfs_sattr_t zpl_attrs[] = {
 #undef ZPL_ATTR
 };
 
-#define	ZPL_ATTR_LAYOUT		\
-	ZPL_MODE,		\
-	ZPL_SIZE,		\
-	ZPL_GEN,		\
-	ZPL_UID,		\
-	ZPL_GID,		\
-	ZPL_PARENT,		\
-	ZPL_FLAGS,		\
-	ZPL_ATIME,		\
-	ZPL_MTIME,		\
-	ZPL_CTIME,		\
-	ZPL_CRTIME,		\
-	ZPL_LINKS,		\
-	ZPL_DACL_COUNT,		\
-	ZPL_DACL_ACES
-
 /*
  * This layout matches that of a filesystem created using OpenZFS on FreeBSD.
+ * It need not match in general, but FreeBSD's loader doesn't bother parsing the
+ * layout and just hard-codes attribute offsets.
  */
 static const sa_attr_type_t zpl_attr_layout[] = {
 	ZPL_MODE,
@@ -338,8 +324,8 @@ static const sa_attr_type_t zpl_attr_layout[] = {
 };
 
 /*
- * Keys for the ZPL attribute tables in the layout ZAP.  The first two indices
- * are reserved for legacy attribute encoding.
+ * Keys for the ZPL attribute tables in the SA layout ZAP.  The first two
+ * indices are reserved for legacy attribute encoding.
  */
 #define	SA_LAYOUT_INDEX_DEFAULT	2
 #define	SA_LAYOUT_INDEX_SYMLINK	3
@@ -352,18 +338,16 @@ zfs_prep_opts(fsinfo_t *fsopts)
 	const option_t zfs_options[] = {
 		{ '\0', "poolname", &zfs->poolname, OPT_STRPTR,
 		  0, 0, "ZFS pool name" },
-		{ '\0', "mountpoint", &zfs->mountpoint, OPT_STRPTR,
+		{ '\0', "rootpath", &zfs->rootpath, OPT_STRPTR,
 		  0, 0, "XXX-MJ call it rootpath" },
 		{ '\0', "ashift", &zfs->ashift, OPT_INT32,
 		  MINBLOCKSHIFT, MAXBLOCKSHIFT, "ZFS pool ashift" },
 		{ .name = NULL }
 	};
 
-	if (zfs->mountpoint != NULL && zfs->mountpoint[0] != '/')
-		errx(1, "mountpoint `%s' must be absolute", zfs->mountpoint);
-
 	/* Set some default values. */
 	zfs->ashift = 12;
+
 	STAILQ_INIT(&zfs->datasets);
 
 	fsopts->fs_specific = zfs;
@@ -374,42 +358,76 @@ int
 zfs_parse_opts(const char *option, fsinfo_t *fsopts)
 {
 	zfs_opt_t *zfs;
-	struct dataset_desc *dataset;
+	struct dataset_desc *dsdesc;
 	char buf[BUFSIZ], *opt, *val;
-	option_t *zfs_options;
 	int rv;
 
 	zfs = fsopts->fs_specific;
-	zfs_options = fsopts->fs_options;
 
 	opt = val = estrdup(option);
 	opt = strsep(&val, "=");
 	if (strcmp(opt, "fs") == 0) {
 		if (val == NULL)
 			errx(1, "invalid filesystem parameters `%s'", option);
-		dataset = ecalloc(1, sizeof(*dataset));
-		dataset->params = estrdup(val);
-		STAILQ_INSERT_TAIL(&zfs->datasets, dataset, next);
+
+		/*
+		 * Dataset descriptions will be parsed later, in dsl_init().
+		 * Just stash them away for now.
+		 */
+		dsdesc = ecalloc(1, sizeof(*dsdesc));
+		dsdesc->params = estrdup(val);
 		free(opt);
+		STAILQ_INSERT_TAIL(&zfs->datasets, dsdesc, next);
 		return (1);
 	}
 	free(opt);
 
-	rv = set_option(zfs_options, option, buf, sizeof(buf));
-	if (rv == -1)
-		return (0);
-	return (1);
+	rv = set_option(fsopts->fs_options, option, buf, sizeof(buf));
+	return (rv == -1 ? 0 : 1);
+}
+
+static void
+zfs_check_opts(fsinfo_t *fsopts)
+{
+	zfs_opt_t *zfs;
+
+	zfs = fsopts->fs_specific;
+
+	if (fsopts->offset != 0)
+		errx(1, "unhandled offset option");
+	if (zfs->poolname == NULL)
+		errx(1, "a pool name must be specified");
+	if (zfs->rootpath == NULL)
+		easprintf(&zfs->rootpath, "/%s", zfs->poolname);
+	if (zfs->rootpath[0] != '/')
+		errx(1, "mountpoint `%s' must be absolute", zfs->rootpath);
+#if 0
+	/*
+	 * Ensure that the root path always ends with a '/', as this simplifies
+	 * things a bit in fs_layout_one().
+	 */
+	if (zfs->rootpath[strlen(zfs->rootpath) - 1] != '/') {
+		easprintf(&rootpath, "%s/", zfs->rootpath);
+		free(zfs->rootpath);
+		zfs->rootpath = rootpath;
+	}
+#endif
 }
 
 void
 zfs_cleanup_opts(fsinfo_t *fsopts)
 {
+	struct dataset_desc *d, *tmp;
 	zfs_opt_t *zfs;
 
 	zfs = fsopts->fs_specific;
+	free(zfs->rootpath);
 	free(__DECONST(void *, zfs->poolname));
-
-	free(fsopts->fs_specific);
+	STAILQ_FOREACH_SAFE(d, &zfs->datasets, next, tmp) {
+		free(d->params);
+		free(d);
+	}
+	free(zfs);
 	free(fsopts->fs_options);
 }
 
@@ -457,11 +475,8 @@ blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype, uint8_t level,
 static void
 vdev_init(zfs_opt_t *zfs, size_t size, const char *image)
 {
-	int oflags;
-
-	oflags = O_RDWR | O_CREAT | O_TRUNC;
-
 	assert(zfs->ashift >= MINBLOCKSHIFT);
+
 	zfs->vdevsize = rounddown2(size, 1 << zfs->ashift);
 	if (zfs->vdevsize < (off_t)SPA_MINDEVSIZE) {
 		errx(1, "Maximum image size %ju is too small",
@@ -469,7 +484,7 @@ vdev_init(zfs_opt_t *zfs, size_t size, const char *image)
 	}
 	zfs->asize = zfs->vdevsize - VDEV_LABEL_SPACE;
 
-	zfs->fd = open(image, oflags, 0644);
+	zfs->fd = open(image, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (zfs->fd == -1)
 		err(1, "Can't open `%s' for writing", image);
 	if (ftruncate(zfs->fd, zfs->vdevsize) != 0)
@@ -489,6 +504,14 @@ vdev_fini(zfs_opt_t *zfs)
 	}
 }
 
+/*
+ * Write a block of data to the vdev.  The offset is always relative to the end
+ * of the second leading vdev label.
+ *
+ * Consumers should generally use the helpers below, which provide block
+ * pointers and update dnode accounting, rather than calling this function
+ * directly.
+ */
 static void
 vdev_pwrite(const zfs_opt_t *zfs, const void *buf, size_t len, off_t off)
 {
@@ -499,6 +522,12 @@ vdev_pwrite(const zfs_opt_t *zfs, const void *buf, size_t len, off_t off)
 	assert((off_t)len > 0 && off + (off_t)len > off &&
 	    off + (off_t)len < zfs->asize);
 	if (zfs->spacemap != NULL) {
+		/*
+		 * Verify that the blocks being written were in fact allocated.
+		 *
+		 * The space map isn't available once the on-disk space map is
+		 * finalized, so this check doesn't quite catch everything.
+		 */
 		assert(bit_ntest(zfs->spacemap, off >> zfs->ashift,
 		    (off + len - 1) >> zfs->ashift, 1));
 	}
@@ -573,37 +602,38 @@ vdev_label_write(zfs_opt_t *zfs, int ind, const vdev_label_t *labelp)
 
 	assert(ind >= 0 && ind < VDEV_LABELS);
 
+	/*
+	 * Make a copy since we have to modify the label to set checksums.
+	 */
 	label = ecalloc(1, sizeof(*label));
 	memcpy(label, labelp, sizeof(*label));
 
-	blksz = 1 << zfs->ashift;
-
-	if (ind < 2) {
-		loff = ind * sizeof(vdev_label_t);
-	} else {
-		loff = zfs->vdevsize -
-		    (VDEV_LABELS - ind) * sizeof(vdev_label_t);
-	}
+	if (ind < 2)
+		loff = ind * sizeof(*label);
+	else
+		loff = zfs->vdevsize - (VDEV_LABELS - ind) * sizeof(*label);
 
 	/*
 	 * Set the verifier checksum for the boot block.  We don't use it, but
-	 * the loader reads it and will complain if the checksum isn't valid.
+	 * the FreeBSD loader reads it and will complain if the checksum isn't
+	 * valid.
 	 */
 	vdev_label_set_checksum(&label->vl_be,
-	    loff + __offsetof(vdev_label_t, vl_be),
-	    sizeof(vdev_boot_envblock_t));
+	    loff + __offsetof(vdev_label_t, vl_be), sizeof(label->vl_be));
 
 	/*
 	 * Set the verifier checksum for the label.
 	 */
 	vdev_label_set_checksum(&label->vl_vdev_phys,
-	    loff + __offsetof(vdev_label_t, vl_vdev_phys), sizeof(vdev_phys_t));
+	    loff + __offsetof(vdev_label_t, vl_vdev_phys),
+	    sizeof(label->vl_vdev_phys));
 
 	/*
 	 * Set the verifier checksum for the uberblocks.  There is one uberblock
 	 * per sector; for example, with an ashift of 12 we end up with
 	 * 128KB/4KB=32 copies of the uberblock in the ring.
 	 */
+	blksz = 1 << zfs->ashift;
 	assert(sizeof(label->vl_uberblock) % blksz == 0);
 	for (size_t roff = 0; roff < sizeof(label->vl_uberblock);
 	    roff += blksz) {
@@ -822,6 +852,7 @@ spacemap_write(zfs_opt_t *zfs)
 
 	assert(zfs->spacemap == NULL);
 	free(spacemap);
+	free(sma);
 }
 
 static void
@@ -877,8 +908,8 @@ _objset_write(zfs_opt_t *zfs, zfs_objset_t *os, struct dnode_cursor *c)
 	assert(os->dnodenextfree == os->dnodecount);
 
 	/*
-	 * Write out the dnode array.  For some reason data blocks must be 16KB
-	 * in size no matter how large the array is.
+	 * Write out the dnode array, i.e., the meta-dnode.  For some reason its
+	 * data blocks must be 16KB in size no matter how large the array is.
 	 */
 	for (uint64_t i = 0; i < os->dnodecount; i += DNODES_PER_BLOCK) {
 		dnode_phys_t *blk;
@@ -898,6 +929,10 @@ _objset_write(zfs_opt_t *zfs, zfs_objset_t *os, struct dnode_cursor *c)
 	free(os->dnodes);
 	os->dnodes = NULL;
 
+	/*
+	 * Write the object set itself.  The saved block pointer will be copied
+	 * into the referencing DSL dataset or the uberblocks.
+	 */
 	vdev_pwrite_data(zfs, DMU_OT_OBJSET, ZIO_CHECKSUM_FLETCHER_4, 0, 1,
 	    os->phys, os->osblksz, os->osloc, &os->osbp);
 }
@@ -946,11 +981,11 @@ objset_dnode_bonus_alloc(zfs_objset_t *os, uint8_t type, uint8_t bonustype,
 	if (idp != NULL)
 		*idp = os->dnodenextfree;
 	dnode = &os->dnodes[os->dnodenextfree++];
+	dnode->dn_type = type;
 	dnode->dn_indblkshift = MAXBLOCKSHIFT;
 	dnode->dn_datablkszsec = os->osblksz >> MINBLOCKSHIFT;
 	dnode->dn_nlevels = 1;
 	dnode->dn_nblkptr = 1;
-	dnode->dn_type = type;
 	dnode->dn_bonustype = bonustype;
 	dnode->dn_bonuslen = bonuslen;
 	dnode->dn_checksum = ZIO_CHECKSUM_FLETCHER_4;
@@ -983,6 +1018,49 @@ objset_space_alloc(zfs_opt_t *zfs, zfs_objset_t *os, off_t *lenp)
 	return (loc);
 }
 
+/*
+ * Handle dataset properties that we know about; stash them into an nvlist to be
+ * written later to the properties ZAP object.
+ *
+ * Some of this could perhaps be handled by libzfs...
+ */
+static void
+dsl_dir_set_prop(zfs_dsl_dir_t *dir, const char *key, const char *val)
+{
+	nvlist_t *nvl;
+
+	nvl = dir->propsnv;
+	if (val == NULL || val[0] == '\0')
+		errx(1, "missing value for property `%s'", key);
+	if (nvpair_find(nvl, key) != NULL)
+		errx(1, "property `%s' already set", key);
+
+	if (strcmp(key, "mountpoint") == 0) {
+		if (val[0] != '/')
+			errx(1, "mountpoint `%s' is not absolute", val);
+		nvlist_add_string(nvl, key, val);
+	} else if (strcmp(key, "atime") == 0 || strcmp(key, "exec") == 0 ||
+	    strcmp(key, "setuid") == 0) {
+		if (strcmp(val, "on") == 0)
+			nvlist_add_uint64(nvl, key, 1);
+		else if (strcmp(val, "off") == 0)
+			nvlist_add_uint64(nvl, key, 0);
+		else
+			errx(1, "invalid value `%s' for %s", val, key);
+	} else if (strcmp(key, "canmount") == 0) {
+		if (strcmp(val, "noauto") == 0)
+			nvlist_add_uint64(nvl, key, 2);
+		else if (strcmp(val, "on") == 0)
+			nvlist_add_uint64(nvl, key, 1);
+		else if (strcmp(val, "off") == 0)
+			nvlist_add_uint64(nvl, key, 0);
+		else
+			errx(1, "invalid value `%s' for %s", val, key);
+	} else {
+		errx(1, "unknown property `%s'", key);
+	}
+}
+
 static void
 dsl_init_metadir(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dir)
 {
@@ -997,24 +1075,12 @@ static void
 dsl_init(zfs_opt_t *zfs)
 {
 	zfs_dsl_dir_t *dir;
-	zfs_dsl_dataset_t *ds;
 	struct dataset_desc *d;
-	char *mountpoint, *path, *params, *param, *nextparam;
 
 	dsl_dir_init(zfs, NULL, &zfs->rootdsldir);
 
-	nvlist_add_uint64(zfs->rootdsldir.propsnv,
-	    "compression", ZIO_COMPRESS_OFF);
-	zap_add_uint64(&zfs->rootdsldir.propszap, "compression",
+	nvlist_add_uint64(zfs->rootdsldir.propsnv, "compression",
 	    ZIO_COMPRESS_OFF);
-	/* XXX-MJ probably want to deal with mountpoints later */
-	if (zfs->mountpoint == NULL)
-		easprintf(&mountpoint, "/%s", zfs->poolname);
-	else
-		mountpoint = estrdup(zfs->mountpoint);
-	nvlist_add_string(zfs->rootdsldir.propsnv, "mountpoint", mountpoint);
-	zap_add_string(&zfs->rootdsldir.propszap, "mountpoint", mountpoint);
-	free(mountpoint);
 
 	dsl_dataset_init(zfs, &zfs->rootdsldir, &zfs->rootds);
 	zfs->rootdsldir.headds = &zfs->rootds;
@@ -1025,16 +1091,28 @@ dsl_init(zfs_opt_t *zfs)
 	dsl_dataset_init(zfs, &zfs->origindsldir, &zfs->originds);
 	dsl_dataset_init(zfs, &zfs->origindsldir, &zfs->snapds);
 
+	/*
+	 * Go through the list of user-specified datasets and create DSL objects
+	 * for them.
+	 */
 	STAILQ_FOREACH(d, &zfs->datasets, next) {
+		char *dsname, *params, *param, *nextparam;
+
 		params = d->params;
+		dsname = strsep(&params, ":");
 
-		path = strsep(&params, ":");
-
-		dir = ecalloc(1, sizeof(*dir));
-		dsl_dir_init(zfs, path, dir);
-		ds = ecalloc(1, sizeof(*ds));
-		dsl_dataset_init(zfs, dir, ds);
-		dir->headds = ds;
+		if (strcmp(dsname, zfs->poolname) == 0) {
+			/*
+			 * This is the root dataset; it's already created, so
+			 * we're just setting options.
+			 */
+			dir = &zfs->rootdsldir;
+		} else {
+			dir = ecalloc(1, sizeof(*dir));
+			dsl_dir_init(zfs, dsname, dir);
+			dir->headds = ecalloc(1, sizeof(*dir->headds));
+			dsl_dataset_init(zfs, dir, dir->headds);
+		}
 
 		for (nextparam = param = params; nextparam != NULL;) {
 			char *key, *val;
@@ -1043,24 +1121,17 @@ dsl_init(zfs_opt_t *zfs)
 
 			key = val = param;
 			key = strsep(&val, "=");
-			if (val == NULL || val[0] == '\0')
-				errx(1, "missing value for property `%s'", key);
-			if (nvpair_find(dir->propsnv, key) != NULL)
-				errx(1, "property `%s' already set", key);
-
-			if (strcmp(key, "mountpoint") == 0) {
-				if (val[0] != '/') {
-					errx(1, "mountpoint `%s' not absolute",
-					    val);
-				}
-				nvlist_add_string(dir->propsnv, key, val);
-			} else {
-				errx(1, "unknown property `%s'", key);
-			}
+			dsl_dir_set_prop(dir, key, val);
 		}
+	}
 
-		free(d->params);
-		d->params = NULL;
+	/*
+	 * Set the root dataset's mount point if the user didn't override the
+	 * default.
+	 */
+	if (nvpair_find(zfs->rootdsldir.propsnv, "mountpoint") == NULL) {
+		nvlist_add_string(zfs->rootdsldir.propsnv, "mountpoint",
+		    zfs->rootpath);
 	}
 }
 
@@ -1098,6 +1169,16 @@ dsl_dir_foreach(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir,
 	dsl_dir_foreach_pre(zfs, dsldir, cb, arg);
 }
 
+/*
+ * Create a DSL directory, which is effectively an entry in the ZFS namespace.
+ * We always create a root DSL directory, whose name is the pool's name, and
+ * several metadata directories.
+ *
+ * Each directory has two ZAP objects, one pointing to child directories, and
+ * one for properties (which are inherited by children unless overridden).
+ * Directories typically reference a DSL dataset, the "head dataset", which
+ * points to an object set.
+ */
 static void
 dsl_dir_init(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dsldir)
 {
@@ -1132,6 +1213,7 @@ dsl_dir_init(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dsldir)
 		 */
 		assert(dsldir == &zfs->rootdsldir);
 		dsldir->name = estrdup(zfs->poolname);
+		dsldir->fullname = estrdup(zfs->poolname);
 		dsldir->phys->dd_parent_obj = 0;
 		return;
 	}
@@ -1155,12 +1237,11 @@ dsl_dir_init(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dsldir)
 		}
 		if (parent == NULL) {
 			errx(1, "no parent at `%s' for filesystem `%s'",
-			    dirname, origname);
+			    dirname, name);
 		}
-
-		lp = &parent->children;
 	}
 
+	dsldir->fullname = estrdup(name);
 	dsldir->name = estrdup(dirname);
 	free(origname);
 	STAILQ_INSERT_TAIL(lp, dsldir, next);
@@ -1169,13 +1250,43 @@ dsl_dir_init(zfs_opt_t *zfs, const char *name, zfs_dsl_dir_t *dsldir)
 	dsldir->phys->dd_parent_obj = parent->dirid;
 }
 
+/*
+ * Convert dataset properties into entries in the DSL directory's properties
+ * ZAP.
+ */
 static void
-dsl_dir_write(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
+dsl_dir_finalize_props(zfs_dsl_dir_t *dir)
 {
-	zap_write(zfs, &dir->propszap);
-	zap_write(zfs, &dir->childzap);
-	if (dir->headds != NULL && dir->headds->os != NULL) {
-		objset_write(zfs, dir->headds->os);
+	for (nvp_header_t *nvh = NULL;
+	    (nvh = nvlist_next_nvpair(dir->propsnv, nvh)) != NULL;) {
+		nv_string_t *nvname;
+		nv_pair_data_t *nvdata;
+		const char *name;
+
+		nvname = (nv_string_t *)(nvh + 1);
+		nvdata = (nv_pair_data_t *)(&nvname->nv_data[0] +
+		    NV_ALIGN4(nvname->nv_size));
+
+		name = nvstring_get(nvname);
+		switch (nvdata->nv_type) {
+		case DATA_TYPE_UINT64: {
+			uint64_t val;
+
+			memcpy(&val, &nvdata->nv_data[0], sizeof(uint64_t));
+			zap_add_uint64(&dir->propszap, name, val);
+			break;
+		}
+		case DATA_TYPE_STRING: {
+			nv_string_t *nvstr;
+
+			nvstr = (nv_string_t *)&nvdata->nv_data[0];
+			zap_add_string(&dir->propszap, name,
+			    nvstring_get(nvstr));
+			break;
+		}
+		default:
+			assert(0);
+		}
 	}
 }
 
@@ -1185,12 +1296,15 @@ dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 	zfs_dsl_dir_t *cdir;
 	uint64_t bytes;
 
-	dsl_dir_write(zfs, dir);
+	dsl_dir_finalize_props(dir);
+	zap_write(zfs, &dir->propszap);
+	zap_write(zfs, &dir->childzap);
 
 	if (dir->headds != NULL && dir->headds->os != NULL) {
 		zfs_objset_t *os;
 
 		os = dir->headds->os;
+		objset_write(zfs, os);
 
 		dir->phys->dd_head_dataset_obj = dir->headds->dsid;
 		dir->headds->phys->ds_prev_snap_obj = zfs->snapds.dsid;
@@ -1198,7 +1312,6 @@ dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 		memcpy(&dir->headds->phys->ds_bp, &os->osbp, sizeof(blkptr_t));
 
 		bytes = os->space;
-
 		dir->headds->phys->ds_used_bytes = bytes;
 		/* XXX-MJ not sure what the difference is here... */
 		dir->headds->phys->ds_uncompressed_bytes = bytes;
@@ -1237,6 +1350,9 @@ dsl_write(zfs_opt_t *zfs)
 
 	dsl_dir_foreach_post(zfs, &zfs->rootdsldir, dsl_dir_finalize, NULL);
 
+	/*
+	 * XXX-MJ this is too early, objset_mos_write() will allocate more space
+	 */
 	zfs->mosdsldir.phys->dd_used_bytes = mos->space;
 	zfs->mosdsldir.phys->dd_compressed_bytes = mos->space;
 	zfs->mosdsldir.phys->dd_uncompressed_bytes = mos->space;
@@ -1912,6 +2028,10 @@ pool_init_objdir_dsl(zfs_opt_t *zfs, zfs_zap_t *objdir)
 	zap_add_uint64(objdir, DMU_POOL_ROOT_DATASET, id);
 }
 
+/*
+ * Initialize the MOS object directory, the root of virtually all of the pool's
+ * data and metadata.
+ */
 static void
 pool_init_objdir(zfs_opt_t *zfs)
 {
@@ -1939,10 +2059,13 @@ pool_init(zfs_opt_t *zfs)
 	zfs_objset_t *mos;
 	uint64_t dnid, dnodecount;
 
-	zfs->guid = 0xdeadbeefc0deface;
+	zfs->guid = 0xdeadfacec0debeef;
 
 	mos = &zfs->mos;
 
+	/*
+	 * Figure out how many dnodes will be allocated from the MOS.
+	 */
 	dnodecount = 0;
 	dnodecount++; /* object directory (ZAP)               */
 	dnodecount++; /* |-> vdev config object (nvlist)      */
@@ -1970,12 +2093,22 @@ pool_init(zfs_opt_t *zfs)
 	dnodecount++; /*     |-> DSL root dataset             */
 	dnodecount++; /*     |   L-> deadlist                 */
 	dnodecount++; /*     L-> props (ZAP)                  */
-
+	/*
+	 * Space map stuff.
+	 */
 	dnodecount++; /* space map object array               */
 	dnodecount += zfs->mscount; /* space maps             */
-
-	/* Child datasets. */
+	/*
+	 * Child datasets.
+	 */
 	STAILQ_FOREACH(d, &zfs->datasets, next) {
+		char buf[BUFSIZ];
+
+		/* Ugly hack to skip over root dataset parameters. */
+		snprintf(buf, sizeof(buf), "%s:", zfs->poolname);
+		if (strncmp(buf, d->params, strlen(buf)) == 0)
+			continue;
+
 		dnodecount++; /* DSL directory                */
 		dnodecount++; /* |-> DSL dataset              */
 		dnodecount++; /* |   L-> deadlist             */
@@ -2003,8 +2136,12 @@ pool_labels_write(zfs_opt_t *zfs)
 	nvlist_t *poolconfig, *vdevconfig;
 	int error;
 
-	poolconfig = pool_config_nvcreate(zfs);
+	label = ecalloc(1, sizeof(*label));
 
+	/*
+	 * Assemble the vdev configuration and store it in the label.
+	 */
+	poolconfig = pool_config_nvcreate(zfs);
 	vdevconfig = pool_disk_vdev_config_nvcreate(zfs);
 	nvlist_add_nvlist(poolconfig, ZPOOL_CONFIG_VDEV_TREE, vdevconfig);
 	nvlist_destroy(vdevconfig);
@@ -2012,11 +2149,8 @@ pool_labels_write(zfs_opt_t *zfs)
 	error = nvlist_export(poolconfig);
 	if (error != 0)
 		errc(1, error, "nvlist_export");
-
-	label = ecalloc(1, sizeof(*label));
 	nvlist_copy(poolconfig, label->vl_vdev_phys.vp_nvlist,
 	    sizeof(label->vl_vdev_phys.vp_nvlist));
-
 	nvlist_destroy(poolconfig);
 
 	/*
@@ -2041,7 +2175,8 @@ pool_labels_write(zfs_opt_t *zfs)
 	}
 
 	/*
-	 * Write out four copies of the label.
+	 * Write out four copies of the label: two at the beginning of the vdev
+	 * and two at the end.
 	 */
 	for (int i = 0; i < VDEV_LABELS; i++)
 		vdev_label_write(zfs, i, label);
@@ -2082,8 +2217,10 @@ fs_foreach_count(fsnode *cur, void *arg)
 	uint64_t *countp;
 
 	countp = arg;
-	if (cur->type == S_IFDIR && strcmp(cur->name, ".") == 0)
+	if (cur->type == S_IFDIR && strcmp(cur->name, ".") == 0) {
+		assert((cur->inode->flags & FI_ROOT) == 0);
 		return (1);
+	}
 
 	if (cur->inode->ino == 0) {
 		cur->inode->ino = ++(*countp);
@@ -2478,7 +2615,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 		return;
 	}
 
-	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
+	dnode = objset_dnode_bonus_alloc(arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
 	cur->inode->ino = dnid;
 	cur->inode->flags |= FI_ALLOCATED;
@@ -2490,7 +2627,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 	buf = zfs->filebuf;
 	bufsz = sizeof(zfs->filebuf);
 	size = cur->inode->st.st_size;
-	c = dnode_cursor_init(zfs, &arg->fs->os, dnode, size, 0);
+	c = dnode_cursor_init(zfs, arg->fs->os, dnode, size, 0);
 	for (off_t foff = 0; foff < size; foff += target) {
 		off_t loc, sofar;
 
@@ -2510,7 +2647,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 		if (target < (off_t)bufsz)
 			memset(buf + target, 0, bufsz - target);
 
-		loc = objset_space_alloc(zfs, &arg->fs->os, &target);
+		loc = objset_space_alloc(zfs, arg->fs->os, &target);
 		assert(target <= MAXBLOCKSIZE);
 
 		vdev_pwrite_dnode_indir(zfs, c->dnode, 0, 1, buf, target, loc,
@@ -2535,7 +2672,7 @@ fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 	assert(cur->type == S_IFDIR);
 	assert((cur->inode->flags & FI_ALLOCATED) == 0);
 
-	os = &arg->fs->os;
+	os = arg->fs->os;
 
 	dnode = objset_dnode_bonus_alloc(os, DMU_OT_DIRECTORY_CONTENTS,
 	    DMU_OT_SA, 0, &dnid);
@@ -2591,7 +2728,7 @@ fs_populate_symlink(fsnode *cur, struct fs_populate_arg *arg)
 	assert(cur->type == S_IFLNK);
 	assert((cur->inode->flags & (FI_ALLOCATED | FI_ROOT)) == 0);
 
-	dnode = objset_dnode_bonus_alloc(&arg->fs->os,
+	dnode = objset_dnode_bonus_alloc(arg->fs->os,
 	    DMU_OT_PLAIN_FILE_CONTENTS, DMU_OT_SA, 0, &dnid);
 
 	fs_populate_dirent(arg, cur, dnid);
@@ -2625,7 +2762,8 @@ fs_foreach_populate(fsnode *cur, void *_arg)
 
 	ret = (cur->inode->flags & FI_ROOT) != 0 ? 0 : 1;
 
-	if (cur->next == NULL && cur->child == NULL) {
+	if (cur->next == NULL &&
+	    (cur->child == NULL || (cur->inode->flags & FI_ROOT) != 0)) {
 		/*
 		 * We reached a terminal node in a subtree.  Walk back up and
 		 * write out directories.
@@ -2637,7 +2775,8 @@ fs_foreach_populate(fsnode *cur, void *_arg)
 			(void)close(dir->dirfd);
 			free(dir);
 			cur = cur->parent;
-		} while (cur != NULL && cur->next == NULL);
+		} while (cur != NULL && cur->next == NULL &&
+		    (cur->inode->flags & FI_ROOT) == 0);
 	}
 
 	return (ret);
@@ -2664,7 +2803,7 @@ fs_add_zpl_attr_layout(zfs_zap_t *zap, unsigned int index,
  * allows us to set file attributes quickly.
  */
 static uint64_t
-fs_add_zpl_attrs(zfs_opt_t *zfs, zfs_fs_t *fs)
+fs_set_zpl_attrs(zfs_opt_t *zfs, zfs_fs_t *fs)
 {
 	zfs_zap_t sazap, salzap, sarzap;
 	zfs_objset_t *os;
@@ -2672,7 +2811,7 @@ fs_add_zpl_attrs(zfs_opt_t *zfs, zfs_fs_t *fs)
 	uint64_t saobjid, salobjid, sarobjid;
 	uint16_t offset;
 
-	os = &fs->os;
+	os = fs->os;
 
 	/*
 	 * The on-disk tables are stored in two ZAP objects, the registry object
@@ -2747,24 +2886,107 @@ fs_add_zpl_attrs(zfs_opt_t *zfs, zfs_fs_t *fs)
 	return (saobjid);
 }
 
+#if 0
+static fsnode *
+fsnode_lookup(fsnode *root, const char *path)
+{
+}
+#endif
+
 static void
 fs_layout_one(zfs_opt_t *zfs __unused, zfs_dsl_dir_t *dsldir, void *arg)
 {
-	const char *origmountpoint;
-	char *mountpoint, *name, *next;
+	char *mountpoint, *origmountpoint, *name, *next;
 	fsnode *cur, *root;
 	int error;
 
-	error = nvlist_find(dsldir->propsnv, "mountpoint", DATA_TYPE_STRING,
-	    NULL, &origmountpoint, NULL);
-	if (error == ENOENT)
+	if (dsldir->headds == NULL)
 		return;
-	assert(error == 0);
 
-	mountpoint = estrdup(origmountpoint);
+	error = nvlist_find(dsldir->propsnv, "mountpoint", DATA_TYPE_STRING,
+	    NULL, &mountpoint, NULL);
+	assert(error == 0 || error == ENOENT);
+	if (error == 0) {
+		if (strcmp(mountpoint, "none") == 0)
+			return;
+
+		/*
+		 * nvlist_find() does not make a copy.
+		 */
+		mountpoint = estrdup(mountpoint);
+	} else {
+		/*
+		 * The mountpoint property is always set for the root dataset.
+		 */
+		assert(strchr(dsldir->fullname, '/') != NULL);
+		easprintf(&mountpoint, "%s%s%s", zfs->rootpath,
+		    zfs->rootpath[strlen(zfs->rootpath) - 1] == '/' ? "" : "/",
+		    strchr(dsldir->fullname, '/') + 1);
+	}
 	assert(mountpoint[0] == '/');
+	assert(strstr(mountpoint, zfs->rootpath) == mountpoint);
 
+	origmountpoint = mountpoint;
+
+	/*
+	 * Figure out which fsnode corresponds to our mountpoint.
+	 */
 	root = arg;
+	if (strcmp(mountpoint, zfs->rootpath) == 0) {
+		cur = root;
+	} else {
+		mountpoint += strlen(zfs->rootpath);
+
+		/*
+		 * Look up the directory in the staged tree.  For example, if
+		 * the dataset's mount point is /foo/bar/baz, we'll search the
+		 * root directory for "foo", search "foo" for "baz", and so on.
+		 * Each intermediate name must refer to a directory; the final
+		 * component need not exist.
+		 */
+		cur = root->next;
+		for (next = name = mountpoint; next != NULL;) {
+			for (; *next == '/'; next++)
+				;
+			name = strsep(&next, "/");
+
+			for (; cur != NULL && strcmp(cur->name, name) != 0;
+			    cur = cur->next)
+				;
+			if (cur == NULL) {
+				if (next == NULL)
+					break;
+				errx(1, "missing mountpoint directory for `%s'",
+				    dsldir->fullname);
+			}
+			if (cur->type != S_IFDIR) {
+				errx(1,
+				    "mountpoint for `%s' is not a directory",
+				    dsldir->fullname);
+			}
+			if (next != NULL)
+				cur = cur->child;
+		}
+	}
+
+	if (cur != NULL) {
+		assert(cur->type == S_IFDIR);
+
+		/*
+		 * Multiple datasets shouldn't share a mountpoint.  It's
+		 * technically allowed, but it's not clear what makefs should do
+		 * in that case.
+		 */
+		assert((cur->inode->flags & FI_ROOT) == 0);
+		if (cur != root)
+			cur->inode->flags |= FI_ROOT;
+		assert(cur->inode->param == NULL);
+		cur->inode->param = dsldir;
+
+		dsldir->root = cur == root ? cur : cur->child;
+		assert(strcmp(dsldir->root->name, ".") == 0);
+	}
+#if 0
 	if (strcmp(mountpoint, "/") == 0) {
 		cur = root;
 	} else {
@@ -2788,6 +3010,9 @@ fs_layout_one(zfs_opt_t *zfs __unused, zfs_dsl_dir_t *dsldir, void *arg)
 			    origmountpoint);
 		}
 	}
+	(void)next;
+	(void)name;
+	cur = root;
 	if (cur != NULL) {
 		if (cur->type != S_IFDIR) {
 			errx(1, "mountpoint `%s' is not a directory",
@@ -2807,16 +3032,25 @@ fs_layout_one(zfs_opt_t *zfs __unused, zfs_dsl_dir_t *dsldir, void *arg)
 		dsldir->root = cur == root ? cur : cur->child;
 		assert(strcmp(dsldir->root->name, ".") == 0);
 	}
-
-	free(mountpoint);
+#endif
+	free(origmountpoint);
 }
 
+/*
+ * Create a filesystem dataset.  More specifically:
+ * - create an object set for the dataset
+ * - add required metadata (SA tables, property definitions, etc.) to that
+ *   object set
+ * - populate the object set with file objects
+ *
+ * The dataset will be the head dataset of the DSL directory "dsldir".
+ */
 static void
 fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 {
 	struct fs_populate_arg poparg;
+	zfs_fs_t fs;
 	zfs_zap_t deleteqzap, masterzap;
-	zfs_fs_t *fs;
 	zfs_objset_t *os;
 	dnode_phys_t *deleteq, *masterobj;
 	fsnode *root;
@@ -2828,13 +3062,20 @@ fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 		return;
 	}
 
-	fs = ecalloc(1, sizeof(*fs));
-	os = &fs->os;
+	os = ecalloc(1, sizeof(*os));
+
+	memset(&fs, 0, sizeof(fs));
+	fs.os = os;
+
+	/* XXX-MJ looks out of place */
 	dsldir->headds->os = os;
 
-	dnodecount = 0;
+	/*
+	 * How many dnodes do we need?  One for each file/directory/symlink plus
+	 * several metadata objects.
+	 */
+	dnodecount = 1; /* root directory */
 	fsnode_foreach(root, fs_foreach_count, &dnodecount);
-	dnodecount++; /* meta dnode */
 	dnodecount++; /* master object */
 	dnodecount++; /* delete queue */
 	dnodecount++; /* system attributes master node */
@@ -2849,11 +3090,15 @@ fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 	 * Create the ZAP SA layout now since filesystem object dnodes will
 	 * refer to those attributes.
 	 */
-	saobjid = fs_add_zpl_attrs(zfs, fs);
+	saobjid = fs_set_zpl_attrs(zfs, &fs);
 
+	/*
+	 * Populate the dataset with files from the staging directory.  Most of
+	 * our runtime is spent here.
+	 */
 	poparg.dirfd = dsldir->rootdirfd;
 	poparg.zfs = zfs;
-	poparg.fs = fs;
+	poparg.fs = &fs;
 	SLIST_INIT(&poparg.dirs);
 	fs_populate_dir(root, &poparg);
 	assert(!SLIST_EMPTY(&poparg.dirs));
@@ -2884,7 +3129,8 @@ fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
 	zap_add_uint64(&masterzap, "acltype", 2 /* NFSv4 */);
 	zap_write(zfs, &masterzap);
 
-	/* XXX-MJ zfs_fs is leaked */
+	free(fs.saoffs);
+	/* XXX-MJ should we just write the object set now? */
 }
 
 static void
@@ -2899,6 +3145,9 @@ fs_build(zfs_opt_t *zfs, int dirfd, fsnode *root)
 	dsl_dir_foreach_pre(zfs, &zfs->rootdsldir, fs_build_one, NULL);
 }
 
+/*
+ * The entry point to all other code in this file.
+ */
 void
 zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 {
@@ -2913,8 +3162,7 @@ zfs_makefs(const char *image, const char *dir, fsnode *root, fsinfo_t *fsopts)
 	 */
 	srandom(1729);
 
-	if (fsopts->offset != 0)
-		errx(1, "unhandled offset option");
+	zfs_check_opts(fsopts);
 
 	dirfd = open(dir, O_DIRECTORY | O_RDONLY);
 	if (dirfd < 0)

@@ -511,11 +511,16 @@ and a value.
 The following keywords are supported:
 .Pp
 .Bl -tag -width omit-trailing-period -offset indent -compact
+.It ashift
+The base-2 logarithm of the minimum block size.
+Typical values are 9 (512B blocks) and 12 (4KB blocks).
+The default value is 12.
 .It poolname
 The name of the ZFS pool.
 This option must be specified.
 .It fs
 Create an additional dataset.
+This option may be specified multiple times.
 The argument value must be of the form
 .Ar <dataset>[:<prop1=v1>[:<prop2=v2>[:...]]] ,
 where
@@ -525,6 +530,11 @@ For example, with a pool name of
 .Ql test
 all dataset names must be prefixed by
 .Ql test/ .
+A dataset must exist at each level of the pool's namespace.
+For example, to create
+.Ql test/foo/bar ,
+.Ql test/foo
+must be created.
 .Pp
 Dataset properties, as described in
 .Xr zfsprops 8 ,
