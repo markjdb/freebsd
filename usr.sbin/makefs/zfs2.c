@@ -73,10 +73,6 @@ _Static_assert(MAXBLOCKSIZE == SPA_OLDMAXBLOCKSIZE, "");
 #define	MINBLOCKSIZE		((off_t)(1 << MINBLOCKSHIFT))
 _Static_assert(MINBLOCKSIZE == SPA_MINBLOCKSIZE, "");
 
-/*
- * XXX-MJ this might wrong but I don't understand where DN_MAX_LEVELS' definition
- * comes from.  Be sure to test with large files...
- */
 #define	INDIR_LEVELS		6
 #define	BLKPTR_PER_INDIR	(MAXBLOCKSIZE / sizeof(blkptr_t))
 
@@ -1071,15 +1067,37 @@ dsl_init(zfs_opt_t *zfs)
 }
 
 static void
-dsl_dir_foreach(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir,
+dsl_dir_foreach_pre(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir,
     void (*cb)(zfs_opt_t *, zfs_dsl_dir_t *, void *), void *arg)
 {
 	zfs_dsl_dir_t *cdsldir;
 
 	cb(zfs, dsldir, arg);
 	STAILQ_FOREACH(cdsldir, &dsldir->children, next) {
-		dsl_dir_foreach(zfs, cdsldir, cb, arg);
+		dsl_dir_foreach_pre(zfs, cdsldir, cb, arg);
 	}
+}
+
+static void
+dsl_dir_foreach_post(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir,
+    void (*cb)(zfs_opt_t *, zfs_dsl_dir_t *, void *), void *arg)
+{
+	zfs_dsl_dir_t *cdsldir;
+
+	STAILQ_FOREACH(cdsldir, &dsldir->children, next) {
+		dsl_dir_foreach_post(zfs, cdsldir, cb, arg);
+	}
+	cb(zfs, dsldir, arg);
+}
+
+/*
+ * Used when the caller doesn't care about the order one way or another.
+ */
+static void
+dsl_dir_foreach(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir,
+    void (*cb)(zfs_opt_t *, zfs_dsl_dir_t *, void *), void *arg)
+{
+	dsl_dir_foreach_pre(zfs, dsldir, cb, arg);
 }
 
 static void
@@ -1166,6 +1184,9 @@ dsl_dir_write(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 static void
 dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 {
+	zfs_dsl_dir_t *cdir;
+	uint64_t bytes;
+
 	dsl_dir_write(zfs, dir);
 
 	if (dir->headds != NULL && dir->headds->os != NULL) {
@@ -1175,26 +1196,52 @@ dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 
 		dir->phys->dd_head_dataset_obj = dir->headds->dsid;
 		dir->headds->phys->ds_prev_snap_obj = zfs->snapds.dsid;
+		zfs->snapds.phys->ds_num_children++;
 		memcpy(&dir->headds->phys->ds_bp, &os->osbp, sizeof(blkptr_t));
 
-		dir->headds->phys->ds_used_bytes = os->space;
-		/* XXX-MJ not sure what the difference is here... */
-		dir->headds->phys->ds_uncompressed_bytes = os->space;
-		dir->headds->phys->ds_compressed_bytes = os->space;
+		bytes = os->space;
 
-		/* XXX-MJ this is wrong, should be a sum of children */
-		dir->phys->dd_used_bytes = dir->headds->phys->ds_used_bytes;
-		dir->phys->dd_compressed_bytes =
-		    dir->headds->phys->ds_compressed_bytes;
-		dir->phys->dd_uncompressed_bytes =
-		    dir->headds->phys->ds_uncompressed_bytes;
+		dir->headds->phys->ds_used_bytes = bytes;
+		/* XXX-MJ not sure what the difference is here... */
+		dir->headds->phys->ds_uncompressed_bytes = bytes;
+		dir->headds->phys->ds_compressed_bytes = bytes;
+
+		STAILQ_FOREACH(cdir, &dir->children, next) {
+			bytes += cdir->phys->dd_used_bytes;
+		}
+		dir->phys->dd_used_bytes = bytes;
+		dir->phys->dd_compressed_bytes = bytes;
+		dir->phys->dd_uncompressed_bytes = bytes;
 	}
 }
 
 static void
-dsl_fini(zfs_opt_t *zfs)
+dsl_write(zfs_opt_t *zfs)
 {
-	dsl_dir_foreach(zfs, &zfs->rootdsldir, dsl_dir_finalize, NULL);
+	zfs_zap_t snapnameszap;
+	zfs_objset_t *mos;
+	dnode_phys_t *snapnames;
+	uint64_t snapmapid;
+
+	mos = &zfs->mos;
+
+	snapnames = objset_dnode_alloc(mos, DMU_OT_DSL_DS_SNAP_MAP, &snapmapid);
+
+	zfs->origindsldir.phys->dd_head_dataset_obj = zfs->originds.dsid;
+	zfs->originds.phys->ds_prev_snap_obj = zfs->snapds.dsid;
+	zfs->originds.phys->ds_snapnames_zapobj = snapmapid;
+	zfs->snapds.phys->ds_next_snap_obj = zfs->originds.dsid;
+	zfs->snapds.phys->ds_num_children = 1;
+
+	zap_init(&snapnameszap, mos, snapnames);
+	zap_add_uint64(&snapnameszap, "$ORIGIN", zfs->snapds.dsid);
+	zap_write(zfs, &snapnameszap);
+
+	dsl_dir_foreach_post(zfs, &zfs->rootdsldir, dsl_dir_finalize, NULL);
+
+	zfs->mosdsldir.phys->dd_used_bytes = mos->space;
+	zfs->mosdsldir.phys->dd_compressed_bytes = mos->space;
+	zfs->mosdsldir.phys->dd_uncompressed_bytes = mos->space;
 }
 
 static void
@@ -1213,7 +1260,6 @@ dsl_dataset_init(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, zfs_dsl_dataset_t *ds)
 	zap_init(&deadlistzap, &zfs->mos, dnode);
 	zap_write(zfs, &deadlistzap);
 
-	/* XXX-MJ what else? */
 	ds->phys->ds_dir_obj = dir->dirid;
 	ds->phys->ds_deadlist_obj = deadlistid;
 	ds->phys->ds_creation_txg = TXG_INITIAL;
@@ -2011,45 +2057,7 @@ pool_labels_write(zfs_opt_t *zfs)
 static void
 pool_fini(zfs_opt_t *zfs)
 {
-	struct dataset_desc *desc;
-	zfs_zap_t snapnameszap;
-	zfs_objset_t *mos;
-	dnode_phys_t *snapnames;
-	uint64_t snapmapid;
-
-	mos = &zfs->mos;
-
-	snapnames = objset_dnode_alloc(mos, DMU_OT_DSL_DS_SNAP_MAP, &snapmapid);
-
-	zfs->origindsldir.phys->dd_head_dataset_obj = zfs->originds.dsid;
-	zfs->originds.phys->ds_prev_snap_obj = zfs->snapds.dsid;
-	zfs->originds.phys->ds_snapnames_zapobj = snapmapid;
-	zfs->snapds.phys->ds_next_snap_obj = zfs->originds.dsid;
-	/* XXX-MJ ugly */
-	zfs->snapds.phys->ds_num_children = 2;
-	STAILQ_FOREACH(desc, &zfs->datasets, next) {
-		zfs->snapds.phys->ds_num_children++;
-	}
-
-	zap_init(&snapnameszap, mos, snapnames);
-	zap_add_uint64(&snapnameszap, "$ORIGIN", zfs->snapds.dsid);
-	zap_write(zfs, &snapnameszap);
-
-	dsl_fini(zfs);
-
-	zfs->mosdsldir.phys->dd_used_bytes = mos->space;
-	zfs->mosdsldir.phys->dd_compressed_bytes = mos->space;
-	zfs->mosdsldir.phys->dd_uncompressed_bytes = mos->space;
-
-#if 0
-	zfs->rootdsldir.phys->dd_used_bytes =
-	    zfs->rootds.phys->ds_used_bytes; /* XXX-MJ add subdirs, $MOS? */
-	zfs->rootdsldir.phys->dd_compressed_bytes =
-	    zfs->rootds.phys->ds_used_bytes;
-	zfs->rootdsldir.phys->dd_uncompressed_bytes =
-	    zfs->rootds.phys->ds_used_bytes;
-#endif
-
+	dsl_write(zfs);
 	objset_mos_write(zfs);
 	pool_labels_write(zfs);
 }
@@ -2891,8 +2899,8 @@ fs_build(zfs_opt_t *zfs, int dirfd, fsnode *root)
 
 	assert((root->inode->flags & FI_ROOT) == 0);
 
-	zfs->rootdsldir.rootdirfd = dirfd; /* XXX-MJ */
-	dsl_dir_foreach(zfs, &zfs->rootdsldir, fs_build_one, NULL);
+	zfs->rootdsldir.rootdirfd = dirfd;
+	dsl_dir_foreach_pre(zfs, &zfs->rootdsldir, fs_build_one, NULL);
 }
 
 void
