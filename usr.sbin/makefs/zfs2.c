@@ -353,7 +353,7 @@ zfs_prep_opts(fsinfo_t *fsopts)
 		{ '\0', "poolname", &zfs->poolname, OPT_STRPTR,
 		  0, 0, "ZFS pool name" },
 		{ '\0', "mountpoint", &zfs->mountpoint, OPT_STRPTR,
-		  0, 0, "ZFS root dataset mount point" },
+		  0, 0, "XXX-MJ call it rootpath" },
 		{ '\0', "ashift", &zfs->ashift, OPT_INT32,
 		  MINBLOCKSHIFT, MAXBLOCKSHIFT, "ZFS pool ashift" },
 		{ .name = NULL }
@@ -504,8 +504,6 @@ vdev_pwrite(const zfs_opt_t *zfs, const void *buf, size_t len, off_t off)
 	}
 
 	off += VDEV_LABEL_START_SIZE;
-	if (off <= 0x20080 && off + len >= 0x20080)
-		abort();
 	for (size_t sofar = 0; sofar < len; sofar += n) {
 		n = pwrite(zfs->fd, (const char *)buf + sofar, len - sofar,
 		    off + sofar);
@@ -1524,7 +1522,6 @@ static void
 zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 {
 	struct dnode_cursor *c;
-	blkptr_t *bp;
 	zap_leaf_t l;
 	zap_phys_t *zaphdr;
 	struct zap_table_phys *zt;
@@ -1698,19 +1695,17 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	c = dnode_cursor_init(zfs, zap->os, zap->dnode,
 	    (lblkcnt + 1) * blksz, blksz);
 
-	bp = dnode_cursor_next(zfs, c, 0);
 	loc = objset_space_alloc(zfs, zap->os, &blksz);
 	assert(blksz == MAXBLOCKSIZE);
 
-	vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, zfs->filebuf, blksz, loc, bp);
+	vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, zfs->filebuf, blksz, loc,
+	    dnode_cursor_next(zfs, c, 0));
 
 	for (uint64_t i = 0; i < lblkcnt; i++) {
-		bp = dnode_cursor_next(zfs, c, (i + 1) * blksz);
-
 		loc = objset_space_alloc(zfs, zap->os, &blksz);
 		assert(blksz == MAXBLOCKSIZE);
 		vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, leafblks + i * blksz,
-		    blksz, loc, bp);
+		    blksz, loc, dnode_cursor_next(zfs, c, (i + 1) * blksz));
 	}
 
 	dnode_cursor_finish(zfs, c);
@@ -2898,6 +2893,7 @@ fs_build(zfs_opt_t *zfs, int dirfd, fsnode *root)
 	dsl_dir_foreach(zfs, &zfs->rootdsldir, fs_layout_one, root);
 
 	assert((root->inode->flags & FI_ROOT) == 0);
+	assert(root->inode->param != NULL);
 
 	zfs->rootdsldir.rootdirfd = dirfd;
 	dsl_dir_foreach_pre(zfs, &zfs->rootdsldir, fs_build_one, NULL);

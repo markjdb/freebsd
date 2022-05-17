@@ -35,7 +35,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd September 17, 2020
+.Dd May 17, 2022
 .Dt MAKEFS 8
 .Os
 .Sh NAME
@@ -266,6 +266,8 @@ BSD fast file system (default).
 ISO 9660 file system.
 .It Sy msdos
 FAT12, FAT16, or FAT32 file system.
+.It Sy zfs
+ZFS pool containing one or more file systems.
 .El
 .It Fl x
 Exclude file system nodes not explicitly listed in the specfile.
@@ -494,10 +496,52 @@ Volume ID.
 .It Cm volume_label
 Volume Label.
 .El
+.Ss zfs-specific options
+The image created by
+.Nm
+contains a ZFS pool with a single vdev of type
+.Ql disk .
+The root dataset is always created implicitly and contains the entire input
+directory tree unless additional datasets are specified using the options
+described below.
+.Pp
+The arguments consist of a keyword, an equal sign
+.Pq Ql = ,
+and a value.
+The following keywords are supported:
+.Pp
+.Bl -tag -width omit-trailing-period -offset indent -compact
+.It poolname
+The name of the ZFS pool.
+This option must be specified.
+.It fs
+Create an additional dataset.
+The argument value must be of the form
+.Ar <dataset>[:<prop1=v1>[:<prop2=v2>[:...]]] ,
+where
+.Ar dataset
+is the name of the dataset and must belong to the pool's namespace.
+For example, with a pool name of
+.Ql test
+all dataset names must be prefixed by
+.Ql test/ .
+.Pp
+Dataset properties, as described in
+.Xr zfsprops 8 ,
+may be specified following the dataset name.
+Currently only the
+.Ql mountpoint
+property may be set for a dataset.
+.It rootpath
+XXX-MJ
+.El
 .Sh SEE ALSO
 .Xr mtree 5 ,
 .Xr mtree 8 ,
-.Xr newfs 8
+.Xr newfs 8 ,
+.Xr zfsconcepts 8 ,
+.Xr zfsprops 8 ,
+.Xr zpool 8
 .Sh HISTORY
 The
 .Nm
