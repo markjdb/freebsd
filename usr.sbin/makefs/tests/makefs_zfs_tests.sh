@@ -36,11 +36,19 @@ TEST_ZFS_POOL_NAME="$TMPDIR/poolname"
 
 common_cleanup()
 {
+	local pool md
+
 	sync
 
-	# XXXMJ these might not exist
-	zpool destroy "$(cat $TEST_ZFS_POOL_NAME)"
-	mdconfig -d -u "$(cat $TEST_MD_DEVICE_FILE)"
+	pool=$(cat $TEST_ZFS_POOL_NAME)
+	if zpool list "$pool" >/dev/null; then
+		zpool destroy "$pool"
+	fi
+
+	md=$(cat $TEST_MD_DEVICE_FILE)
+	if [ -c "$md" ]; then
+		mdconfig -d -u "$md"
+	fi
 }
 
 import_image()
@@ -73,7 +81,34 @@ basic_cleanup()
 	common_cleanup
 }
 
+atf_test_case dataset_removal cleanup
+dataset_removal_body()
+{
+	create_test_dirs
+
+	cd $TEST_INPUTS_DIR
+	mkdir dir
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 1g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
+	    -o fs=${ZFS_POOL_NAME}/dir \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+
+	atf_check -o empty -e empty -s exit:0 zfs destroy ${ZFS_POOL_NAME}/dir
+}
+dataset_removal_cleanup()
+{
+	common_cleanup
+}
+
+#
 # Make sure that we can create and remove an empty directory.
+#
 atf_test_case empty_dir cleanup
 empty_dir_body()
 {
@@ -392,9 +427,7 @@ snapshot_body()
 
 	import_image
 
-	atf_expect_fail "snapshots are broken for an unknown reason"
-	atf_check -o empty -e empty -s exit:0 \
-	    zfs snapshot ${ZFS_POOL_NAME}@1
+	atf_check -o empty -e empty -s exit:0 zfs snapshot ${ZFS_POOL_NAME}@1
 }
 snapshot_cleanup()
 {
@@ -464,6 +497,7 @@ root_props_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case basic
+	atf_add_test_case dataset_removal
 	atf_add_test_case empty_dir
 	atf_add_test_case empty_fs
 	atf_add_test_case file_sizes
@@ -474,7 +508,6 @@ atf_init_test_cases()
 	atf_add_test_case multi_dataset_2
 	# XXX-MJ one to check handling of non-existent mountpoints
 	# one to check mountpoint "none"
-        # one to check zfs destroy
 	atf_add_test_case reproducible
 	atf_add_test_case snapshot
 	atf_add_test_case soft_links
