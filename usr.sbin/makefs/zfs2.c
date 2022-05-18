@@ -177,11 +177,13 @@ typedef struct {
 	/* Pool parameters. */
 	const char	*poolname;
 	char		*rootpath;	/* XXX-MJ */
+	char		*bootfs;
 	int		ashift;		/* vdev block size */
 	STAILQ_HEAD(, dataset_desc) datasets;
 
 	/* Pool state. */
 	uint64_t	guid;		/* pool and vdev GUID */
+	zfs_zap_t	poolprops;
 
 	/* MOS state. */
 	zfs_objset_t	mos;		/* meta object set */
@@ -337,6 +339,8 @@ zfs_prep_opts(fsinfo_t *fsopts)
 	zfs_opt_t *zfs = ecalloc(1, sizeof(*zfs));
 
 	const option_t zfs_options[] = {
+		{ '\0', "bootfs", &zfs->bootfs, OPT_STRPTR,
+		  0, 0, "Bootable dataset" },
 		{ '\0', "poolname", &zfs->poolname, OPT_STRPTR,
 		  0, 0, "ZFS pool name" },
 		{ '\0', "rootpath", &zfs->rootpath, OPT_STRPTR,
@@ -412,6 +416,7 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 
 	zfs = fsopts->fs_specific;
 	free(zfs->rootpath);
+	free(zfs->bootfs);
 	free(__DECONST(void *, zfs->poolname));
 	STAILQ_FOREACH_SAFE(d, &zfs->datasets, next, tmp) {
 		free(d->params);
@@ -419,6 +424,26 @@ zfs_cleanup_opts(fsinfo_t *fsopts)
 	}
 	free(zfs);
 	free(fsopts->fs_options);
+}
+
+static int
+nvlist_find_string(nvlist_t *nvl, const char *key, char **retp)
+{
+	char *str;
+	int error, len;
+
+	error = nvlist_find(nvl, key, DATA_TYPE_STRING, NULL, &str, &len);
+	if (error == 0) {
+		*retp = ecalloc(1, len + 1);
+		memcpy(*retp, str, len);
+	}
+	return (error);
+}
+
+static int
+nvlist_find_uint64(nvlist_t *nvl, const char *key, uint64_t *retp)
+{
+	return (nvlist_find(nvl, key, DATA_TYPE_UINT64, NULL, retp, NULL));
 }
 
 static size_t
@@ -1023,17 +1048,13 @@ dsl_dir_get_mountpoint(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 {
 	zfs_dsl_dir_t *pdir;
 	char *mountpoint, *origmountpoint;
-	int error;
 
-	error = nvlist_find(dir->propsnv, "mountpoint", DATA_TYPE_STRING,
-	    NULL, &mountpoint, NULL);
-	assert(error == 0 || error == ENOENT);
-	if (error == 0) {
+	if (nvlist_find_string(dir->propsnv, "mountpoint", &mountpoint) == 0) {
 		if (strcmp(mountpoint, "none") == 0)
 			return (NULL);
 
 		/*
-		 * nvlist_find() does not make a copy.
+		 * nvlist_find_string() does not make a copy.
 		 */
 		mountpoint = estrdup(mountpoint);
 	} else {
@@ -1043,24 +1064,23 @@ dsl_dir_get_mountpoint(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 		 * up our mountpoint along the way.  The mountpoint property is
 		 * always set for the root dataset.
 		 */
-		pdir = dir->parent;
-		mountpoint = estrdup(dir->name);
-		do {
+		for (pdir = dir->parent, mountpoint = estrdup(dir->name);;) {
 			origmountpoint = mountpoint;
-			error = nvlist_find(pdir->propsnv, "mountpoint",
-			    DATA_TYPE_STRING, NULL, &mountpoint, NULL);
-			assert(error == 0 || error == ENOENT);
-			if (error == 0) {
+
+			if (nvlist_find_string(pdir->propsnv, "mountpoint",
+			    &mountpoint) == 0) {
 				easprintf(&mountpoint, "%s%s%s", mountpoint,
 				    mountpoint[strlen(mountpoint) - 1] == '/' ?
 				    "" : "/", origmountpoint);
-			} else {
-				easprintf(&mountpoint, "%s/%s", pdir->name,
-				    origmountpoint);
+				free(origmountpoint);
+				break;
 			}
+
+			easprintf(&mountpoint, "%s/%s", pdir->name,
+			    origmountpoint);
 			free(origmountpoint);
 			pdir = pdir->parent;
-		} while (error == ENOENT);
+		}
 	}
 	assert(mountpoint[0] == '/');
 	assert(strstr(mountpoint, zfs->rootpath) == mountpoint);
@@ -1086,7 +1106,7 @@ dsl_dir_set_prop(zfs_dsl_dir_t *dir, const char *key, const char *val)
 		errx(1, "property `%s' already set", key);
 
 	if (strcmp(key, "mountpoint") == 0) {
-		if (val[0] != '/')
+		if (val[0] != '/' && strcmp(val, "none") != 0)
 			errx(1, "mountpoint `%s' is not absolute", val);
 		nvlist_add_string(nvl, key, val);
 	} else if (strcmp(key, "atime") == 0 || strcmp(key, "exec") == 0 ||
@@ -1556,6 +1576,18 @@ static void
 zap_add_string(zfs_zap_t *zap, const char *name, const char *val)
 {
 	zap_add(zap, name, 1, strlen(val) + 1, val);
+}
+
+static bool
+zap_entry_exists(zfs_zap_t *zap, const char *name)
+{
+	zfs_zap_entry_t *ent;
+
+	STAILQ_FOREACH(ent, &zap->kvps, next) {
+		if (strcmp(ent->name, name) == 0)
+			return (true);
+	}
+	return (false);
 }
 
 static void
@@ -2104,6 +2136,17 @@ pool_init_objdir_dsl(zfs_opt_t *zfs, zfs_zap_t *objdir)
 	zap_add_uint64(objdir, DMU_POOL_ROOT_DATASET, id);
 }
 
+static void
+pool_init_objdir_poolprops(zfs_opt_t *zfs, zfs_zap_t *objdir)
+{
+	dnode_phys_t *dnode;
+	uint64_t id;
+
+	dnode = objset_dnode_alloc(&zfs->mos, DMU_OT_POOL_PROPS, &id);
+	zap_init(&zfs->poolprops, &zfs->mos, dnode);
+	zap_add_uint64(objdir, DMU_POOL_PROPS, id);
+}
+
 /*
  * Initialize the MOS object directory, the root of virtually all of the pool's
  * data and metadata.
@@ -2121,6 +2164,7 @@ pool_init_objdir(zfs_opt_t *zfs)
 	pool_init_objdir_bplists(zfs, &zap);
 	pool_init_objdir_feature_maps(zfs, &zap);
 	pool_init_objdir_dsl(zfs, &zap);
+	pool_init_objdir_poolprops(zfs, &zap);
 	zap_write(zfs, &zap);
 }
 
@@ -2150,6 +2194,7 @@ pool_init(zfs_opt_t *zfs)
 	dnodecount++; /* |-> feature descriptions             */
 	dnodecount++; /* |-> sync bplist                      */
 	dnodecount++; /* |-> free bplist                      */
+	dnodecount++; /* |-> pool properties                  */
 	dnodecount++; /* L-> root DSL directory               */
 	dnodecount++; /*     |-> DSL child directory (ZAP)    */
 	dnodecount++; /*     |   |-> $MOS (DSL dir)           */
@@ -2266,6 +2311,7 @@ pool_labels_write(zfs_opt_t *zfs)
 static void
 pool_fini(zfs_opt_t *zfs)
 {
+	zap_write(zfs, &zfs->poolprops);
 	dsl_write(zfs);
 	objset_mos_write(zfs);
 	pool_labels_write(zfs);
@@ -2950,6 +2996,7 @@ fs_layout_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg)
 {
 	char *mountpoint, *origmountpoint, *name, *next;
 	fsnode *cur, *root;
+	uint64_t canmount;
 
 	if (dsldir->headds == NULL)
 		return;
@@ -2957,6 +3004,16 @@ fs_layout_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg)
 	mountpoint = dsl_dir_get_mountpoint(zfs, dsldir);
 	if (mountpoint == NULL)
 		return;
+	if (nvlist_find_uint64(dsldir->propsnv, "canmount", &canmount) == 0 &&
+	    canmount == 0)
+		return;
+
+	/*
+	 * If we were asked to specify a bootfs, set it here.
+	 */
+	if (zfs->bootfs != NULL && strcmp(zfs->bootfs, dsldir->fullname) == 0)
+		zap_add_uint64(&zfs->poolprops, "bootfs", dsldir->headds->dsid);
+
 	origmountpoint = mountpoint;
 
 	/*
@@ -3187,6 +3244,9 @@ fs_build(zfs_opt_t *zfs, int dirfd, fsnode *root)
 	 * it belongs to.
 	 */
 	dsl_dir_foreach(zfs, &zfs->rootdsldir, fs_layout_one, root);
+
+	if (zfs->bootfs != NULL && !zap_entry_exists(&zfs->poolprops, "bootfs"))
+		errx(1, "no dataset matches bootfs property `%s'", zfs->bootfs);
 
 	/*
 	 * Traverse the file hierarchy starting from the root fsnode.  One
