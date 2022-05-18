@@ -239,7 +239,7 @@ static void dnode_cursor_finish(zfs_opt_t *, struct dnode_cursor *);
 
 static off_t vdev_space_alloc(zfs_opt_t *, off_t *);
 
-static void fs_build_one(zfs_opt_t *, fsnode *, int);
+static void fs_build_one(zfs_opt_t *, zfs_dsl_dir_t *, fsnode *, int);
 
 /*
  * The order of the attributes doesn't matter, this is simply the one hard-coded
@@ -2734,7 +2734,7 @@ fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 		zap_init(&dirzap, os, dnode);
 		zap_write(arg->zfs, &dirzap);
 
-		fs_build_one(arg->zfs, cur, dirfd);
+		fs_build_one(arg->zfs, cur->inode->param, cur->child, dirfd);
 	}
 }
 
@@ -2793,7 +2793,7 @@ fs_foreach_populate(fsnode *cur, void *_arg)
 			dir = SLIST_FIRST(&arg->dirs);
 			SLIST_REMOVE_HEAD(&arg->dirs, next);
 			zap_write(arg->zfs, &dir->zap);
-			if (close(dir->dirfd) != 0)
+			if (dir->dirfd != -1 && close(dir->dirfd) != 0)
 				err(1, "close");
 			free(dir);
 			cur = cur->parent;
@@ -3007,29 +3007,23 @@ fs_foreach_count(fsnode *cur, void *arg)
  * - optionally populate the object set with file objects, using "root" as the
  *   root directory
  *
- * In particular, a dataset may be completely empty if their mountpoint
- * references a non-existent path in the staged directory tree.  In this case we
- * still create an filesystem object set, it just won't have a root directory.
- *
  * "dirfd" is a directory descriptor for the directory referenced by "root".  It
  * is closed before returning.
  */
 static void
-fs_build_one(zfs_opt_t *zfs, fsnode *root, int dirfd)
+fs_build_one(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, fsnode *root, int dirfd)
 {
+	struct fs_populate_arg arg;
 	zfs_fs_t fs;
 	zfs_zap_t deleteqzap, masterzap;
-	zfs_dsl_dir_t *dsldir;
 	zfs_objset_t *os;
 	dnode_phys_t *deleteq, *masterobj;
 	uint64_t deleteqid, dnodecount, moid, rootdirid, saobjid;
 
-	assert(root->type == S_IFDIR);
-
-	dsldir = root->inode->param;
-	if ((root->inode->flags & FI_ROOT) != 0)
-		root = root->child;
-	assert(fsnode_isroot(root));
+	if (root != NULL) {
+		assert(root->type == S_IFDIR);
+		assert(fsnode_isroot(root));
+	}
 
 	os = ecalloc(1, sizeof(*os));
 
@@ -3040,9 +3034,8 @@ fs_build_one(zfs_opt_t *zfs, fsnode *root, int dirfd)
 	 * How many dnodes do we need?  One for each file/directory/symlink plus
 	 * several metadata objects.
 	 */
-	dnodecount = 0;
+	dnodecount = 1; /* root directory */
 	if (root != NULL) {
-		dnodecount++; /* root directory */
 		fsnode_foreach(root, fs_foreach_count, &dnodecount);
 	}
 	dnodecount++; /* master object */
@@ -3061,33 +3054,39 @@ fs_build_one(zfs_opt_t *zfs, fsnode *root, int dirfd)
 	 */
 	saobjid = fs_set_zpl_attrs(zfs, &fs);
 
-	/*
-	 * Populate the dataset with files from the staging directory.  Most of
-	 * our runtime is spent here.
-	 */
-	if (root != NULL) {
-		struct fs_populate_arg arg;
+	arg.dirfd = dirfd;
+	arg.zfs = zfs;
+	arg.fs = &fs;
+	SLIST_INIT(&arg.dirs);
+	if (root == NULL) {
+		struct stat *stp;
 
-		arg.dirfd = dirfd;
-		arg.zfs = zfs;
-		arg.fs = &fs;
-		SLIST_INIT(&arg.dirs);
+		root = ecalloc(1, sizeof(*root));
+		root->inode = ecalloc(1, sizeof(*root->inode));
 
+		root->name = estrdup(".");
+		root->type = S_IFDIR;
+
+		stp = &root->inode->st;
+		stp->st_uid = 0;
+		stp->st_gid = 0;
+		stp->st_mode = S_IFDIR | 0755;
+
+		fs_populate_dir(root, &arg);
+		assert(!SLIST_EMPTY(&arg.dirs));
+		fsnode_foreach(root, fs_foreach_populate, &arg);
+		assert(SLIST_EMPTY(&arg.dirs));
+		rootdirid = arg.rootdirid;
+	} else {
 		/*
-		 * Initialize the root directory and the directory stack.
+		 * Populate the dataset with files from the staging directory.  Most of
+		 * our runtime is spent here.
 		 */
 		fs_populate_dir(root, &arg);
 		assert(!SLIST_EMPTY(&arg.dirs));
-
-		/*
-		 * Let it rip.
-		 */
 		fsnode_foreach(root, fs_foreach_populate, &arg);
 		assert(SLIST_EMPTY(&arg.dirs));
-
 		rootdirid = arg.rootdirid;
-	} else {
-		rootdirid = 0;
 	}
 
 	/*
@@ -3119,10 +3118,21 @@ fs_build_one(zfs_opt_t *zfs, fsnode *root, int dirfd)
 	 * The DSL layer will sum up the bytes consumed by each dataset using
 	 * information stored in the object set, so it can't be freed just yet.
 	 */
+	assert(dsldir != NULL);
 	dsldir->headds->os = os;
 	objset_write(zfs, os);
 
 	free(fs.saoffs);
+}
+
+static void
+fs_build_disconnected(zfs_opt_t *zfs, zfs_dsl_dir_t *dsldir, void *arg __unused)
+{
+	if (dsldir->headds == NULL)
+		return;
+	if (dsldir->headds->os != NULL)
+		return;
+	fs_build_one(zfs, dsldir, NULL, -1);
 }
 
 /*
@@ -3152,7 +3162,9 @@ fs_build(zfs_opt_t *zfs, int dirfd, fsnode *root)
 	 * populates them.  Once this function has returned, all datasets will
 	 * have been fully populated.
 	 */
-	fs_build_one(zfs, root, dirfd);
+	fs_build_one(zfs, root->inode->param, root, dirfd);
+
+	dsl_dir_foreach(zfs, &zfs->rootdsldir, fs_build_disconnected, NULL);
 }
 
 /*

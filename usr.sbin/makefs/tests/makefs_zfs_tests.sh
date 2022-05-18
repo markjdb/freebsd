@@ -38,7 +38,7 @@ common_cleanup()
 {
 	sync
 
-        # XXXMJ these might not exist
+	# XXXMJ these might not exist
 	zpool destroy "$(cat $TEST_ZFS_POOL_NAME)"
 	mdconfig -d -u "$(cat $TEST_MD_DEVICE_FILE)"
 }
@@ -275,6 +275,80 @@ long_file_name_cleanup()
 }
 
 #
+# Exercise handling of multiple datasets.
+#
+atf_test_case multi_dataset_1 cleanup
+multi_dataset_1_body()
+{
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+
+	mkdir dir1
+	echo a > dir1/a
+	mkdir dir2
+	echo b > dir2/b
+
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 1g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
+	    -o fs=${ZFS_POOL_NAME}/dir1 -o fs=${ZFS_POOL_NAME}/dir2 \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+
+	# Make sure that we have three datasets with the expected mount points.
+	atf_check -o inline:${ZFS_POOL_NAME}\\n -e empty -s exit:0 \
+	    zfs list -H -o name ${ZFS_POOL_NAME}
+	atf_check -o inline:${TEST_MOUNT_DIR}\\n -e empty -s exit:0 \
+	    zfs list -H -o mountpoint ${ZFS_POOL_NAME}
+
+	atf_check -o inline:${ZFS_POOL_NAME}/dir1\\n -e empty -s exit:0 \
+	    zfs list -H -o name ${ZFS_POOL_NAME}/dir1
+	atf_check -o inline:${TEST_MOUNT_DIR}/dir1\\n -e empty -s exit:0 \
+	    zfs list -H -o mountpoint ${ZFS_POOL_NAME}/dir1
+
+	atf_check -o inline:${ZFS_POOL_NAME}/dir2\\n -e empty -s exit:0 \
+	    zfs list -H -o name ${ZFS_POOL_NAME}/dir2
+	atf_check -o inline:${TEST_MOUNT_DIR}/dir2\\n -e empty -s exit:0 \
+	    zfs list -H -o mountpoint ${ZFS_POOL_NAME}/dir2
+}
+multi_dataset_1_cleanup()
+{
+	common_cleanup
+}
+
+atf_test_case multi_dataset_2 cleanup
+multi_dataset_2_body()
+{
+	create_test_dirs
+	cd $TEST_INPUTS_DIR
+
+	mkdir dir1
+	echo a > dir1/a
+	mkdir dir2
+	echo b > dir2/b
+
+	cd -
+
+	atf_check -o empty -e empty -s exit:0 \
+	    $MAKEFS -s 1g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
+	    -o fs=${ZFS_POOL_NAME}/dir1:mountpoint=/ \
+	    -o fs=${ZFS_POOL_NAME}:mountpoint=/dir1 \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	import_image
+
+	check_image_contents
+}
+multi_dataset_2_cleanup()
+{
+	common_cleanup
+}
+
+#
 # Rudimentary test to verify that two ZFS images created using the same
 # parameters and input hierarchy are byte-identical.  In particular, makefs(1)
 # does not preserve file access times.
@@ -292,7 +366,7 @@ reproducible_body()
 	    $MAKEFS -s 512m -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
 	    ${TEST_IMAGE}.2 $TEST_INPUTS_DIR
 
-        # XXX-MJ cmp(1) is really slow
+	# XXX-MJ cmp(1) is really slow
 	atf_check -o empty -e empty -s exit:0 \
 	    cmp ${TEST_IMAGE}.1 ${TEST_IMAGE}.2
 }
@@ -356,6 +430,9 @@ soft_links_cleanup()
 	common_cleanup
 }
 
+#
+# Verify that we can set properties on the root dataset.
+#
 atf_test_case root_props cleanup
 root_props_body()
 {
@@ -393,13 +470,18 @@ atf_init_test_cases()
 	atf_add_test_case hard_links
 	atf_add_test_case indirect_dnode_array
 	atf_add_test_case long_file_name
-        atf_add_test_case reproducible
+	atf_add_test_case multi_dataset_1
+	atf_add_test_case multi_dataset_2
+	# XXX-MJ one to check handling of non-existent mountpoints
+	# one to check mountpoint "none"
+        # one to check zfs destroy
+	atf_add_test_case reproducible
 	atf_add_test_case snapshot
 	atf_add_test_case soft_links
-        atf_add_test_case root_props
+	atf_add_test_case root_props
 
 	# XXXMJ tests:
 	# - test with different ashifts (at least, 9 and 12), different image sizes
 	# - create datasets in imported pool
-        # - bootenvs
+	# - bootenvs
 }
