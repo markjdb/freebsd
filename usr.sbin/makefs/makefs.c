@@ -77,6 +77,7 @@ static fstype_t fstypes[] = {
 	ENTRY(cd9660),
 	ENTRY(ffs),
 	ENTRY(msdos),
+	ENTRY(zfs),
 	{ .type = NULL	},
 };
 
@@ -266,7 +267,7 @@ main(int argc, char *argv[])
 			break;
 
 		case 'Z':
-			/* Superscedes 'p' for compatibility with NetBSD makefs(8) */
+			/* Supersedes 'p' for compatibility with NetBSD makefs(8) */
 			fsoptions.sparse = 1;
 			break;
 

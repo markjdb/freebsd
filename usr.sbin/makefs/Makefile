@@ -13,7 +13,8 @@ SRCS=	cd9660.c \
 	makefs.c \
 	msdos.c \
 	mtree.c \
-	walk.c
+	walk.c \
+	zfs.c
 MAN=	makefs.8
 
 NO_WCAST_ALIGN=
@@ -22,6 +23,7 @@ CSTD=	c11
 .include "${SRCDIR}/cd9660/Makefile.inc"
 .include "${SRCDIR}/ffs/Makefile.inc"
 .include "${SRCDIR}/msdos/Makefile.inc"
+.include "${SRCDIR}/zfs/Makefile.inc"
 
 CFLAGS+=-DHAVE_STRUCT_STAT_ST_FLAGS=1
 
@@ -35,6 +37,9 @@ SRCS+=	pack_dev.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libnetbsd
 LIBADD=		netbsd util sbuf
+
+CFLAGS.zfs.c+=	-I${SRCDIR}/zfs \
+		-I${SRCTOP}/sys/cddl/boot/zfs \
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
