@@ -24,7 +24,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd March 12, 2017
+.Dd May 26, 2022
 .Dt GLABEL 8
 .Os
 .Sh NAME
@@ -143,6 +143,20 @@ Generic labels created and managed solely by
 are created in the
 .Pa /dev/label/
 directory.
+Note that such labels will be ignored by other operating systems, so
+generic labels should be used only when the device will be accessed solely
+by
+.Fx .
+Note also that generic, automatic labels occupy some space on the device
+and thus should not be added to a device already containing a file system.
+Instead, create a label before initializing the file system, and initialize
+that file system on the device created by
+.Nm
+under the
+.Pa /dev/label/
+directory.
+Then the file system will correctly account for the space occupied by the
+generic label.
 .Pp
 Note that for all label types, nested GEOM classes will cause additional
 device nodes to be created, with context-specific data appended to their
