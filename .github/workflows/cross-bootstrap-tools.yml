@@ -2,7 +2,7 @@ name: Cross-build Kernel
 
 on:
   push:
-    branches: [ main, 'stable/13' ]
+    branches: [ 'ff/makefs-zfs-staging', main, 'stable/13' ]
   pull_request:
     branches: [ main ]
 
