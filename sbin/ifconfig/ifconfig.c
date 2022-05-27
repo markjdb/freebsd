@@ -44,6 +44,7 @@ static const char rcsid[] =
 #include <sys/ioctl.h>
 #include <sys/module.h>
 #include <sys/linker.h>
+#include <sys/nv.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -991,6 +992,8 @@ top:
 				    p->c_name);
 			p->c_u.c_func2(argv[1], argv[2], s, afp);
 			argc -= 2, argv += 2;
+		} else if (p->c_parameter == SPARAM && p->c_u.c_func3) {
+			p->c_u.c_func3(*argv, p->c_sparameter, s, afp);
 		} else if (p->c_u.c_func)
 			p->c_u.c_func(*argv, p->c_parameter, s, afp);
 		argc--, argv++;
@@ -1251,6 +1254,53 @@ setifcap(const char *vname, int value, int s, const struct afswtch *afp)
 		Perror(vname);
 }
 
+void
+setifcapnv(const char *vname, const char *arg, int s, const struct afswtch *afp)
+{
+	nvlist_t *nvcap;
+	void *buf;
+	char *marg, *mopt;
+	size_t nvbuflen;
+	bool neg;
+
+	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) < 0)
+		Perror("ioctl (SIOCGIFCAP)");
+	if ((ifr.ifr_curcap & IFCAP_NV) == 0) {
+		warnx("IFCAP_NV not supported");
+		return; /* Not exit() */
+	}
+
+	marg = strdup(arg);
+	if (marg == NULL)
+		Perror("strdup");
+	nvcap = nvlist_create(0);
+	if (nvcap == NULL)
+		Perror("nvlist_create");
+	while ((mopt = strsep(&marg, ",")) != NULL) {
+		neg = *mopt == '-';
+		if (neg)
+			mopt++;
+		if (strcmp(mopt, "rxtls") == 0) {
+			nvlist_add_bool(nvcap, "rxtls4", !neg);
+			nvlist_add_bool(nvcap, "rxtls6", !neg);
+		} else {
+			nvlist_add_bool(nvcap, mopt, !neg);
+		}
+	}
+	buf = nvlist_pack(nvcap, &nvbuflen);
+	if (buf == NULL) {
+		errx(1, "nvlist_pack error");
+		exit(1);
+	}
+	ifr.ifr_cap_nv.buf_length = ifr.ifr_cap_nv.length = nvbuflen;
+	ifr.ifr_cap_nv.buffer = buf;
+	if (ioctl(s, SIOCSIFCAPNV, (caddr_t)&ifr) < 0)
+		Perror(vname);
+	free(buf);
+	nvlist_destroy(nvcap);
+	free(marg);
+}
+
 static void
 setifmetric(const char *val, int dummy __unused, int s, 
     const struct afswtch *afp)
@@ -1375,8 +1425,12 @@ status(const struct afswtch *afp, const struct sockaddr_dl *sdl,
 	struct ifaddrs *ifa)
 {
 	struct ifaddrs *ift;
-	int allfamilies, s;
 	struct ifstat ifs;
+	nvlist_t *nvcap;
+	const char *nvname;
+	void *buf, *cookie;
+	int allfamilies, s, type;
+	bool first, val;
 
 	if (afp == NULL) {
 		allfamilies = 1;
@@ -1421,13 +1475,62 @@ status(const struct afswtch *afp, const struct sockaddr_dl *sdl,
 	}
 
 	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) == 0) {
-		if (ifr.ifr_curcap != 0) {
+		if ((ifr.ifr_curcap & IFCAP_NV) != 0) {
+			buf = malloc(IFR_CAP_NV_MAXBUFSIZE);
+			if (buf == NULL)
+				Perror("malloc");
+			ifr.ifr_cap_nv.buffer = buf;
+			ifr.ifr_cap_nv.buf_length = IFR_CAP_NV_MAXBUFSIZE;
+			if (ioctl(s, SIOCGIFCAPNV, (caddr_t)&ifr) != 0)
+				Perror("ioctl (SIOCGIFCAPNV)");
+			nvcap = nvlist_unpack(ifr.ifr_cap_nv.buffer,
+			    ifr.ifr_cap_nv.length, 0);
+			if (nvcap == NULL)
+				Perror("nvlist_unpack");
+			printf("\toptions");
+			cookie = NULL;
+			for (first = true;; first = false) {
+				nvname = nvlist_next(nvcap, &type, &cookie);
+				if (nvname == NULL) {
+					printf("\n");
+					break;
+				}
+				if (type == NV_TYPE_BOOL) {
+					val = nvlist_get_bool(nvcap, nvname);
+					if (val) {
+						printf("%c%s",
+						    first ? ' ' : ',', nvname);
+					}
+				}
+			}
+			if (supmedia) {
+				printf("\tcapabilities");
+				cookie = NULL;
+				for (first = true;; first = false) {
+					nvname = nvlist_next(nvcap, &type,
+					    &cookie);
+					if (nvname == NULL) {
+						printf("\n");
+						break;
+					}
+					if (type == NV_TYPE_BOOL)
+						printf("%c%s", first ? ' ' :
+						    ',', nvname);
+				}
+			}
+			nvlist_destroy(nvcap);
+			free(buf);
+
+			if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) != 0)
+				Perror("ioctl (SIOCGIFCAP)");
+		} else if (ifr.ifr_curcap != 0) {
 			printb("\toptions", ifr.ifr_curcap, IFCAPBITS);
 			putchar('\n');
-		}
-		if (supmedia && ifr.ifr_reqcap != 0) {
-			printb("\tcapabilities", ifr.ifr_reqcap, IFCAPBITS);
-			putchar('\n');
+			if (supmedia && ifr.ifr_reqcap != 0) {
+				printb("\tcapabilities", ifr.ifr_reqcap,
+				    IFCAPBITS);
+				putchar('\n');
+			}
 		}
 	}
 
@@ -1694,6 +1797,10 @@ static struct cmd basic_cmds[] = {
 	DEF_CMD("-lro",		-IFCAP_LRO,	setifcap),
 	DEF_CMD("txtls",	IFCAP_TXTLS,	setifcap),
 	DEF_CMD("-txtls",	-IFCAP_TXTLS,	setifcap),
+	DEF_CMD_SARG("rxtls",	IFCAP2_RXTLS4_NAME "," IFCAP2_RXTLS6_NAME,
+	    setifcapnv),
+	DEF_CMD_SARG("-rxtls",	"-"IFCAP2_RXTLS4_NAME ",-" IFCAP2_RXTLS6_NAME,
+	    setifcapnv),
 	DEF_CMD("wol",		IFCAP_WOL,	setifcap),
 	DEF_CMD("-wol",		-IFCAP_WOL,	setifcap),
 	DEF_CMD("wol_ucast",	IFCAP_WOL_UCAST,	setifcap),

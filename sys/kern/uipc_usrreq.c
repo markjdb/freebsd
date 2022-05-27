@@ -2015,10 +2015,8 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 	if (controlp != NULL) /* controlp == NULL => free control messages */
 		*controlp = NULL;
 	while (cm != NULL) {
-		if (sizeof(*cm) > clen || cm->cmsg_len > clen) {
-			error = EINVAL;
-			break;
-		}
+		MPASS(clen >= sizeof(*cm) && clen >= cm->cmsg_len);
+
 		data = CMSG_DATA(cm);
 		datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
 		if (cm->cmsg_level == SOL_SOCKET
@@ -2241,6 +2239,19 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			oldfds = datalen / sizeof (int);
 			if (oldfds == 0)
 				break;
+			/* On some machines sizeof pointer is bigger than
+			 * sizeof int, so we need to check if data fits into
+			 * single mbuf.  We could allocate several mbufs, and
+			 * unp_externalize() should even properly handle that.
+			 * But it is not worth to complicate the code for an
+			 * insane scenario of passing over 200 file descriptors
+			 * at once.
+			 */
+			newlen = oldfds * sizeof(fdep[0]);
+			if (CMSG_SPACE(newlen) > MCLBYTES) {
+				error = EMSGSIZE;
+				goto out;
+			}
 			/*
 			 * Check that all the FDs passed in refer to legal
 			 * files.  If not, reject the entire operation.
@@ -2265,7 +2276,6 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			 * Now replace the integer FDs with pointers to the
 			 * file structure and capability rights.
 			 */
-			newlen = oldfds * sizeof(fdep[0]);
 			*controlp = sbcreatecontrol(NULL, newlen,
 			    SCM_RIGHTS, SOL_SOCKET, M_WAITOK);
 			fdp = data;
