@@ -11,6 +11,10 @@
 
 #include <sys/dtrace.h>
 
+#include "kinst.h"
+
+MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
+
 static int	kinst_unload(void);
 static void	kinst_getargdesc(void *, dtrace_id_t, void *,
 		    dtrace_argdesc_t *);
@@ -41,21 +45,14 @@ static const dtrace_pops_t kinst_pops = {
 	.dtps_destroy =		kinst_destroy
 };
 
-static dtrace_provider_id_t	kinst_id;
+dtrace_provider_id_t	kinst_id;
+struct kinst_probe	**kinst_probetab;
 
-static void
-kinst_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
-{
-}
-
-/* TODO: pack probe info into a struct */
-
-static int
+int
 kinst_provide_module_function(linker_file_t lf, int symindx,
     linker_symval_t *symval, void *opaque)
 {
-	dtrace_id_t pbid;
-	char pbname[16];
+	struct kinst_probe *kp;
 	int size, n = 0;
 	uint8_t *instr, *limit;
 
@@ -78,11 +75,18 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			    __func__, __LINE__, instr);
 			return (1);
 		}
-		snprintf(pbname, sizeof(pbname), "%d", n++);
-		pbid = dtrace_probe_create(kinst_id, lf->filename, symval->name,
-		    pbname, 3, NULL);
+		/* XXX: is this right? */
+		if (n >= KINST_PROBETAB_SIZE) {
+			printf("%s:%d probetab full\n", __func__, __LINE__);
+			return (1);
+		}
+		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
+		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n);
+		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
+		    symval->name, kp->kp_name, 3, NULL);
+		kinst_probetab[n++] = kp;
 		printf("%s:%d created probe with id %u\n", __func__, __LINE__,
-		    pbid);
+		    kp->kp_id);
 		instr += size;
 	}
 
@@ -97,6 +101,11 @@ kinst_provide_module(void *arg, modctl_t *lf)
 	 * in the module "lf".
 	 */
 	linker_file_function_listall(lf, kinst_provide_module_function, NULL);
+}
+
+static void
+kinst_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
+{
 }
 
 static void
@@ -127,6 +136,11 @@ kinst_linker_file_cb(linker_file_t lf, void *arg)
 static void
 kinst_load(void *dummy)
 {
+	/* XXX /dev/dtrace/kinst? */
+
+	kinst_probetab = malloc(KINST_PROBETAB_SIZE *
+	    sizeof(struct kinst_probe *), M_KINST, M_WAITOK | M_ZERO);
+
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
 		return;
@@ -138,6 +152,20 @@ kinst_load(void *dummy)
 static int
 kinst_unload(void)
 {
+	struct kinst_probe *kp;
+	int i = 0;
+
+	/* FIXME: bad/slow? */
+	for (; i < KINST_PROBETAB_SIZE; i++) {
+		kp = kinst_probetab[i];
+		if (kp != NULL) {
+			free(kp, M_KINST);
+			kp = NULL;
+		}
+	}
+	free(kinst_probetab, M_KINST);
+	kinst_probetab = NULL;
+
 	return (dtrace_unregister(kinst_id));
 }
 
