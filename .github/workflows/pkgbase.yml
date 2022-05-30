@@ -1,12 +1,14 @@
 name: Build packages
 
-on:
-  push:
-    branches: [ ff/misc ]
+  #on:
+  #push:
+  #branches: [ ff/misc ]
+
+on: workflow_dispatch
 
 jobs:
   pkgbase:
-    runs-on: freebsd-13.0
+    runs-on: freebsd-13.1
     steps:
       - uses: actions/checkout@v2
       - name: Build userspace

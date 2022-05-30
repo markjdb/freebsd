@@ -1,0 +1,41 @@
+name: Build third-party kernel modules
+
+on: workflow_dispatch
+
+jobs:
+  drm-kmod:
+    strategy:
+      fail-fast: false
+      matrix:
+        drm-branch: [master, 5.4-lts, 5.10-lts]
+    runs-on: freebsd-13.1
+    steps:
+      - name: Check out FreeBSD
+        uses: actions/checkout@v3
+        with:
+          path: freebsd
+      - name: Check out drm-kmod
+        uses: actions/checkout@v3
+        with:
+          repository: freebsd/drm-kmod
+          path: drm-kmod
+          ref: ${{ matrix.drm-branch }}
+      - name: Build drm-kmod
+        run: |
+          make -C drm-kmod -j8 SYSDIR=${GITHUB_WORKSPACE}/freebsd/sys
+  wireguard:
+    runs-on: freebsd-13.1
+    steps:
+      - name: Check out FreeBSD
+        uses: actions/checkout@v3
+        with:
+          path: freebsd
+      - name: Check out WireGuard
+        uses: actions/checkout@v3
+        with:
+          repository: markjdb/wireguard-freebsd
+          path: wireguard
+          ref: ports
+      - name: Build WireGuard
+        run: |
+          make -C wireguard/src -j8 SYSDIR=${GITHUB_WORKSPACE}/freebsd/sys
