@@ -675,9 +675,10 @@ ah_input(struct mbuf *m, struct secasvar *sav, int skip, int protoff)
 	xd->cryptoid = cryptoid;
 	xd->vnet = curvnet;
 	if (V_async_crypto)
-		return (crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED));
+		crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
-		return (crypto_dispatch(crp));
+		crypto_dispatch(crp);
+	return (0);
 bad:
 	m_freem(m);
 	key_freesav(&sav);
@@ -724,7 +725,8 @@ ah_input_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
-			return (crypto_dispatch(crp));
+			crypto_dispatch(crp);
+			return (0);
 		}
 		AHSTAT_INC(ahs_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
@@ -1069,9 +1071,10 @@ ah_output(struct mbuf *m, struct secpolicy *sp, struct secasvar *sav,
 	xd->vnet = curvnet;
 
 	if (V_async_crypto)
-		return (crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED));
+		crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
-		return (crypto_dispatch(crp));
+		crypto_dispatch(crp);
+	return (0);
 bad:
 	if (m)
 		m_freem(m);
@@ -1113,7 +1116,8 @@ ah_output_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
-			return (crypto_dispatch(crp));
+			crypto_dispatch(crp);
+			return (0);
 		}
 		AHSTAT_INC(ahs_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));

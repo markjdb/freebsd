@@ -269,7 +269,8 @@ ipcomp_input(struct mbuf *m, struct secasvar *sav, int skip, int protoff)
 	crp->crp_session = xd->cryptoid = sav->tdb_cryptoid;
 	SECASVAR_RUNLOCK(sav);
 
-	return crypto_dispatch(crp);
+	crypto_dispatch(crp);
+	return (0);
 bad:
 	m_freem(m);
 	key_freesav(&sav);
@@ -313,7 +314,8 @@ ipcomp_input_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
-			return (crypto_dispatch(crp));
+			crypto_dispatch(crp);
+			return (0);
 		}
 		IPCOMPSTAT_INC(ipcomps_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
@@ -515,7 +517,8 @@ ipcomp_output(struct mbuf *m, struct secpolicy *sp, struct secasvar *sav,
 	crp->crp_callback = ipcomp_output_cb;
 	crp->crp_opaque = xd;
 
-	return crypto_dispatch(crp);
+	crypto_dispatch(crp);
+	return (0);
 bad:
 	if (m)
 		m_freem(m);
@@ -557,7 +560,8 @@ ipcomp_output_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
-			return (crypto_dispatch(crp));
+			crypto_dispatch(crp);
+			return (0);
 		}
 		IPCOMPSTAT_INC(ipcomps_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));

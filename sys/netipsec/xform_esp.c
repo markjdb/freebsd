@@ -470,9 +470,10 @@ esp_input(struct mbuf *m, struct secasvar *sav, int skip, int protoff)
 		crp->crp_iv_start = skip + hlen - sav->ivlen;
 
 	if (V_async_crypto)
-		return (crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED));
+		crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
-		return (crypto_dispatch(crp));
+		crypto_dispatch(crp);
+	return (0);
 
 crp_aad_fail:
 	free(xd, M_ESP);
@@ -522,7 +523,8 @@ esp_input_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
-			return (crypto_dispatch(crp));
+			crypto_dispatch(crp);
+			return (0);
 		}
 
 		/* EBADMSG indicates authentication failure. */
@@ -961,9 +963,10 @@ esp_output(struct mbuf *m, struct secpolicy *sp, struct secasvar *sav,
 	}
 
 	if (V_async_crypto)
-		return (crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED));
+		crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
-		return (crypto_dispatch(crp));
+		crypto_dispatch(crp);
+	return (0);
 
 crp_aad_fail:
 	free(xd, M_ESP);
@@ -1008,7 +1011,8 @@ esp_output_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
-			return (crypto_dispatch(crp));
+			crypto_dispatch(crp);
+			return (0);
 		}
 		ESPSTAT_INC(esps_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));

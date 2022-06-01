@@ -622,9 +622,9 @@ int	crypto_find_driver(const char *);
 device_t crypto_find_device_byhid(int hid);
 int	crypto_getcaps(int hid);
 int	crypto_unregister_all(uint32_t driverid);
-int	crypto_dispatch(struct cryptop *crp);
+void	crypto_dispatch(struct cryptop *crp);
 #define	CRYPTO_ASYNC_ORDERED	0x1	/* complete in order dispatched */
-int	crypto_dispatch_async(struct cryptop *crp, int flags);
+void	crypto_dispatch_async(struct cryptop *crp, int flags);
 void	crypto_dispatch_batch(struct cryptopq *crpq, int flags);
 #define	CRYPTO_SYMQ	0x1
 int	crypto_unblock(uint32_t, int);

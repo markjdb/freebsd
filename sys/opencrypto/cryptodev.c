@@ -810,11 +810,7 @@ again:
 	 * results in a lock order reversal between crypto_dispatch forced
 	 * entry and the crypto_done callback into us.
 	 */
-	error = crypto_dispatch(crp);
-	if (error != 0) {
-		SDT_PROBE1(opencrypto, dev, ioctl, error, __LINE__);
-		goto bail;
-	}
+	crypto_dispatch(crp);
 
 	mtx_lock(&cse->lock);
 	while (!cod->done)
@@ -1013,11 +1009,7 @@ again:
 	 * results in a lock order reversal between crypto_dispatch forced
 	 * entry and the crypto_done callback into us.
 	 */
-	error = crypto_dispatch(crp);
-	if (error != 0) {
-		SDT_PROBE1(opencrypto, dev, ioctl, error, __LINE__);
-		goto bail;
-	}
+	crypto_dispatch(crp);
 
 	mtx_lock(&cse->lock);
 	while (!cod->done)

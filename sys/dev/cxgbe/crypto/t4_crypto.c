@@ -1773,7 +1773,6 @@ static void
 ccr_soft(struct ccr_session *s, struct cryptop *crp)
 {
 	struct cryptop *new;
-	int error;
 
 	new = crypto_clonereq(crp, s->sw_session, M_NOWAIT);
 	if (new == NULL) {
@@ -1790,11 +1789,7 @@ ccr_soft(struct ccr_session *s, struct cryptop *crp)
 	 */
 	new->crp_opaque = crp;
 	new->crp_callback = ccr_soft_done;
-	error = crypto_dispatch_async(new, CRYPTO_ASYNC_ORDERED);
-	if (error != 0) {
-		crp->crp_etype = error;
-		crypto_done(crp);
-	}
+	crypto_dispatch_async(new, CRYPTO_ASYNC_ORDERED);
 }
 
 static void

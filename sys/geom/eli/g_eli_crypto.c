@@ -91,12 +91,10 @@ g_eli_crypto_cipher(u_int algo, int enc, u_char *data, size_t datasize,
 	crp->crp_callback = g_eli_crypto_done;
 	crypto_use_buf(crp, data, datasize);
 
-	error = crypto_dispatch(crp);
-	if (error == 0) {
-		while (crp->crp_opaque == NULL)
-			tsleep(crp, PRIBIO, "geli", hz / 5);
-		error = crp->crp_etype;
-	}
+	crypto_dispatch(crp);
+	while (crp->crp_opaque == NULL)
+		tsleep(crp, PRIBIO, "geli", hz / 5);
+	error = crp->crp_etype;
 
 	crypto_freereq(crp);
 	crypto_freesession(sid);

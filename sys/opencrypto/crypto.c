@@ -1409,7 +1409,7 @@ crp_sanity(struct cryptop *crp)
 }
 #endif
 
-static int
+static void
 crypto_dispatch_one(struct cryptop *crp, int hint)
 {
 	struct cryptocap *cap;
@@ -1430,8 +1430,8 @@ crypto_dispatch_one(struct cryptop *crp, int hint)
 	cap = crp->crp_session->cap;
 	if (!atomic_load_int(&cap->cc_qblocked)) {
 		result = crypto_invoke(cap, crp, hint);
-		if (result != ERESTART)
-			return (result);
+		if (result == 0)
+			return;
 
 		/*
 		 * The driver ran out of resources, put the request on the
@@ -1439,16 +1439,15 @@ crypto_dispatch_one(struct cryptop *crp, int hint)
 		 */
 	}
 	crypto_batch_enqueue(crp);
-	return (0);
 }
 
-int
+void
 crypto_dispatch(struct cryptop *crp)
 {
-	return (crypto_dispatch_one(crp, 0));
+	crypto_dispatch_one(crp, 0);
 }
 
-int
+void
 crypto_dispatch_async(struct cryptop *crp, int flags)
 {
 	struct crypto_ret_worker *ret_worker;
@@ -1458,7 +1457,8 @@ crypto_dispatch_async(struct cryptop *crp, int flags)
 		 * The driver issues completions asynchonously, don't bother
 		 * deferring dispatch to a worker thread.
 		 */
-		return (crypto_dispatch(crp));
+		crypto_dispatch(crp);
+		return;
 	}
 
 #ifdef INVARIANTS
@@ -1476,7 +1476,6 @@ crypto_dispatch_async(struct cryptop *crp, int flags)
 	}
 	TASK_INIT(&crp->crp_task, 0, crypto_task_invoke, crp);
 	taskqueue_enqueue(crypto_tq, &crp->crp_task);
-	return (0);
 }
 
 void
@@ -1488,8 +1487,7 @@ crypto_dispatch_batch(struct cryptopq *crpq, int flags)
 	while ((crp = TAILQ_FIRST(crpq)) != NULL) {
 		hint = TAILQ_NEXT(crp, crp_next) != NULL ? CRYPTO_HINT_MORE : 0;
 		TAILQ_REMOVE(crpq, crp, crp_next);
-		if (crypto_dispatch_one(crp, hint) != 0)
-			crypto_batch_enqueue(crp);
+		crypto_dispatch_one(crp, hint);
 	}
 }
 

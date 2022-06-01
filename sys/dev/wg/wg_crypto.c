@@ -216,7 +216,6 @@ chacha20poly1305_encrypt_mbuf(struct mbuf *m, const uint64_t nonce,
 {
 	static const char blank_tag[POLY1305_HASH_LEN];
 	struct cryptop crp;
-	int ret;
 
 	if (!m_append(m, POLY1305_HASH_LEN, blank_tag))
 		return (ENOMEM);
@@ -229,9 +228,9 @@ chacha20poly1305_encrypt_mbuf(struct mbuf *m, const uint64_t nonce,
 	le64enc(crp.crp_iv, nonce);
 	crp.crp_cipher_key = key;
 	crp.crp_callback = crypto_callback;
-	ret = crypto_dispatch(&crp);
+	crypto_dispatch(&crp);
 	crypto_destroyreq(&crp);
-	return (ret);
+	return (0);
 }
 
 int
@@ -239,7 +238,6 @@ chacha20poly1305_decrypt_mbuf(struct mbuf *m, const uint64_t nonce,
 			      const uint8_t key[CHACHA20POLY1305_KEY_SIZE])
 {
 	struct cryptop crp;
-	int ret;
 
 	if (m->m_pkthdr.len < POLY1305_HASH_LEN)
 		return (EMSGSIZE);
@@ -252,10 +250,8 @@ chacha20poly1305_decrypt_mbuf(struct mbuf *m, const uint64_t nonce,
 	le64enc(crp.crp_iv, nonce);
 	crp.crp_cipher_key = key;
 	crp.crp_callback = crypto_callback;
-	ret = crypto_dispatch(&crp);
+	crypto_dispatch(&crp);
 	crypto_destroyreq(&crp);
-	if (ret)
-		return (ret);
 	m_adj(m, -POLY1305_HASH_LEN);
 	return (0);
 }

@@ -129,8 +129,8 @@ g_eli_auth_read_done(struct cryptop *crp)
 	struct bio *bp;
 
 	if (crp->crp_etype == EAGAIN) {
-		if (g_eli_crypto_rerun(crp) == 0)
-			return (0);
+		g_eli_crypto_rerun(crp);
+		return (0);
 	}
 	bp = (struct bio *)crp->crp_opaque;
 	bp->bio_inbed++;
@@ -293,8 +293,8 @@ g_eli_auth_write_done(struct cryptop *crp)
 	u_int nsec;
 
 	if (crp->crp_etype == EAGAIN) {
-		if (g_eli_crypto_rerun(crp) == 0)
-			return (0);
+		g_eli_crypto_rerun(crp);
+		return (0);
 	}
 	bp = (struct bio *)crp->crp_opaque;
 	bp->bio_inbed++;
@@ -453,7 +453,6 @@ g_eli_auth_run(struct g_eli_worker *wr, struct bio *bp)
 	u_int i, lsec, nsec, data_secsize, decr_secsize, encr_secsize;
 	off_t dstoff;
 	u_char *p, *data, *authkey, *plaindata;
-	int error __diagused;
 	bool batch;
 
 	G_ELI_LOGREQ(3, bp, "%s", __func__);
@@ -576,9 +575,7 @@ g_eli_auth_run(struct g_eli_worker *wr, struct bio *bp)
 		if (batch) {
 			TAILQ_INSERT_TAIL(&crpq, crp, crp_next);
 		} else {
-			error = crypto_dispatch(crp);
-			KASSERT(error == 0,
-			    ("crypto_dispatch() failed (error=%d)", error));
+			crypto_dispatch(crp);
 		}
 	}
 

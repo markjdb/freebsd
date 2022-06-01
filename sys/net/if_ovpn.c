@@ -1950,14 +1950,11 @@ ovpn_transmit_to_peer(struct ifnet *ifp, struct mbuf *m,
 	if (_ovpn_lock_trackerp != NULL)
 		OVPN_RUNLOCK(sc);
 	if (V_async_crypto)
-		ret = crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
+		crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
-		ret = crypto_dispatch(crp);
-	if (ret) {
-		OVPN_COUNTER_ADD(sc, lost_data_pkts_out, 1);
-	}
+		crypto_dispatch(crp);
 
-	return (ret);
+	return (0);
 }
 
 /*
@@ -2221,7 +2218,6 @@ ovpn_udp_input(struct mbuf *m, int off, struct inpcb *inp,
 	struct cryptop *crp;
 	struct ovpn_kpeer *peer;
 	size_t ohdrlen;
-	int ret;
 	uint8_t op;
 
 	OVPN_RLOCK_TRACKER;
@@ -2336,6 +2332,7 @@ ovpn_udp_input(struct mbuf *m, int off, struct inpcb *inp,
 
 	atomic_add_int(&sc->refcount, 1);
 	OVPN_RUNLOCK(sc);
+<<<<<<< HEAD
 	if (V_async_crypto)
 		ret = crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
@@ -2344,6 +2341,9 @@ ovpn_udp_input(struct mbuf *m, int off, struct inpcb *inp,
 		OVPN_COUNTER_ADD(sc, lost_data_pkts_in, 1);
 	}
 
+=======
+	crypto_dispatch(crp);
+>>>>>>> 0aee9228efc2 (crypto: Remove the return value from crypto_dispatch(_async)())
 	return (true);
 }
 

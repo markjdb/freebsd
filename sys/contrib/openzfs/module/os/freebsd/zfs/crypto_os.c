@@ -166,6 +166,7 @@ zfs_crypto_dispatch(freebsd_crypt_session_t *session, struct cryptop *crp)
 {
 	int error;
 
+	error = 0;
 	crp->crp_opaque = session;
 	for (;;) {
 #if __FreeBSD_version < 1400004
@@ -176,18 +177,16 @@ zfs_crypto_dispatch(freebsd_crypt_session_t *session, struct cryptop *crp)
 #endif
 		crp->crp_callback = async ? freebsd_zfs_crypt_done :
 		    freebsd_zfs_crypt_done_sync;
-		error = crypto_dispatch(crp);
-		if (error == 0) {
-			if (async) {
-				mtx_lock(&session->fs_lock);
-				while (session->fs_done == false) {
-					msleep(crp, &session->fs_lock, 0,
-					    "zfs_crypto", 0);
-				}
-				mtx_unlock(&session->fs_lock);
+		crypto_dispatch(crp);
+		if (async) {
+			mtx_lock(&session->fs_lock);
+			while (session->fs_done == false) {
+				msleep(crp, &session->fs_lock, 0,
+				    "zfs_crypto", 0);
 			}
-			error = crp->crp_etype;
+			mtx_unlock(&session->fs_lock);
 		}
+		error = crp->crp_etype;
 
 		if (error == ENOMEM) {
 			pause("zcrnomem", 1);

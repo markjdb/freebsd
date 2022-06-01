@@ -116,18 +116,17 @@ aes_random_to_key(struct krb5_key_state *ks, const void *in)
 static int
 aes_crypto_cb(struct cryptop *crp)
 {
-	int error;
 	struct aes_state *as = (struct aes_state *) crp->crp_opaque;
 
 	if (CRYPTO_SESS_SYNC(crp->crp_session))
 		return (0);
 
-	error = crp->crp_etype;
-	if (error == EAGAIN)
-		error = crypto_dispatch(crp);
+	if (crp->crp_etype == EAGAIN) {
+		crypto_dispatch(crp);
+		return (0);
+	}
 	mtx_lock(&as->as_lock);
-	if (error || (crp->crp_flags & CRYPTO_F_DONE))
-		wakeup(crp);
+	wakeup(crp);
 	mtx_unlock(&as->as_lock);
 
 	return (0);
@@ -139,7 +138,6 @@ aes_encrypt_1(const struct krb5_key_state *ks, int buftype, void *buf,
 {
 	struct aes_state *as = ks->ks_priv;
 	struct cryptop *crp;
-	int error;
 
 	crp = crypto_getreq(as->as_session_aes, M_WAITOK);
 
@@ -159,13 +157,12 @@ aes_encrypt_1(const struct krb5_key_state *ks, int buftype, void *buf,
 		crypto_use_buf(crp, buf, skip + len);
 	crp->crp_opaque = as;
 	crp->crp_callback = aes_crypto_cb;
-
-	error = crypto_dispatch(crp);
+	crypto_dispatch(crp);
 
 	if (!CRYPTO_SESS_SYNC(as->as_session_aes)) {
 		mtx_lock(&as->as_lock);
-		if (!error && !(crp->crp_flags & CRYPTO_F_DONE))
-			error = msleep(crp, &as->as_lock, 0, "gssaes", 0);
+		while (!(crp->crp_flags & CRYPTO_F_DONE))
+			(void)msleep(crp, &as->as_lock, 0, "gssaes", 0);
 		mtx_unlock(&as->as_lock);
 	}
 
@@ -318,7 +315,6 @@ aes_checksum(const struct krb5_key_state *ks, int usage,
 {
 	struct aes_state *as = ks->ks_priv;
 	struct cryptop *crp;
-	int error;
 
 	crp = crypto_getreq(as->as_session_sha1, M_WAITOK);
 
@@ -329,13 +325,12 @@ aes_checksum(const struct krb5_key_state *ks, int usage,
 	crypto_use_mbuf(crp, inout);
 	crp->crp_opaque = as;
 	crp->crp_callback = aes_crypto_cb;
-
-	error = crypto_dispatch(crp);
+	crypto_dispatch(crp);
 
 	if (!CRYPTO_SESS_SYNC(as->as_session_sha1)) {
 		mtx_lock(&as->as_lock);
-		if (!error && !(crp->crp_flags & CRYPTO_F_DONE))
-			error = msleep(crp, &as->as_lock, 0, "gssaes", 0);
+		if (!(crp->crp_flags & CRYPTO_F_DONE))
+			(void)msleep(crp, &as->as_lock, 0, "gssaes", 0);
 		mtx_unlock(&as->as_lock);
 	}
 

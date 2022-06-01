@@ -696,7 +696,7 @@ void g_eli_config(struct gctl_req *req, struct g_class *mp, const char *verb);
 
 void g_eli_read_done(struct bio *bp);
 void g_eli_write_done(struct bio *bp);
-int g_eli_crypto_rerun(struct cryptop *crp);
+void g_eli_crypto_rerun(struct cryptop *crp);
 
 bool g_eli_alloc_data(struct bio *bp, int sz);
 void g_eli_free_data(struct bio *bp);

@@ -202,15 +202,14 @@ ktls_ocf_dispatch(struct ktls_ocf_session *os, struct cryptop *crp)
 	oo.os = os;
 	oo.done = false;
 
+	error = 0;
 	crp->crp_opaque = &oo;
 	for (;;) {
 		async = !CRYPTO_SESS_SYNC(crp->crp_session);
 		crp->crp_callback = async ? ktls_ocf_callback_async :
 		    ktls_ocf_callback_sync;
 
-		error = crypto_dispatch(crp);
-		if (error)
-			break;
+		crypto_dispatch(crp);
 		if (async) {
 			mtx_lock(&os->lock);
 			while (!oo.done)
@@ -242,11 +241,7 @@ ktls_ocf_dispatch_async_cb(struct cryptop *crp)
 		crp->crp_etype = 0;
 		crp->crp_flags &= ~CRYPTO_F_DONE;
 		counter_u64_add(ocf_retries, 1);
-		error = crypto_dispatch(crp);
-		if (error != 0) {
-			crypto_destroyreq(crp);
-			ktls_encrypt_cb(state, error);
-		}
+		crypto_dispatch(crp);
 		return (0);
 	}
 
@@ -260,14 +255,10 @@ static int
 ktls_ocf_dispatch_async(struct ktls_ocf_encrypt_state *state,
     struct cryptop *crp)
 {
-	int error;
-
 	crp->crp_opaque = state;
 	crp->crp_callback = ktls_ocf_dispatch_async_cb;
-	error = crypto_dispatch(crp);
-	if (error != 0)
-		crypto_destroyreq(crp);
-	return (error);
+	crypto_dispatch(crp);
+	return (0);
 }
 
 static int

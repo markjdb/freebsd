@@ -235,13 +235,12 @@ struct g_class g_eli_class = {
  * accelerator or something like this.
  * The function updates the SID and rerun the operation.
  */
-int
+void
 g_eli_crypto_rerun(struct cryptop *crp)
 {
 	struct g_eli_softc *sc;
 	struct g_eli_worker *wr;
 	struct bio *bp;
-	int error;
 
 	bp = (struct bio *)crp->crp_opaque;
 	sc = bp->bio_to->geom->softc;
@@ -256,12 +255,7 @@ g_eli_crypto_rerun(struct cryptop *crp)
 	    crp->crp_session);
 	wr->w_sid = crp->crp_session;
 	crp->crp_etype = 0;
-	error = crypto_dispatch(crp);
-	if (error == 0)
-		return (0);
-	G_ELI_DEBUG(1, "%s: crypto_dispatch() returned %d.", __func__, error);
-	crp->crp_etype = error;
-	return (error);
+	crypto_dispatch(crp);
 }
 
 static void
