@@ -28,24 +28,25 @@
 #ifndef _KINST_H_
 #define _KINST_H_
 
-#define	KINST_PROBETAB_SIZE	0x8000		/* 32k entries -- 128K total */
+#include <sys/queue.h>
+
+#define KINST_PROBE_MAX	0x8000	/* 32k */
 
 #ifdef MALLOC_DECLARE
 MALLOC_DECLARE(M_KINST);
 #endif /* MALLOC_DECLARE */
 
 struct kinst_probe {
+	TAILQ_ENTRY(kinst_probe) kp_next;
 	char		kp_name[16];
 	dtrace_id_t	kp_id;
 	int		kp_flags;
-	uint32_t	*kp_trampoline;
+	uint8_t		*kp_trampoline;
+	uint8_t		kp_recover_byte;
 };
 
 struct linker_file;
 struct linker_symval;
-
-extern dtrace_provider_id_t	kinst_id;
-extern struct kinst_probe	**kinst_probetab;
 
 //int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
 int	kinst_provide_module_function(struct linker_file *, int,

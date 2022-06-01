@@ -45,8 +45,8 @@ static const dtrace_pops_t kinst_pops = {
 	.dtps_destroy =		kinst_destroy
 };
 
-dtrace_provider_id_t	kinst_id;
-struct kinst_probe	**kinst_probetab;
+static dtrace_provider_id_t	kinst_id;
+TAILQ_HEAD(, kinst_probe)	kinst_probes;
 
 int
 kinst_provide_module_function(linker_file_t lf, int symindx,
@@ -75,16 +75,17 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			    __func__, __LINE__, instr);
 			return (1);
 		}
-		/* XXX: is this right? */
-		if (n >= KINST_PROBETAB_SIZE) {
-			printf("%s:%d probetab full\n", __func__, __LINE__);
+		if (n >= KINST_PROBE_MAX) {
+			printf("%s:%d probe list full\n", __func__, __LINE__);
 			return (1);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
-		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n);
+		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n++);
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
 		    symval->name, kp->kp_name, 3, NULL);
-		kinst_probetab[n++] = kp;
+		/* TODO: skip prefixes */
+		/* TODO: save first byte */
+		TAILQ_INSERT_TAIL(&kinst_probes, kp, kp_next);
 		printf("%s:%d created probe with id %u\n", __func__, __LINE__,
 		    kp->kp_id);
 		instr += size;
@@ -136,10 +137,7 @@ kinst_linker_file_cb(linker_file_t lf, void *arg)
 static void
 kinst_load(void *dummy)
 {
-	/* XXX /dev/dtrace/kinst? */
-
-	kinst_probetab = malloc(KINST_PROBETAB_SIZE *
-	    sizeof(struct kinst_probe *), M_KINST, M_WAITOK | M_ZERO);
+	TAILQ_INIT(&kinst_probes);
 
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
@@ -153,18 +151,13 @@ static int
 kinst_unload(void)
 {
 	struct kinst_probe *kp;
-	int i = 0;
 
-	/* FIXME: bad/slow? */
-	for (; i < KINST_PROBETAB_SIZE; i++) {
-		kp = kinst_probetab[i];
-		if (kp != NULL) {
+	while (!TAILQ_EMPTY(&kinst_probes)) {
+		kp = TAILQ_FIRST(&kinst_probes);
+		TAILQ_REMOVE(&kinst_probes, kp, kp_next);
+		if (kp != NULL)
 			free(kp, M_KINST);
-			kp = NULL;
-		}
 	}
-	free(kinst_probetab, M_KINST);
-	kinst_probetab = NULL;
 
 	return (dtrace_unregister(kinst_id));
 }
