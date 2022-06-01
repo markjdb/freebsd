@@ -63,8 +63,8 @@ ATF_TC_BODY(getpeereid, tc)
 	ATF_CHECK_EQ(real_euid, euid);
 	ATF_CHECK_EQ(real_egid, egid);
 
-	close(sv[0]);
-	close(sv[1]);
+	ATF_REQUIRE(close(sv[0]) == 0);
+	ATF_REQUIRE(close(sv[1]) == 0);
 }
 
 

@@ -68,9 +68,8 @@ domainsocketpair(int *fdp)
 static void
 closesocketpair(int *fdp)
 {
-
-	close(fdp[0]);
-	close(fdp[1]);
+	ATF_REQUIRE_MSG(close(fdp[0]) == 0, "close: %s", strerror(errno));
+	ATF_REQUIRE_MSG(close(fdp[1]) == 0, "close: %s", strerror(errno));
 }
 
 static void
