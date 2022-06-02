@@ -5,7 +5,9 @@ SYSDIR?=	${SRCTOP}/sys
 KMOD=		kinst
 SRCS=		kinst.c
 
-CFLAGS+=	${OPENZFS_CFLAGS} -I${SYSDIR}/cddl/dev/kinst
+CFLAGS+=	${OPENZFS_CFLAGS} \
+		-I${SYSDIR}/cddl/dev/kinst \
+		-I${SYSDIR}/cddl/dev/dtrace/x86
 
 .include <bsd.kmod.mk>
 

@@ -1,19 +1,47 @@
 /*
  * SPDX-License-Identifier: CDDL 1.0
  */
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
 #include <sys/kernel.h>
 #include <sys/linker.h>
 #include <sys/module.h>
+#include <sys/bitset.h>
 
 #include <sys/dtrace.h>
+#include <dis_tables.h>
+
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+#include <vm/vm_kern.h>
 
 #include "kinst.h"
 
+#define KINST_TRAMP_SIZE	32
+#define KINST_TRAMPCHUNK_SIZE	4096
+/*
+ * We can have 4KB/32B = 128 trampolines per chunk.
+ */
+#define KINST_TRAMPS_PER_CHUNK	(KINST_TRAMPCHUNK_SIZE / KINST_TRAMP_SIZE)
+
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
+
+struct trampchunk {
+	uint8_t *addr;
+	/*
+	 * 0 -> allocated
+	 * 1 -> free
+	 */
+	BITSET_DEFINE(, KINST_TRAMPS_PER_CHUNK) free;
+};
+
+static int	kinst_dis_get_byte(void *);
+static struct trampchunk *kinst_alloc_trampchunk(void);
+/* TODO: dealloc_trampchunk */
+static uint8_t	*kinst_alloc_trampoline(struct trampchunk *);
 
 static int	kinst_unload(void);
 static void	kinst_getargdesc(void *, dtrace_id_t, void *,
@@ -48,17 +76,96 @@ static const dtrace_pops_t kinst_pops = {
 static dtrace_provider_id_t	kinst_id;
 TAILQ_HEAD(, kinst_probe)	kinst_probes;
 
+static struct trampchunk *
+kinst_alloc_trampchunk(void)
+{
+	struct trampchunk *chunk;
+	vm_offset_t trampaddr;
+	int error;
+
+	/*
+	 * Allocate virtual memory for the trampoline chunk. The returned
+	 * address is saved in "trampaddr".
+	 *
+	 * VM_PROT_ALL expands to VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXEC,
+	 * i.e., the mapping will be writeable and executable.
+	 *
+	 * Setting "trampaddr" to KERNBASE causes vm_map_find() to return an
+	 * address above KERNBASE, so this satisfies both requirements.
+	 */
+	trampaddr = KERNBASE;
+	chunk = NULL;
+	error = vm_map_find(kernel_map, NULL, 0, &trampaddr, PAGE_SIZE, 0,
+	    VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
+	if (error != KERN_SUCCESS) {
+		printf("trampoline chunk allocation failed: %d\n", error);
+		return (NULL);
+	}
+	/*
+	 * We allocated a page of virtual memory, but that needs to be
+	 * backed by physical memory, or else any access will result in
+	 * a page fault.
+	 */
+	error = vm_map_wire(kernel_map, trampaddr, trampaddr + PAGE_SIZE,
+	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
+	if (error != KERN_SUCCESS) {
+		printf("trampoline chunk wiring failed: %d\n", error);
+		return (NULL);
+	}
+
+	/* Allocate a tracker for this chunk. */
+	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
+	chunk->addr = (void *)trampaddr;
+	BIT_FILL(KINST_TRAMPS_PER_CHUNK, &chunk->free);
+
+	return (chunk);
+}
+
+static uint8_t *
+kinst_alloc_trampoline(struct trampchunk *chunk)
+{
+	uint8_t *tramp;
+	int off;
+
+	/* Find a the first free trampoline. */
+	if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0) {
+		/*
+		 * All trampolines from this chunk are already allocated. We
+		 * need to allocate a new chunk.
+		 */
+		panic("TODO");
+	}
+	/* BIT_FFS() returns indices starting at 1 instead of 0. */
+	off--;
+
+	/* Mark trampoline as allocated. */
+	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
+	tramp = chunk->addr + off * KINST_TRAMPCHUNK_SIZE;
+
+	return (tramp);
+}
+
+static int
+kinst_dis_get_byte(void *p)
+{
+	int ret;
+	uint8_t **instr = p;
+
+	ret = **instr;
+	*instr += 1;
+
+	return (ret);
+}
+
 int
 kinst_provide_module_function(linker_file_t lf, int symindx,
     linker_symval_t *symval, void *opaque)
 {
 	struct kinst_probe *kp;
-	int size, n = 0;
+	dis86_t d86;
+	int n = 0;
 	uint8_t *instr, *limit;
 
-	/*
-	 * Taken from fbt_isa.c
-	 */
 	if (strcmp(symval->name, "trap_check") == 0 ||
 	    strcmp(symval->name, "vm_fault") != 0)
 		return (0);
@@ -70,25 +177,36 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		return (0);
 	
 	while (instr < limit) {
-		if ((size = dtrace_instr_size(instr)) <= 0) {
-			printf("%s:%d failed to decode instruction at %p\n",
-			    __func__, __LINE__, instr);
-			return (1);
-		}
 		if (n >= KINST_PROBE_MAX) {
 			printf("%s:%d probe list full\n", __func__, __LINE__);
 			return (1);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n++);
+		/*
+		 * Save the first byte of the instruction so that we can recover it after
+		 * we restore the breakpoint.
+		 */
+		kp->kp_recover_byte = *instr;
+		/*
+		 * Determine whether the instruction has to be modified before
+		 * we allocate the trampoline.
+		 */
+		d86.d86_data = (void **)&instr;
+		d86.d86_get_byte = kinst_dis_get_byte;
+		d86.d86_check_func = NULL;
+		if (dtrace_disx86(&d86, SIZE64) != 0) {
+			printf("%s:%d failed to disassemble instruction at: %p\n",
+			    __func__, __LINE__, instr);
+			return (1);
+		}
+		kp->kp_flags = 0;
+		if (d86.d86_rmindex != -1) {
+			/* TODO */
+		}
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
 		    symval->name, kp->kp_name, 3, NULL);
-		/* TODO: skip prefixes */
-		/* TODO: save first byte */
 		TAILQ_INSERT_TAIL(&kinst_probes, kp, kp_next);
-		printf("%s:%d created probe with id %u\n", __func__, __LINE__,
-		    kp->kp_id);
-		instr += size;
 	}
 
 	return (0);
@@ -117,6 +235,10 @@ kinst_destroy(void *arg, dtrace_id_t id, void *parg)
 static void
 kinst_enable(void *arg, dtrace_id_t id, void *parg)
 {
+	/*
+	 * TODO: move instruction parsing from provide_module_function() here
+	 * so that we allocate things lazily.
+	 */
 	printf("%s:%d probe %u is enabled\n", __func__, __LINE__, id);
 }
 
