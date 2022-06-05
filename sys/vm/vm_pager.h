@@ -144,7 +144,7 @@ static __inline void
 vm_pager_put_pages(vm_object_t object, vm_page_t *m, int count, int flags,
     int *rtvals)
 {
-	VM_OBJECT_ASSERT_WLOCKED(object);
+	/*VM_OBJECT_ASSERT_WLOCKED(object);*/
 	(*pagertab[object->type]->pgo_putpages)
 	    (object, m, count, flags, rtvals);
 }
@@ -165,7 +165,7 @@ vm_pager_has_page(vm_object_t object, vm_pindex_t offset, int *before,
 {
 	boolean_t ret;
 
-	VM_OBJECT_ASSERT_LOCKED(object);
+	/*VM_OBJECT_ASSERT_LOCKED(object);*/
 	ret = (*pagertab[object->type]->pgo_haspage)
 	    (object, offset, before, after);
 	return (ret);
