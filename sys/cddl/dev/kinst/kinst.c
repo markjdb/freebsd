@@ -12,6 +12,8 @@
 #include <sys/dtrace.h>
 #include <dis_tables.h>
 
+#include <machine/stdarg.h>
+
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
@@ -20,6 +22,11 @@
 #include <vm/vm_object.h>
 
 #include "kinst.h"
+
+#define KINST_LOG_HELPER(fmt, ...) \
+	printf("%s:%d: " fmt "%s\n", __func__, __LINE__, __VA_ARGS__)
+#define KINST_LOG(...) \
+	KINST_LOG_HELPER(__VA_ARGS__, "")
 
 #define KINST_TRAMP_SIZE	32
 #define KINST_TRAMPCHUNK_SIZE	4096
@@ -97,11 +104,12 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	if (instr >= limit)
 		return (0);
 
+	/* XXX: not sure if this should be here */
 	kinst_trampchunk = kinst_alloc_trampchunk();
 
 	while (instr < limit) {
 		if (n >= KINST_PROBE_MAX) {
-			printf("%s:%d probe list full\n", __func__, __LINE__);
+			KINST_LOG("probe list full");
 			return (1);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
@@ -119,8 +127,7 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		d86.d86_get_byte = kinst_dis_get_byte;
 		d86.d86_check_func = NULL;
 		if (dtrace_disx86(&d86, SIZE64) != 0) {
-			printf("%s:%d failed to disassemble instruction at: %p\n",
-			    __func__, __LINE__, instr);
+			KINST_LOG("failed to disassemble instruction at: %p", instr);
 			return (1);
 		}
 		kp->kp_flags = 0;
@@ -158,10 +165,10 @@ kinst_alloc_trampchunk(void)
 	if (error != KERN_SUCCESS) {
 		vm_object_deallocate(kinst_vmobj);
 		kinst_vmobj = NULL;
-		printf("trampoline chunk allocation failed: %d\n", error);
+		KINST_LOG("trampoline chunk allocation failed: %d", error);
 		return (NULL);
 	}
-	printf("trampaddr: 0x%lx\n", trampaddr);
+	KINST_LOG("trampaddr: 0x%lx", trampaddr);
 	/*
 	 * We allocated a page of virtual memory, but that needs to be
 	 * backed by physical memory, or else any access will result in
@@ -170,7 +177,7 @@ kinst_alloc_trampchunk(void)
 	error = vm_map_wire(kernel_map, trampaddr, trampaddr + PAGE_SIZE,
 	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
 	if (error != KERN_SUCCESS) {
-		printf("trampoline chunk wiring failed: %d\n", error);
+		KINST_LOG("trampoline chunk wiring failed: %d", error);
 		return (NULL);
 	}
 
@@ -214,8 +221,7 @@ kinst_dis_get_byte(void *p)
 	uint8_t **instr = p;
 
 	ret = **instr;
-	/* XXX: *instr++ */
-	*instr += 1;
+	(*instr)++;
 
 	return (ret);
 }
@@ -247,13 +253,13 @@ kinst_enable(void *arg, dtrace_id_t id, void *parg)
 	 * TODO: move instruction parsing from provide_module_function() here
 	 * so that we allocate things lazily.
 	 */
-	printf("%s:%d probe %u is enabled\n", __func__, __LINE__, id);
+	KINST_LOG("probe %u is enabled", id);
 }
 
 static void
 kinst_disable(void *arg, dtrace_id_t id, void *parg)
 {
-	printf("%s:%d probe %u is disabled\n", __func__, __LINE__, id);
+	KINST_LOG("probe %u is disabled", id);
 }
 
 static int
@@ -272,9 +278,10 @@ kinst_load(void *dummy)
 	/* XXX: should this be here? */
 	kinst_vmobj = vm_object_allocate(OBJT_PHYS, 0);
 	if (kinst_vmobj == NULL) {
-		printf("cannot allocate vm_object\n");
+		KINST_LOG("cannot allocate vm_object");
 		return;
 	}
+	/* FIXME: panics if vm_object_allocate fails and we load the module again */
 
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
