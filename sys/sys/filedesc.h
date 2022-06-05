@@ -115,7 +115,7 @@ struct filedesc {
 	struct	fdescenttbl *fd_files;	/* open files table */
 	NDSLOTTYPE *fd_map;		/* bitmap of free fds */
 	int	fd_freefile;		/* approx. next free file */
-	int	fd_refcnt;		/* thread reference count */
+	int	fd_refcnt;		/* process reference count */
 	int	fd_holdcnt;		/* hold count on structure + mutex */
 	struct	sx fd_sx;		/* protects members of this struct */
 	struct	kqlist fd_kqlist;	/* list of kqueues on this filedesc */

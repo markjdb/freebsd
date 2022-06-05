@@ -2153,6 +2153,9 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 	if (fcaps != NULL)
 		filecaps_validate(fcaps, __func__);
 	FILEDESC_XLOCK_ASSERT(fdp);
+	KASSERT(refcount_load(&fdp->fd_refcnt) == 1 ||
+	    (fp->f_ops->fo_flags & DFLAG_PASSABLE) != 0,
+	    ("%s: file %p cannot be shared", __func__, fp));
 
 	fde = &fdp->fd_ofiles[fd];
 #ifdef CAPABILITIES
@@ -2179,10 +2182,13 @@ finstall_refed(struct thread *td, struct file *fp, int *fd, int flags,
 	MPASS(fd != NULL);
 
 	FILEDESC_XLOCK(fdp);
-	error = fdalloc(td, 0, fd);
-	if (__predict_true(error == 0)) {
+	if (__predict_false(refcount_load(&fdp->fd_refcnt) > 1) &&
+	    (fp->f_ops->fo_flags & DFLAG_PASSABLE) == 0)
+		error = EINVAL;
+	else
+		error = fdalloc(td, 0, fd);
+	if (__predict_true(error == 0))
 		_finstall(fdp, fp, *fd, flags, fcaps);
-	}
 	FILEDESC_XUNLOCK(fdp);
 	return (error);
 }
@@ -2336,14 +2342,28 @@ pddrop(struct pwddesc *pdp)
 }
 
 /*
- * Share a filedesc structure.
+ * Share a filedesc structure (among multiple processes).  Descriptors that
+ * cannot be passed among processes may not exist in a shared table.
  */
 struct filedesc *
 fdshare(struct filedesc *fdp)
 {
+	struct file *fp;
+	int i;
+	bool ok;
 
-	refcount_acquire(&fdp->fd_refcnt);
-	return (fdp);
+	ok = true;
+	FILEDESC_SLOCK(fdp);
+	FILEDESC_FOREACH_FP(fdp, i, fp) {
+		if ((fp->f_ops->fo_flags & DFLAG_PASSABLE) == 0) {
+			ok = false;
+			break;
+		}
+	}
+	if (ok)
+		refcount_acquire(&fdp->fd_refcnt);
+	FILEDESC_SUNLOCK(fdp);
+	return (ok ? fdp : NULL);
 }
 
 /*

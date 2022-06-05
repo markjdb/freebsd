@@ -157,7 +157,7 @@ struct fileops {
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
-#define DFLAG_PASSABLE	0x01	/* may be passed via unix sockets. */
+#define DFLAG_PASSABLE	0x01	/* may be shared/passed via unix sockets */
 #define DFLAG_SEEKABLE	0x02	/* seekable / nonsequential */
 #endif /* _KERNEL */
 

@@ -442,7 +442,10 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 			pd = pdcopy(p1->p_pd);
 		else
 			pd = pdshare(p1->p_pd);
-		fd = fdshare(p1->p_fd);
+		/* FD table is already shared by the caller. */
+		fd = p1->p_fd;
+		KASSERT(refcount_load(&fd->fd_refcnt) > 1,
+		    ("%s: fd table %p not shared", __func__, fd));
 		if (p1->p_fdtol == NULL)
 			p1->p_fdtol = filedesc_to_leader_alloc(NULL, NULL,
 			    p1->p_leader);
@@ -890,8 +893,15 @@ fork1(struct thread *td, struct fork_req *fr)
 		return (EINVAL);
 
 	/* Can't copy and clear. */
-	if ((flags & (RFFDG|RFCFDG)) == (RFFDG|RFCFDG))
+	if ((flags & (RFFDG | RFCFDG)) == (RFFDG | RFCFDG))
 		return (EINVAL);
+
+	/* Can't share the fd table if any non-passable descriptors are open. */
+	if ((flags & (RFFDG | RFPROC)) == RFPROC) {
+		/* XXXMJ ref can be leaked */
+		if (fdshare(td->td_proc->p_fd) == NULL)
+			return (EINVAL);
+	}
 
 	/* Check the validity of the signal number. */
 	if ((flags & RFTSIGZMB) != 0 && (u_int)RFTSIGNUM(flags) > _SIG_MAXSIG)
