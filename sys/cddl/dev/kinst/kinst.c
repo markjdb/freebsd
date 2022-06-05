@@ -20,6 +20,8 @@
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_object.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pager.h>
 
 #include "kinst.h"
 
@@ -29,11 +31,16 @@
 	KINST_LOG_HELPER(__VA_ARGS__, "")
 
 #define KINST_TRAMP_SIZE	32
-#define KINST_TRAMPCHUNK_SIZE	4096
+#define KINST_TRAMPCHUNK_SIZE	PAGE_SIZE
 /*
  * We can have 4KB/32B = 128 trampolines per chunk.
  */
 #define KINST_TRAMPS_PER_CHUNK	(KINST_TRAMPCHUNK_SIZE / KINST_TRAMP_SIZE)
+/*
+ * Set the object size to 2GB, since we know that the object will only ever be
+ * used to allocate pages in the range [KERNBASE, 0xfffffffffffff000].
+ */
+#define KINST_VMOBJ_SIZE	(VM_MAX_ADDRESS - KERNBASE)
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
@@ -105,7 +112,10 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		return (0);
 
 	/* XXX: not sure if this should be here */
-	kinst_trampchunk = kinst_alloc_trampchunk();
+	if ((kinst_trampchunk = kinst_alloc_trampchunk()) == NULL) {
+		KINST_LOG("cannot allocate trampoline chunk");
+		return (1);
+	}
 
 	while (instr < limit) {
 		if (n >= KINST_PROBE_MAX) {
@@ -168,7 +178,6 @@ kinst_alloc_trampchunk(void)
 		KINST_LOG("trampoline chunk allocation failed: %d", error);
 		return (NULL);
 	}
-	KINST_LOG("trampaddr: 0x%lx", trampaddr);
 	/*
 	 * We allocated a page of virtual memory, but that needs to be
 	 * backed by physical memory, or else any access will result in
@@ -180,6 +189,12 @@ kinst_alloc_trampchunk(void)
 		KINST_LOG("trampoline chunk wiring failed: %d", error);
 		return (NULL);
 	}
+
+	/*
+	 * Fill the trampolines with breakpoint instructions so that the kernel
+	 * will crash cleanly if things somehow go wrong.
+	 */
+	memset((void *)trampaddr, 0xcc, KINST_TRAMPCHUNK_SIZE);
 
 	/* Allocate a tracker for this chunk. */
 	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
@@ -275,13 +290,12 @@ kinst_load(void *dummy)
 {
 	TAILQ_INIT(&kinst_probes);
 
-	/* XXX: should this be here? */
-	kinst_vmobj = vm_object_allocate(OBJT_PHYS, 0);
+	kinst_vmobj = vm_pager_allocate(OBJT_PHYS, NULL, KINST_VMOBJ_SIZE,
+	    VM_PROT_ALL, 0, curthread->td_ucred);
 	if (kinst_vmobj == NULL) {
 		KINST_LOG("cannot allocate vm_object");
 		return;
 	}
-	/* FIXME: panics if vm_object_allocate fails and we load the module again */
 
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
@@ -302,6 +316,10 @@ kinst_unload(void)
 		if (kp != NULL)
 			free(kp, M_KINST);
 	}
+	/*vm_pager_deallocate(kinst_vmobj);*/
+	(void)vm_map_remove(kernel_map, (vm_offset_t)kinst_trampchunk->addr,
+	    (vm_offset_t)(kinst_trampchunk->addr + KINST_TRAMPCHUNK_SIZE));
+	free(kinst_trampchunk, M_KINST);
 
 	return (dtrace_unregister(kinst_id));
 }
