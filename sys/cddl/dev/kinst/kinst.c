@@ -17,6 +17,7 @@
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
+#include <vm/vm_object.h>
 
 #include "kinst.h"
 
@@ -31,26 +32,25 @@ MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
 struct trampchunk {
 	uint8_t *addr;
-	/*
-	 * 0 -> allocated
-	 * 1 -> free
-	 */
+	/* 0 -> allocated, 1 -> free */
 	BITSET_DEFINE(, KINST_TRAMPS_PER_CHUNK) free;
 };
 
-static int	kinst_dis_get_byte(void *);
 static struct trampchunk *kinst_alloc_trampchunk(void);
 /* TODO: dealloc_trampchunk */
 static uint8_t	*kinst_alloc_trampoline(struct trampchunk *);
+static int	kinst_dis_get_byte(void *);
 
-static int	kinst_unload(void);
+static void	kinst_provide_module(void *, modctl_t *);
 static void	kinst_getargdesc(void *, dtrace_id_t, void *,
 		    dtrace_argdesc_t *);
-static void	kinst_provide_module(void *, modctl_t *);
 static void	kinst_destroy(void *, dtrace_id_t, void *);
 static void	kinst_enable(void *, dtrace_id_t, void *);
 static void	kinst_disable(void *, dtrace_id_t, void *);
+static int	kinst_linker_file_cb(linker_file_t, void *);
 static void	kinst_load(void *);
+static int	kinst_unload(void);
+static int	kinst_modevent(module_t, int, void *);
 
 static dtrace_pattr_t kinst_attr = {
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
@@ -75,87 +75,8 @@ static const dtrace_pops_t kinst_pops = {
 
 static dtrace_provider_id_t	kinst_id;
 TAILQ_HEAD(, kinst_probe)	kinst_probes;
-
-static struct trampchunk *
-kinst_alloc_trampchunk(void)
-{
-	struct trampchunk *chunk;
-	vm_offset_t trampaddr;
-	int error;
-
-	/*
-	 * Allocate virtual memory for the trampoline chunk. The returned
-	 * address is saved in "trampaddr".
-	 *
-	 * VM_PROT_ALL expands to VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXEC,
-	 * i.e., the mapping will be writeable and executable.
-	 *
-	 * Setting "trampaddr" to KERNBASE causes vm_map_find() to return an
-	 * address above KERNBASE, so this satisfies both requirements.
-	 */
-	trampaddr = KERNBASE;
-	chunk = NULL;
-	error = vm_map_find(kernel_map, NULL, 0, &trampaddr, PAGE_SIZE, 0,
-	    VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
-	if (error != KERN_SUCCESS) {
-		printf("trampoline chunk allocation failed: %d\n", error);
-		return (NULL);
-	}
-	/*
-	 * We allocated a page of virtual memory, but that needs to be
-	 * backed by physical memory, or else any access will result in
-	 * a page fault.
-	 */
-	error = vm_map_wire(kernel_map, trampaddr, trampaddr + PAGE_SIZE,
-	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
-	if (error != KERN_SUCCESS) {
-		printf("trampoline chunk wiring failed: %d\n", error);
-		return (NULL);
-	}
-
-	/* Allocate a tracker for this chunk. */
-	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
-	chunk->addr = (void *)trampaddr;
-	BIT_FILL(KINST_TRAMPS_PER_CHUNK, &chunk->free);
-
-	return (chunk);
-}
-
-static uint8_t *
-kinst_alloc_trampoline(struct trampchunk *chunk)
-{
-	uint8_t *tramp;
-	int off;
-
-	/* Find a the first free trampoline. */
-	if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0) {
-		/*
-		 * All trampolines from this chunk are already allocated. We
-		 * need to allocate a new chunk.
-		 */
-		panic("TODO");
-	}
-	/* BIT_FFS() returns indices starting at 1 instead of 0. */
-	off--;
-
-	/* Mark trampoline as allocated. */
-	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
-	tramp = chunk->addr + off * KINST_TRAMPCHUNK_SIZE;
-
-	return (tramp);
-}
-
-static int
-kinst_dis_get_byte(void *p)
-{
-	int ret;
-	uint8_t **instr = p;
-
-	ret = **instr;
-	*instr += 1;
-
-	return (ret);
-}
+static vm_object_t		kinst_vmobj;
+static struct trampchunk	*kinst_trampchunk;
 
 int
 kinst_provide_module_function(linker_file_t lf, int symindx,
@@ -175,7 +96,9 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 
 	if (instr >= limit)
 		return (0);
-	
+
+	kinst_trampchunk = kinst_alloc_trampchunk();
+
 	while (instr < limit) {
 		if (n >= KINST_PROBE_MAX) {
 			printf("%s:%d probe list full\n", __func__, __LINE__);
@@ -210,6 +133,91 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	}
 
 	return (0);
+}
+
+static struct trampchunk *
+kinst_alloc_trampchunk(void)
+{
+	struct trampchunk *chunk;
+	vm_offset_t trampaddr;
+	int error;
+
+	/*
+	 * Allocate virtual memory for the trampoline chunk. The returned
+	 * address is saved in "trampaddr".
+	 *
+	 * VM_PROT_ALL expands to VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXEC,
+	 * i.e., the mapping will be writeable and executable.
+	 *
+	 * Setting "trampaddr" to KERNBASE causes vm_map_find() to return an
+	 * address above KERNBASE, so this satisfies both requirements.
+	 */
+	trampaddr = KERNBASE;
+	error = vm_map_find(kernel_map, kinst_vmobj, 0, &trampaddr, PAGE_SIZE,
+	    0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
+	if (error != KERN_SUCCESS) {
+		vm_object_deallocate(kinst_vmobj);
+		kinst_vmobj = NULL;
+		printf("trampoline chunk allocation failed: %d\n", error);
+		return (NULL);
+	}
+	printf("trampaddr: 0x%lx\n", trampaddr);
+	/*
+	 * We allocated a page of virtual memory, but that needs to be
+	 * backed by physical memory, or else any access will result in
+	 * a page fault.
+	 */
+	error = vm_map_wire(kernel_map, trampaddr, trampaddr + PAGE_SIZE,
+	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
+	if (error != KERN_SUCCESS) {
+		printf("trampoline chunk wiring failed: %d\n", error);
+		return (NULL);
+	}
+
+	/* Allocate a tracker for this chunk. */
+	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
+	chunk->addr = (void *)trampaddr;
+	BIT_FILL(KINST_TRAMPS_PER_CHUNK, &chunk->free);
+
+	return (chunk);
+}
+
+static uint8_t *
+kinst_alloc_trampoline(struct trampchunk *chunk)
+{
+	uint8_t *tramp;
+	int off;
+
+	/* Find a the first free trampoline. */
+	if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0) {
+		/*
+		 * All trampolines from this chunk are already allocated. We
+		 * need to allocate a new chunk.
+		 * TODO
+		 */
+		return (NULL);
+	}
+	/* BIT_FFS() returns indices starting at 1 instead of 0. */
+	off--;
+
+	/* Mark trampoline as allocated. */
+	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
+	tramp = chunk->addr + off * KINST_TRAMPCHUNK_SIZE;
+
+	return (tramp);
+}
+
+static int
+kinst_dis_get_byte(void *p)
+{
+	int ret;
+	uint8_t **instr = p;
+
+	ret = **instr;
+	/* XXX: *instr++ */
+	*instr += 1;
+
+	return (ret);
 }
 
 static void
@@ -261,6 +269,13 @@ kinst_load(void *dummy)
 {
 	TAILQ_INIT(&kinst_probes);
 
+	/* XXX: should this be here? */
+	kinst_vmobj = vm_object_allocate(OBJT_PHYS, 0);
+	if (kinst_vmobj == NULL) {
+		printf("cannot allocate vm_object\n");
+		return;
+	}
+
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
 		return;
@@ -304,10 +319,8 @@ kinst_modevent(module_t mod __unused, int type, void *data __unused)
 	return (error);
 }
 
-SYSINIT(kinst_load, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_load,
-    NULL);
-SYSUNINIT(kinst_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_unload,
-    NULL);
+SYSINIT(kinst_load, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_load, NULL);
+SYSUNINIT(kinst_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_unload, NULL);
 
 DEV_MODULE(kinst, kinst_modevent, NULL);
 MODULE_VERSION(kinst, 1);
