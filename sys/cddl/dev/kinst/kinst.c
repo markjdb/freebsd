@@ -20,6 +20,8 @@
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_object.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pager.h>
 
 #include "kinst.h"
 
@@ -181,6 +183,12 @@ kinst_alloc_trampchunk(void)
 		return (NULL);
 	}
 
+	/*
+	 * Fill the trampoline with breakpoint instructions so that the kernel
+	 * will crash cleanly if things somehow go wrong.
+	 */
+	memset((void *)trampaddr, 0xcc, PAGE_SIZE);
+
 	/* Allocate a tracker for this chunk. */
 	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
 	chunk->addr = (void *)trampaddr;
@@ -276,12 +284,14 @@ kinst_load(void *dummy)
 	TAILQ_INIT(&kinst_probes);
 
 	/* XXX: should this be here? */
-	kinst_vmobj = vm_object_allocate(OBJT_PHYS, 0);
+	kinst_vmobj = vm_pager_allocate(OBJT_PHYS, NULL,
+	    VM_MAX_ADDRESS - KERNBASE, VM_PROT_ALL, 0, curthread->td_ucred);
 	if (kinst_vmobj == NULL) {
 		KINST_LOG("cannot allocate vm_object");
 		return;
 	}
 	/* FIXME: panics if vm_object_allocate fails and we load the module again */
+	/* FIXME: destroy the VM object when unloading, with vm_pager_deallocate */
 
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
