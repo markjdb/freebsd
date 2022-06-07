@@ -4039,6 +4039,13 @@ vm_page_wire(vm_page_t m)
 	}
 }
 
+static COUNTER_U64_DEFINE_EARLY(vm_page_wire_mapped_anon);
+SYSCTL_COUNTER_U64(_vm_stats_page, OID_AUTO, page_wire_mapped_anon, CTLFLAG_RD,
+    &vm_page_wire_mapped_anon, "");
+static COUNTER_U64_DEFINE_EARLY(vm_page_wire_mapped_fail);
+SYSCTL_COUNTER_U64(_vm_stats_page, OID_AUTO, page_wire_mapped_fail, CTLFLAG_RD,
+    &vm_page_wire_mapped_fail, "");
+
 /*
  * Attempt to wire a mapped page following a pmap lookup of that page.
  * This may fail if a thread is concurrently tearing down mappings of the page.
@@ -4049,7 +4056,26 @@ vm_page_wire(vm_page_t m)
 bool
 vm_page_wire_mapped(vm_page_t m)
 {
+	vm_object_t object;
 	u_int old;
+
+	/*
+	 * The page reference may outlive the object mapping, allowing
+	 * the page to be accessed after it is unmapped.  An anonymous
+	 * object must therefore be tainted with the FORCESHADOW flag in
+	 * order to preserve COW protections.  Optimizations to reduce
+	 * the length of object shadow chains can otherwise have the
+	 * side effect of making a private page accessible outside of
+	 * its containing address space.
+	 */
+	object = atomic_load_ptr(&m->object);
+	if (object != NULL && (vm_object_flags(object) &
+	    (OBJ_FORCESHADOW | OBJ_ANON)) == OBJ_ANON) {
+		counter_u64_add(vm_page_wire_mapped_fail, 1);
+		return (false);
+	}
+	if (object != NULL && (vm_object_flags(object) & OBJ_ANON))
+		counter_u64_add(vm_page_wire_mapped_anon, 1);
 
 	old = m->ref_count;
 	do {

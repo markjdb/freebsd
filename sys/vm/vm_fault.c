@@ -360,7 +360,10 @@ vm_fault_soft_fast(struct faultstate *fs)
 
 	vaddr = fs->vaddr;
 
-	VM_OBJECT_RLOCK(fs->first_object);
+	if (fs->m_hold != NULL)
+		VM_OBJECT_WLOCK(fs->first_object);
+	else
+		VM_OBJECT_RLOCK(fs->first_object);
 
 	/*
 	 * Now that we stabilized the state, revalidate the page is in the shape
@@ -415,10 +418,13 @@ vm_fault_soft_fast(struct faultstate *fs)
 	if (fs->m_hold != NULL) {
 		(*fs->m_hold) = m;
 		vm_page_wire(m);
+		if ((fs->first_object->flags & (OBJ_ANON | OBJ_FORCESHADOW)) ==
+		    OBJ_ANON)
+			vm_object_set_flag(fs->first_object, OBJ_FORCESHADOW);
 	}
 	if (psind == 0 && !fs->wired)
 		vm_fault_prefault(fs, vaddr, PFBAK, PFFOR, true);
-	VM_OBJECT_RUNLOCK(fs->first_object);
+	VM_OBJECT_DROP(fs->first_object);
 	vm_fault_dirty(fs, m);
 	vm_object_unbusy(fs->first_object);
 	vm_map_lookup_done(fs->map, fs->entry);
@@ -427,7 +433,8 @@ vm_fault_soft_fast(struct faultstate *fs)
 fail_busy:
 	vm_object_unbusy(fs->first_object);
 fail:
-	if (!VM_OBJECT_TRYUPGRADE(fs->first_object)) {
+	if (fs->m_hold == NULL &&
+	    !VM_OBJECT_TRYUPGRADE(fs->first_object)) {
 		VM_OBJECT_RUNLOCK(fs->first_object);
 		VM_OBJECT_WLOCK(fs->first_object);
 	}
@@ -991,7 +998,7 @@ vm_fault_relookup(struct faultstate *fs)
 static void
 vm_fault_cow(struct faultstate *fs)
 {
-	bool is_first_object_locked;
+	bool is_object_locked, is_first_object_locked;
 
 	KASSERT(fs->object != fs->first_object,
 	    ("source and target COW objects are identical"));
@@ -1004,7 +1011,7 @@ vm_fault_cow(struct faultstate *fs)
 	 * object.  Note that we must mark the page dirty in the first
 	 * object so that it will go out to swap when needed.
 	 */
-	is_first_object_locked = false;
+	is_object_locked = is_first_object_locked = false;
 	if (
 	    /*
 	     * Only one shadow object and no other refs.
@@ -1019,7 +1026,12 @@ vm_fault_cow(struct faultstate *fs)
 	     */
 	    (is_first_object_locked = VM_OBJECT_TRYWLOCK(fs->first_object)) &&
 	    fs->object == fs->first_object->backing_object &&
-	    VM_OBJECT_TRYWLOCK(fs->object)) {
+	    (is_object_locked = VM_OBJECT_TRYWLOCK(fs->object)) &&
+	    /*
+	     * Pages in the backing object certainly do not have any references
+	     * that would allow their contents to be read directly.
+	     */
+	    (fs->object->flags & OBJ_FORCESHADOW) == 0) {
 		/*
 		 * Remove but keep xbusy for replace.  fs->m is moved into
 		 * fs->first_object and left busy while fs->first_m is
@@ -1042,8 +1054,12 @@ vm_fault_cow(struct faultstate *fs)
 		fs->m = NULL;
 		VM_CNT_INC(v_cow_optim);
 	} else {
-		if (is_first_object_locked)
+		if (is_first_object_locked) {
 			VM_OBJECT_WUNLOCK(fs->first_object);
+			if (is_object_locked)
+				VM_OBJECT_WUNLOCK(fs->object);
+		}
+
 		/*
 		 * Oh, well, lets copy it.
 		 */
@@ -1771,8 +1787,14 @@ found:
 	else
 		vm_page_activate(fs.m);
 	if (fs.m_hold != NULL) {
-		(*fs.m_hold) = fs.m;
+		*fs.m_hold = fs.m;
 		vm_page_wire(fs.m);
+		if ((vm_object_flags(fs.object) &
+		    (OBJ_ANON | OBJ_FORCESHADOW)) == OBJ_ANON) {
+			VM_OBJECT_WLOCK(fs.object);
+			vm_object_set_flag(fs.object, OBJ_FORCESHADOW);
+			VM_OBJECT_WUNLOCK(fs.object);
+		}
 	}
 	vm_page_xunbusy(fs.m);
 	fs.m = NULL;

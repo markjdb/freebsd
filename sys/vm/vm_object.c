@@ -1424,6 +1424,16 @@ next_pindex:
 	VM_OBJECT_WUNLOCK(object);
 }
 
+static COUNTER_U64_DEFINE_EARLY(object_shadow_elisions);
+SYSCTL_COUNTER_U64(_vm_stats_object, OID_AUTO, shadow_elisions, CTLFLAG_RD,
+    &object_shadow_elisions, "");
+static COUNTER_U64_DEFINE_EARLY(object_shadow_forced);
+SYSCTL_COUNTER_U64(_vm_stats_object, OID_AUTO, shadow_forced, CTLFLAG_RD,
+    &object_shadow_forced, "");
+static COUNTER_U64_DEFINE_EARLY(object_shadow_total);
+SYSCTL_COUNTER_U64(_vm_stats_object, OID_AUTO, shadow_total, CTLFLAG_RD,
+    &object_shadow_total, "");
+
 /*
  *	vm_object_shadow:
  *
@@ -1450,10 +1460,21 @@ vm_object_shadow(vm_object_t *object, vm_ooffset_t *offset, vm_size_t length,
 	 * increase while we have the map locked.  Otherwise the race is
 	 * harmless and we will end up with an extra shadow object that
 	 * will be collapsed later.
+	 *
+	 * An object with FORCESHADOW set may contain pages accessible
+	 * via a wiring.  To ensure that COW protections are preserved,
+	 * such objects must be shadowed.  The map lock ensures that
+	 * FORCESHADOW will not be set concurrently.
 	 */
-	if (source != NULL && source->ref_count == 1 &&
-	    (source->flags & OBJ_ANON) != 0)
-		return;
+	if (source != NULL && refcount_load(&source->ref_count) == 1 &&
+	    (vm_object_flags(source) & OBJ_ANON) != 0) {
+		if ((vm_object_flags(source) & OBJ_FORCESHADOW) == 0) {
+			counter_u64_add(object_shadow_elisions, 1);
+			return;
+		}
+		counter_u64_add(object_shadow_forced, 1);
+	}
+	counter_u64_add(object_shadow_total, 1);
 
 	/*
 	 * Allocate a new object with the given length.
@@ -1571,6 +1592,7 @@ vm_object_split(vm_map_entry_t entry)
 	 * that the object is in transition.
 	 */
 	vm_object_set_flag(orig_object, OBJ_SPLIT);
+	vm_object_set_flag(new_object, orig_object->flags & OBJ_FORCESHADOW);
 #ifdef INVARIANTS
 	idx = 0;
 #endif
@@ -1896,6 +1918,10 @@ vm_object_collapse_scan(vm_object_t object)
 	return;
 }
 
+static COUNTER_U64_DEFINE_EARLY(collapse_aborted);
+SYSCTL_COUNTER_U64(_vm_stats_object, OID_AUTO, collapse_aborted, CTLFLAG_RD,
+    &collapse_aborted, "");
+
 /*
  *	vm_object_collapse:
  *
@@ -1944,6 +1970,19 @@ vm_object_collapse(vm_object_t object)
 			    == 1,
 			    ("vm_object_collapse: shadow_count: %d",
 			    atomic_load_int(&backing_object->shadow_count)));
+
+			/*
+			 * Pages in an object with FORCESHADOW set may carry
+			 * references which allow them to be accessed outside of
+			 * a private context.  The backing object will stick
+			 * around until the last ref on the shadow goes away.
+			 */
+			if ((backing_object->flags & OBJ_FORCESHADOW) != 0) {
+				VM_OBJECT_WUNLOCK(backing_object);
+				counter_u64_add(collapse_aborted, 1);
+				break;
+			}
+
 			vm_object_pip_add(object, 1);
 			vm_object_set_flag(object, OBJ_COLLAPSING);
 			vm_object_pip_add(backing_object, 1);

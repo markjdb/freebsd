@@ -75,6 +75,8 @@
 
 #include <vm/_vm_radix.h>
 
+#include <machine/atomic.h>
+
 /*
  *	Types defined:
  *
@@ -199,6 +201,8 @@ struct vm_object {
 #define	OBJ_ONEMAPPING	0x2000		/* One USE (a single, non-forked) mapping flag */
 #define	OBJ_PAGERPRIV1	0x4000		/* Pager private */
 #define	OBJ_PAGERPRIV2	0x8000		/* Pager private */
+#define	OBJ_FORCESHADOW OBJ_PAGERPRIV1	/* disable some shadow chain
+					   optimizations, anon objects only */
 
 /*
  * Helpers to perform conversion between vm_object page indexes and offsets.
@@ -278,6 +282,12 @@ extern struct vm_object kernel_object_store;
 	    ("vm_object %p is not referenced", object))
 
 struct vnode;
+
+static __inline u_int
+vm_object_flags(vm_object_t object)
+{
+	return (atomic_load_int(&object->flags));
+}
 
 /*
  *	The object must be locked or thread private.
