@@ -3,7 +3,7 @@ SYSDIR?=	${SRCTOP}/sys
 .PATH:		${SYSDIR}/cddl/dev/kinst
 
 KMOD=		kinst
-SRCS=		kinst.c
+SRCS=		kinst.c trampoline.c
 
 CFLAGS+=	${OPENZFS_CFLAGS} \
 		-I${SYSDIR}/cddl/dev/kinst \

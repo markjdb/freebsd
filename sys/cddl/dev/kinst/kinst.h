@@ -22,19 +22,13 @@
  *			2022 Mark Johnston <markj@freebsd.org>
  *
  * $FreeBSD$
- *
  */
-
 #ifndef _KINST_H_
 #define _KINST_H_
 
 #include <sys/queue.h>
 
 #define KINST_PROBE_MAX	0x8000	/* 32k */
-
-#ifdef MALLOC_DECLARE
-MALLOC_DECLARE(M_KINST);
-#endif /* MALLOC_DECLARE */
 
 struct kinst_probe {
 	TAILQ_ENTRY(kinst_probe) kp_next;

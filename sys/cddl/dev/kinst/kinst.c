@@ -7,52 +7,18 @@
 #include <sys/kernel.h>
 #include <sys/linker.h>
 #include <sys/module.h>
-#include <sys/bitset.h>
 
 #include <sys/dtrace.h>
 #include <dis_tables.h>
 
 #include <machine/stdarg.h>
 
-#include <vm/vm.h>
-#include <vm/vm_param.h>
-#include <vm/pmap.h>
-#include <vm/vm_map.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_object.h>
-#include <vm/vm_page.h>
-#include <vm/vm_pager.h>
-
+#include "extern.h"
 #include "kinst.h"
-
-#define KINST_LOG_HELPER(fmt, ...) \
-	printf("%s:%d: " fmt "%s\n", __func__, __LINE__, __VA_ARGS__)
-#define KINST_LOG(...) \
-	KINST_LOG_HELPER(__VA_ARGS__, "")
-
-#define KINST_TRAMP_SIZE	32
-#define KINST_TRAMPCHUNK_SIZE	PAGE_SIZE
-/*
- * We can have 4KB/32B = 128 trampolines per chunk.
- */
-#define KINST_TRAMPS_PER_CHUNK	(KINST_TRAMPCHUNK_SIZE / KINST_TRAMP_SIZE)
-/*
- * Set the object size to 2GB, since we know that the object will only ever be
- * used to allocate pages in the range [KERNBASE, 0xfffffffffffff000].
- */
-#define KINST_VMOBJ_SIZE	(VM_MAX_ADDRESS - KERNBASE)
+#include "trampoline.h"
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
-struct trampchunk {
-	uint8_t *addr;
-	/* 0 -> allocated, 1 -> free */
-	BITSET_DEFINE(, KINST_TRAMPS_PER_CHUNK) free;
-};
-
-static struct trampchunk *kinst_alloc_trampchunk(void);
-/* TODO: dealloc_trampchunk */
-static uint8_t	*kinst_alloc_trampoline(struct trampchunk *);
 static int	kinst_dis_get_byte(void *);
 
 static void	kinst_provide_module(void *, modctl_t *);
@@ -89,8 +55,6 @@ static const dtrace_pops_t kinst_pops = {
 
 static dtrace_provider_id_t	kinst_id;
 TAILQ_HEAD(, kinst_probe)	kinst_probes;
-static vm_object_t		kinst_vmobj;
-static struct trampchunk	*kinst_trampchunk;
 
 int
 kinst_provide_module_function(linker_file_t lf, int symindx,
@@ -111,12 +75,6 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	if (instr >= limit)
 		return (0);
 
-	/* XXX: not sure if this should be here */
-	if ((kinst_trampchunk = kinst_alloc_trampchunk()) == NULL) {
-		KINST_LOG("cannot allocate trampoline chunk");
-		return (1);
-	}
-
 	while (instr < limit) {
 		if (n >= KINST_PROBE_MAX) {
 			KINST_LOG("probe list full");
@@ -133,16 +91,26 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		 * Determine whether the instruction has to be modified before
 		 * we allocate the trampoline.
 		 */
+		if ((kp->kp_trampoline = kinst_trampoline_alloc()) == NULL) {
+			KINST_LOG("cannot allocate trampoline for: %p", instr);
+			return (1);
+		}
+		/*
+		 * TODO: check 0x68 (call)
+		 */
 		d86.d86_data = (void **)&instr;
 		d86.d86_get_byte = kinst_dis_get_byte;
 		d86.d86_check_func = NULL;
+		/*
+		 * XXX: do we need to choose between SIZE32/SIZE64?
+		 */
 		if (dtrace_disx86(&d86, SIZE64) != 0) {
 			KINST_LOG("failed to disassemble instruction at: %p", instr);
 			return (1);
 		}
 		kp->kp_flags = 0;
 		if (d86.d86_rmindex != -1) {
-			/* TODO */
+			/* TODO rm == 5 */
 		}
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
 		    symval->name, kp->kp_name, 3, NULL);
@@ -150,83 +118,6 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	}
 
 	return (0);
-}
-
-static struct trampchunk *
-kinst_alloc_trampchunk(void)
-{
-	struct trampchunk *chunk;
-	vm_offset_t trampaddr;
-	int error;
-
-	/*
-	 * Allocate virtual memory for the trampoline chunk. The returned
-	 * address is saved in "trampaddr".
-	 *
-	 * VM_PROT_ALL expands to VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXEC,
-	 * i.e., the mapping will be writeable and executable.
-	 *
-	 * Setting "trampaddr" to KERNBASE causes vm_map_find() to return an
-	 * address above KERNBASE, so this satisfies both requirements.
-	 */
-	trampaddr = KERNBASE;
-	error = vm_map_find(kernel_map, kinst_vmobj, 0, &trampaddr, PAGE_SIZE,
-	    0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
-	if (error != KERN_SUCCESS) {
-		vm_object_deallocate(kinst_vmobj);
-		kinst_vmobj = NULL;
-		KINST_LOG("trampoline chunk allocation failed: %d", error);
-		return (NULL);
-	}
-	/*
-	 * We allocated a page of virtual memory, but that needs to be
-	 * backed by physical memory, or else any access will result in
-	 * a page fault.
-	 */
-	error = vm_map_wire(kernel_map, trampaddr, trampaddr + PAGE_SIZE,
-	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
-	if (error != KERN_SUCCESS) {
-		KINST_LOG("trampoline chunk wiring failed: %d", error);
-		return (NULL);
-	}
-
-	/*
-	 * Fill the trampolines with breakpoint instructions so that the kernel
-	 * will crash cleanly if things somehow go wrong.
-	 */
-	memset((void *)trampaddr, 0xcc, KINST_TRAMPCHUNK_SIZE);
-
-	/* Allocate a tracker for this chunk. */
-	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
-	chunk->addr = (void *)trampaddr;
-	BIT_FILL(KINST_TRAMPS_PER_CHUNK, &chunk->free);
-
-	return (chunk);
-}
-
-static uint8_t *
-kinst_alloc_trampoline(struct trampchunk *chunk)
-{
-	uint8_t *tramp;
-	int off;
-
-	/* Find a the first free trampoline. */
-	if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0) {
-		/*
-		 * All trampolines from this chunk are already allocated. We
-		 * need to allocate a new chunk.
-		 * TODO
-		 */
-		return (NULL);
-	}
-	/* BIT_FFS() returns indices starting at 1 instead of 0. */
-	off--;
-
-	/* Mark trampoline as allocated. */
-	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
-	tramp = chunk->addr + off * KINST_TRAMPCHUNK_SIZE;
-
-	return (tramp);
 }
 
 static int
@@ -274,6 +165,7 @@ kinst_enable(void *arg, dtrace_id_t id, void *parg)
 static void
 kinst_disable(void *arg, dtrace_id_t id, void *parg)
 {
+	/* TODO: dealloc trampolines here */
 	KINST_LOG("probe %u is disabled", id);
 }
 
@@ -289,13 +181,7 @@ static void
 kinst_load(void *dummy)
 {
 	TAILQ_INIT(&kinst_probes);
-
-	kinst_vmobj = vm_pager_allocate(OBJT_PHYS, NULL, KINST_VMOBJ_SIZE,
-	    VM_PROT_ALL, 0, curthread->td_ucred);
-	if (kinst_vmobj == NULL) {
-		KINST_LOG("cannot allocate vm_object");
-		return;
-	}
+	kinst_trampoline_init();
 
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
@@ -316,10 +202,7 @@ kinst_unload(void)
 		if (kp != NULL)
 			free(kp, M_KINST);
 	}
-	/*vm_pager_deallocate(kinst_vmobj);*/
-	(void)vm_map_remove(kernel_map, (vm_offset_t)kinst_trampchunk->addr,
-	    (vm_offset_t)(kinst_trampchunk->addr + KINST_TRAMPCHUNK_SIZE));
-	free(kinst_trampchunk, M_KINST);
+	kinst_trampoline_deinit();
 
 	return (dtrace_unregister(kinst_id));
 }
