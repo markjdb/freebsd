@@ -147,37 +147,33 @@ kinst_trampoline_alloc(void)
 	int off;
 
 	/* Find a the first free trampoline. */
-again:
 	TAILQ_FOREACH(chunk, &kinst_trampchunks, next) {
-		if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0) {
-			/*
-			 * All trampolines from this chunk are already allocated. We
-			 * need to allocate a new chunk.
-			 */
-			if ((new = kinst_trampchunk_alloc()) == NULL) {
-				KINST_LOG("cannot allocate new trampchunk");
-				return (NULL);
-			}
-			TAILQ_INSERT_TAIL(&kinst_trampchunks, new, next);
-			goto again;
-		}
+		/* All trampolines from this chunk are already allocated. */
+		if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0)
+			continue;
 		/* BIT_FFS() returns indices starting at 1 instead of 0. */
 		off--;
-
 		/* Mark trampoline as allocated. */
-		BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
-		tramp = chunk->addr + off * KINST_TRAMPCHUNK_SIZE;
-
-		return (tramp);
+		goto found;
 	}
+	if ((chunk = kinst_trampchunk_alloc()) == NULL) {
+		KINST_LOG("cannot allocate new trampchunk");
+		return (NULL);
+	}
+	TAILQ_INSERT_TAIL(&kinst_trampchunks, chunk, next);
+	off = 0;
+found:
+	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
+	tramp = chunk->addr + off * KINST_TRAMP_SIZE;
 
-	/* NOTREACHED */
-	return (NULL);
+	return (tramp);
 }
 
 void
 kinst_trampoline_dealloc(uint8_t *tramp)
 {
-	/* XXX */
+	/*
+	 * TODO: find which chunk it belongs to
+	 */
 	memset((void *)tramp, 0xcc, KINST_TRAMP_SIZE);
 }
