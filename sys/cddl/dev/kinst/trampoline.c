@@ -131,8 +131,7 @@ kinst_trampoline_deinit(void)
 		TAILQ_REMOVE(&kinst_trampchunks, chunk, next);
 		(void)vm_map_remove(kernel_map, (vm_offset_t)chunk->addr,
 		    (vm_offset_t)(chunk->addr + KINST_TRAMPCHUNK_SIZE));
-		if (chunk != NULL)
-			free(chunk, M_KINST);
+		free(chunk, M_KINST);
 	}
 	vm_object_deallocate(kinst_vmobj);
 
@@ -156,6 +155,10 @@ kinst_trampoline_alloc(void)
 		/* Mark trampoline as allocated. */
 		goto found;
 	}
+	/*
+	 * We didn't find any free trampoline in the current list, we need to
+	 * allocate a new one.
+	 */
 	if ((chunk = kinst_trampchunk_alloc()) == NULL) {
 		KINST_LOG("cannot allocate new trampchunk");
 		return (NULL);
@@ -172,8 +175,16 @@ found:
 void
 kinst_trampoline_dealloc(uint8_t *tramp)
 {
-	/*
-	 * TODO: find which chunk it belongs to
-	 */
-	memset((void *)tramp, 0xcc, KINST_TRAMP_SIZE);
+	struct trampchunk *chunk;
+	int off;
+
+	TAILQ_FOREACH(chunk, &kinst_trampchunks, next) {
+		for (off = 0; off < KINST_TRAMPS_PER_CHUNK; off++) {
+			if (chunk->addr + off * KINST_TRAMP_SIZE == tramp) {
+				BIT_SET(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
+				memset((void *)tramp, 0xcc, KINST_TRAMP_SIZE);
+				return;
+			}
+		}
+	}
 }

@@ -9,6 +9,7 @@
 #include <sys/module.h>
 
 #include <sys/dtrace.h>
+#include <cddl/dev/dtrace/dtrace_cddl.h>
 #include <dis_tables.h>
 
 #include <machine/stdarg.h>
@@ -16,6 +17,18 @@
 #include "extern.h"
 #include "kinst.h"
 #include "trampoline.h"
+
+#define KINST_JMP_LEN		5
+#define KINST_OPCODE_JMP	0xe9
+/*
+ * Special cases where an instruction has to be modified before it is copied to
+ * the trampoline.
+ */
+#define KINST_OPCODE_CALL	0xe8
+#define KINST_MODRM_RIPREL	0x05
+
+#define KINST_F_BRANCH		0x01
+#define KINST_F_RIPREL		0x02
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
@@ -62,7 +75,8 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 {
 	struct kinst_probe *kp;
 	dis86_t d86;
-	int n = 0;
+	int n = 0, mode;
+	int32_t displ;
 	uint8_t *instr, *limit;
 
 	if (strcmp(symval->name, "trap_check") == 0 ||
@@ -71,47 +85,57 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 
 	instr = (uint8_t *)symval->value;
 	limit = (uint8_t *)symval->value + symval->size;
+	mode = (DATAMODEL_LP64 == DATAMODEL_NATIVE) ? SIZE64 : SIZE32;
 
 	if (instr >= limit)
 		return (0);
 
 	while (instr < limit) {
 		if (n >= KINST_PROBE_MAX) {
-			KINST_LOG("probe list full");
+			KINST_LOG("probe list full: %d entries", n);
 			return (1);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n++);
 		/*
-		 * Save the first byte of the instruction so that we can recover it after
-		 * we restore the breakpoint.
+		 * Save the first byte of the instruction so that we can
+		 * recover it after we restore the breakpoint.
 		 */
 		kp->kp_recover_byte = *instr;
-		/*
-		 * Determine whether the instruction has to be modified before
-		 * we allocate the trampoline.
-		 */
 		if ((kp->kp_trampoline = kinst_trampoline_alloc()) == NULL) {
+			/* FIXME: prevent semory leak/cleanup resources? */
 			KINST_LOG("cannot allocate trampoline for: %p", instr);
 			return (1);
 		}
-		/*
-		 * TODO: check 0x68 (call)
-		 */
 		d86.d86_data = (void **)&instr;
 		d86.d86_get_byte = kinst_dis_get_byte;
 		d86.d86_check_func = NULL;
-		/*
-		 * XXX: do we need to choose between SIZE32/SIZE64?
-		 */
-		if (dtrace_disx86(&d86, SIZE64) != 0) {
+		if (dtrace_disx86(&d86, mode) != 0) {
 			KINST_LOG("failed to disassemble instruction at: %p", instr);
 			return (1);
 		}
 		kp->kp_flags = 0;
-		if (d86.d86_rmindex != -1) {
-			/* TODO rm == 5 */
-		}
+		/*
+		 * Determine whether the instruction has to be modified before
+		 * we copy it to the trampoline.
+		 */
+		if ((uint8_t)d86.d86_bytes[0] == KINST_OPCODE_CALL)
+			kp->kp_flags |= KINST_F_BRANCH;
+		if (d86.d86_rmindex != -1 &&
+		    d86.d86_bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL)
+			kp->kp_flags |= KINST_F_RIPREL;
+		/* TODO: more cases */
+
+		/*
+		 * Copy instruction to trampoline.
+		 * TODO: make modifications
+		 */
+		memcpy(kp->kp_trampoline, d86.d86_bytes, d86.d86_len);
+		kp->kp_trampoline[d86.d86_len] = KINST_OPCODE_JMP;
+		/* dst - (src + len) */
+		displ = instr - ((kp->kp_trampoline + d86.d86_len) + KINST_JMP_LEN);
+		memcpy(&kp->kp_trampoline[d86.d86_len + 1], &displ, sizeof(displ));
+
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
 		    symval->name, kp->kp_name, 3, NULL);
 		TAILQ_INSERT_TAIL(&kinst_probes, kp, kp_next);
@@ -198,6 +222,8 @@ kinst_unload(void)
 
 	while (!TAILQ_EMPTY(&kinst_probes)) {
 		kp = TAILQ_FIRST(&kinst_probes);
+		/* XXX: move to kinst_disable */
+		kinst_trampoline_dealloc(kp->kp_trampoline);
 		TAILQ_REMOVE(&kinst_probes, kp, kp_next);
 		if (kp != NULL)
 			free(kp, M_KINST);
