@@ -27,8 +27,12 @@
 #define _KINST_H_
 
 #include <sys/queue.h>
+#include "extern.h"
 
 #define KINST_PROBE_MAX	0x8000	/* 32k */
+
+struct linker_file;
+struct linker_symval;
 
 struct kinst_probe {
 	TAILQ_ENTRY(kinst_probe) kp_next;
@@ -36,13 +40,13 @@ struct kinst_probe {
 	dtrace_id_t	kp_id;
 	int		kp_flags;
 	uint8_t		*kp_trampoline;
-	uint8_t		kp_recover_byte;
+	kinst_patchval_t *kp_patchpoint;
+	kinst_patchval_t kp_patchval;
+	kinst_patchval_t kp_savedval;
 };
 
-struct linker_file;
-struct linker_symval;
-
-//int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
+int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
+void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
 int	kinst_provide_module_function(struct linker_file *, int,
 	    struct linker_symval *, void *);
 

@@ -90,7 +90,7 @@ kinst_trampchunk_alloc(void)
 	 * Fill the trampolines with breakpoint instructions so that the kernel
 	 * will crash cleanly if things somehow go wrong.
 	 */
-	memset((void *)trampaddr, 0xcc, KINST_TRAMPCHUNK_SIZE);
+	memset((void *)trampaddr, KINST_PATCHVAL, KINST_TRAMPCHUNK_SIZE);
 
 	/* Allocate a tracker for this chunk. */
 	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
@@ -181,8 +181,10 @@ kinst_trampoline_dealloc(uint8_t *tramp)
 	TAILQ_FOREACH(chunk, &kinst_trampchunks, next) {
 		for (off = 0; off < KINST_TRAMPS_PER_CHUNK; off++) {
 			if (chunk->addr + off * KINST_TRAMP_SIZE == tramp) {
-				BIT_SET(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
-				memset((void *)tramp, 0xcc, KINST_TRAMP_SIZE);
+				BIT_SET(KINST_TRAMPS_PER_CHUNK, off,
+				    &chunk->free);
+				memset((void *)tramp, KINST_PATCHVAL,
+				    KINST_TRAMP_SIZE);
 				return;
 			}
 		}

@@ -12,23 +12,21 @@
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 #include <dis_tables.h>
 
+#include <machine/cpufunc.h>
+#include <machine/md_var.h>
 #include <machine/stdarg.h>
 
-#include "extern.h"
 #include "kinst.h"
 #include "trampoline.h"
 
-#define KINST_JMP_LEN		5
-#define KINST_OPCODE_JMP	0xe9
-/*
- * Special cases where an instruction has to be modified before it is copied to
- * the trampoline.
- */
-#define KINST_OPCODE_CALL	0xe8
+#define KINST_CALL		0xe8
+#define KINST_JMP		0xe9
 #define KINST_MODRM_RIPREL	0x05
 
 #define KINST_F_BRANCH		0x01
 #define KINST_F_RIPREL		0x02
+
+#define KINST_JMP_LEN		5
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
@@ -70,6 +68,51 @@ static dtrace_provider_id_t	kinst_id;
 TAILQ_HEAD(, kinst_probe)	kinst_probes;
 
 int
+kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
+{
+	solaris_cpu_t *cpu;
+	uintptr_t *stack;
+	struct kinst_probe *kp;
+
+#ifdef __amd64__
+	stack = (uintptr_t *)frame->tf_rsp;
+#else
+	/* Skip hardware-saved registers. */
+	stack = (uintptr_t *)frame->tf_isp + 3;
+#endif
+	cpu = &solaris_cpu[curcpu];
+
+	TAILQ_FOREACH(kp, &kinst_probes, kp_next) {
+		if ((uintptr_t)kp->kp_patchpoint != addr)
+			continue;
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+		cpu->cpu_dtrace_caller = stack[0];
+		/* Redirect execution to the trampoline. */
+		frame->tf_rip = (register_t)kp->kp_trampoline;
+		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
+		dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
+		cpu->cpu_dtrace_caller = 0;
+
+		return (DTRACE_INVOP_NOP);
+	}
+
+	return (0);
+}
+
+void
+kinst_patch_tracepoint(struct kinst_probe *kp, kinst_patchval_t val)
+{
+	register_t reg;
+	int oldwp;
+
+	reg = intr_disable();
+	oldwp = disable_wp();
+	*kp->kp_patchpoint = val;
+	restore_wp(oldwp);
+	intr_restore(reg);
+}
+
+int
 kinst_provide_module_function(linker_file_t lf, int symindx,
     linker_symval_t *symval, void *opaque)
 {
@@ -80,7 +123,7 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	uint8_t *instr, *limit;
 
 	if (strcmp(symval->name, "trap_check") == 0 ||
-	    strcmp(symval->name, "vm_fault") != 0)
+	    strcmp(symval->name, "amd64_syscall") != 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;
@@ -97,11 +140,13 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n++);
+		kp->kp_patchpoint = instr;
 		/*
 		 * Save the first byte of the instruction so that we can
 		 * recover it after we restore the breakpoint.
 		 */
-		kp->kp_recover_byte = *instr;
+		kp->kp_savedval = *instr;
+		kp->kp_patchval = KINST_PATCHVAL;
 		if ((kp->kp_trampoline = kinst_trampoline_alloc()) == NULL) {
 			/* FIXME: prevent semory leak/cleanup resources? */
 			KINST_LOG("cannot allocate trampoline for: %p", instr);
@@ -119,7 +164,7 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		 * Determine whether the instruction has to be modified before
 		 * we copy it to the trampoline.
 		 */
-		if ((uint8_t)d86.d86_bytes[0] == KINST_OPCODE_CALL)
+		if ((uint8_t)d86.d86_bytes[0] == KINST_CALL)
 			kp->kp_flags |= KINST_F_BRANCH;
 		if (d86.d86_rmindex != -1 &&
 		    d86.d86_bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL)
@@ -130,14 +175,14 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		 * Copy instruction to trampoline.
 		 * TODO: make modifications
 		 */
-		memcpy(kp->kp_trampoline, d86.d86_bytes, d86.d86_len);
-		kp->kp_trampoline[d86.d86_len] = KINST_OPCODE_JMP;
+		memcpy(&kp->kp_trampoline[0], &d86.d86_bytes, d86.d86_len);
+		kp->kp_trampoline[d86.d86_len] = KINST_JMP;
 		/* dst - (src + len) */
-		displ = instr - ((kp->kp_trampoline + d86.d86_len) + KINST_JMP_LEN);
+		displ = instr - (kp->kp_trampoline + d86.d86_len + KINST_JMP_LEN);
 		memcpy(&kp->kp_trampoline[d86.d86_len + 1], &displ, sizeof(displ));
 
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
-		    symval->name, kp->kp_name, 3, NULL);
+		    symval->name, kp->kp_name, 3, kp);
 		TAILQ_INSERT_TAIL(&kinst_probes, kp, kp_next);
 	}
 
@@ -179,6 +224,9 @@ kinst_destroy(void *arg, dtrace_id_t id, void *parg)
 static void
 kinst_enable(void *arg, dtrace_id_t id, void *parg)
 {
+	struct kinst_probe *kp = parg;
+
+	kinst_patch_tracepoint(kp, kp->kp_patchval);
 	/*
 	 * TODO: move instruction parsing from provide_module_function() here
 	 * so that we allocate things lazily.
@@ -189,6 +237,9 @@ kinst_enable(void *arg, dtrace_id_t id, void *parg)
 static void
 kinst_disable(void *arg, dtrace_id_t id, void *parg)
 {
+	struct kinst_probe *kp = parg;
+
+	kinst_patch_tracepoint(kp, kp->kp_savedval);
 	/* TODO: dealloc trampolines here */
 	KINST_LOG("probe %u is disabled", id);
 }
@@ -210,6 +261,7 @@ kinst_load(void *dummy)
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
 		return;
+	dtrace_invop_add(kinst_invop);
 
 	/* Loop over all functions in the kernel and loaded modules. */
 	linker_file_foreach(kinst_linker_file_cb, NULL);
@@ -219,6 +271,8 @@ static int
 kinst_unload(void)
 {
 	struct kinst_probe *kp;
+
+	dtrace_invop_remove(kinst_invop);
 
 	while (!TAILQ_EMPTY(&kinst_probes)) {
 		kp = TAILQ_FIRST(&kinst_probes);

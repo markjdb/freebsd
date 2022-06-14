@@ -9,6 +9,14 @@
 #define KINST_LOG(...) \
 	KINST_LOG_HELPER(__VA_ARGS__, "")
 
+#ifdef __amd64__
+#define KINST_PATCHVAL	0xcc
+#else
+#define KINST_PATCHVAL	0xf0
+#endif /* __amd64__ */
+
+typedef uint8_t kinst_patchval_t;
+
 #ifdef MALLOC_DECLARE
 MALLOC_DECLARE(M_KINST);
 #endif /* MALLOC_DECLARE */
