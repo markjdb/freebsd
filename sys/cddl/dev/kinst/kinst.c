@@ -87,11 +87,11 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 			continue;
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
 		cpu->cpu_dtrace_caller = stack[0];
-		/* Redirect execution to the trampoline. */
-		frame->tf_rip = (register_t)kp->kp_trampoline;
 		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
 		dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
 		cpu->cpu_dtrace_caller = 0;
+		/* Redirect execution to the trampoline after iret. */
+		frame->tf_rip = (register_t)kp->kp_trampoline;
 
 		return (DTRACE_INVOP_NOP);
 	}

@@ -51,6 +51,7 @@ TAILQ_HEAD(, trampchunk)	kinst_trampchunks;
 static struct trampchunk *
 kinst_trampchunk_alloc(void)
 {
+	static int off = 0;
 	struct trampchunk *chunk;
 	vm_offset_t trampaddr;
 	int error;
@@ -67,8 +68,9 @@ kinst_trampchunk_alloc(void)
 	 * address above KERNBASE, so this satisfies both requirements.
 	 */
 	trampaddr = KERNBASE;
-	error = vm_map_find(kernel_map, kinst_vmobj, 0, &trampaddr, PAGE_SIZE,
-	    0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
+	off += PAGE_SIZE;
+	error = vm_map_find(kernel_map, kinst_vmobj, off, &trampaddr,
+	    PAGE_SIZE, 0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
 	if (error != KERN_SUCCESS) {
 		kinst_vmobj = NULL;
 		KINST_LOG("trampoline chunk allocation failed: %d", error);
