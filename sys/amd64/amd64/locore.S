@@ -47,6 +47,8 @@
 	.set	dmapbase,DMAP_MIN_ADDRESS
 	.set	dmapend,DMAP_MAX_ADDRESS
 
+#define	BOOTSTACK_SIZE	4096
+
 	.text
 /**********************************************************************
  *
@@ -68,14 +70,22 @@ NON_GPROF_ENTRY(btext)
 	pushq	$PSL_KERNEL
 	popfq
 
-	/* Find the metadata pointers before we lose them */
+	/* Get onto a stack that we can trust - there is no going back now. */
 	movq	%rsp, %rbp
+	movq	$bootstack,%rsp
+
+#ifdef KASAN
+	/* Bootstrap a shadow map for the boot stack. */
+	movq	$bootstack, %rdi
+	subq	$BOOTSTACK_SIZE, %rdi
+	movq	$BOOTSTACK_SIZE, %rsi
+	call	kasan_init_early
+#endif
+
+	/* Grab metadata pointers from the loader. */
 	movl	4(%rbp),%edi		/* modulep (arg 1) */
 	movl	8(%rbp),%esi		/* kernend (arg 2) */
-
-	/* Get onto a stack that we can trust - there is no going back now. */
-	movq	$bootstack,%rsp
-	xorl	%ebp, %ebp
+	xorq	%rbp, %rbp
 
 	call	hammer_time		/* set up cpu for unix operation */
 	movq	%rax,%rsp		/* set up kstack for mi_startup() */
@@ -86,5 +96,5 @@ NON_GPROF_ENTRY(btext)
 	.bss
 	ALIGN_DATA			/* just to be sure */
 	.globl	bootstack
-	.space	0x1000			/* space for bootstack - temporary stack */
+	.space	BOOTSTACK_SIZE		/* space for bootstack - temporary stack */
 bootstack:
