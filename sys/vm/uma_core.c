@@ -1829,6 +1829,11 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	BIT_ZERO(keg->uk_ipers, slab_dbg_bits(slab, keg));
 #endif
 
+#ifdef KMSAN
+	if ((aflags & M_ZERO) != 0)
+		kmsan_mark(mem, size, KMSAN_STATE_INITED);
+#endif
+
 	if (keg->uk_init != NULL) {
 		for (i = 0; i < keg->uk_ipers; i++)
 			if (keg->uk_init(slab_item(slab, keg, i),
