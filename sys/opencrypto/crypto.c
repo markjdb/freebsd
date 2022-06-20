@@ -1739,6 +1739,19 @@ crypto_done(struct cryptop *crp)
 	}
 }
 
+void
+crypto_reset(struct cryptop *crp)
+{
+	KASSERT(crp->crp_etype == EAGAIN,
+	    ("%s: cryptop %p unexpected error %d",
+	    __func__, crp, crp->crp_etype));
+	KASSERT((crp->crp_flags & CRYPTO_F_DONE) != 0,
+	    ("%s: resetting an unfinished cryptop %p", __func__, crp));
+
+	crp->crp_etype = 0;
+	crp->crp_flags &= ~CRYPTO_F_DONE;
+}
+
 /*
  * Terminate a thread at module unload.  The process that
  * initiated this is waiting for us to signal that we're gone;

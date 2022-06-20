@@ -122,6 +122,7 @@ aes_crypto_cb(struct cryptop *crp)
 		return (0);
 
 	if (crp->crp_etype == EAGAIN) {
+		crypto_reset(crp);
 		crypto_dispatch(crp);
 		return (0);
 	}

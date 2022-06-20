@@ -314,6 +314,7 @@ ipcomp_input_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
+			crypto_reset(crp);
 			crypto_dispatch(crp);
 			return (0);
 		}
@@ -560,6 +561,7 @@ ipcomp_output_cb(struct cryptop *crp)
 				crypto_freesession(cryptoid);
 			xd->cryptoid = crp->crp_session;
 			CURVNET_RESTORE();
+			crypto_reset(crp);
 			crypto_dispatch(crp);
 			return (0);
 		}

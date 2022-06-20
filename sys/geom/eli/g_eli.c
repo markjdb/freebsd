@@ -254,7 +254,7 @@ g_eli_crypto_rerun(struct cryptop *crp)
 	    bp->bio_cmd == BIO_READ ? "READ" : "WRITE", wr->w_sid,
 	    crp->crp_session);
 	wr->w_sid = crp->crp_session;
-	crp->crp_etype = 0;
+	crypto_reset(crp);
 	crypto_dispatch(crp);
 }
 

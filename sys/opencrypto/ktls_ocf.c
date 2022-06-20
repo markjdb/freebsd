@@ -222,8 +222,7 @@ ktls_ocf_dispatch(struct ktls_ocf_session *os, struct cryptop *crp)
 			break;
 		}
 
-		crp->crp_etype = 0;
-		crp->crp_flags &= ~CRYPTO_F_DONE;
+		crypto_reset(crp);
 		oo.done = false;
 		counter_u64_add(ocf_retries, 1);
 	}
@@ -238,8 +237,7 @@ ktls_ocf_dispatch_async_cb(struct cryptop *crp)
 
 	state = crp->crp_opaque;
 	if (crp->crp_etype == EAGAIN) {
-		crp->crp_etype = 0;
-		crp->crp_flags &= ~CRYPTO_F_DONE;
+		crypto_reset(crp);
 		counter_u64_add(ocf_retries, 1);
 		crypto_dispatch(crp);
 		return (0);

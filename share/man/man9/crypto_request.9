@@ -53,6 +53,8 @@
 .Ft void
 .Fn crypto_initreq "crypto_session_t cses" "int how"
 .Ft void
+.Fn crypto_reset "struct cryptop *crp"
+.Ft void
 .Fn crypto_use_buf "struct cryptop *crp" "void *buf" "int len"
 .Ft void
 .Fn crypto_use_mbuf "struct cryptop *crp" "struct mbuf *m"
@@ -132,13 +134,24 @@ and
 .Fn crypto_dispatch_batch
 functions pass one or more crypto requests to the driver attached to the
 request's session.
-If there are errors in the request's fields, these functions may return an
-error to the caller.
-If errors are encountered while servicing the request, they will instead
-be reported to the request's callback function
+If errors are encountered while servicing the request, they will be reported to
+the request's callback function
 .Pq Fa crp_callback
-via
-.Fa crp_etype .
+via the
+.Fa crp_etype
+field.
+In particular, this field will be set to an errno value describing the error,
+or zero if the request completed successfully.
+Errors may arise due to invalid request parameters, or due to transient resource
+shortages when a hardware offload driver is in use.
+The error number
+.Dv EAGAIN
+indicates that the request could be retried.
+In this case,
+.Fn crypto_reset
+should be called to reset some state in the request structure prior to calling
+.Fn crypto_dispatch
+again.
 .Pp
 Note that a request's callback function may be invoked before
 .Fn crypto_dispatch

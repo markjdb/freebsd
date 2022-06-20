@@ -818,8 +818,7 @@ again:
 	mtx_unlock(&cse->lock);
 
 	if (crp->crp_etype == EAGAIN) {
-		crp->crp_etype = 0;
-		crp->crp_flags &= ~CRYPTO_F_DONE;
+		crypto_reset(crp);
 		cod->done = false;
 		goto again;
 	}
@@ -1017,8 +1016,7 @@ again:
 	mtx_unlock(&cse->lock);
 
 	if (crp->crp_etype == EAGAIN) {
-		crp->crp_etype = 0;
-		crp->crp_flags &= ~CRYPTO_F_DONE;
+		crypto_reset(crp);
 		cod->done = false;
 		goto again;
 	}

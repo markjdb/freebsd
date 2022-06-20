@@ -629,6 +629,7 @@ void	crypto_dispatch_batch(struct cryptopq *crpq, int flags);
 #define	CRYPTO_SYMQ	0x1
 int	crypto_unblock(uint32_t, int);
 void	crypto_done(struct cryptop *crp);
+void	crypto_reset(struct cryptop *crp);
 
 struct cryptop *crypto_clonereq(struct cryptop *crp, crypto_session_t cses,
     int how);
