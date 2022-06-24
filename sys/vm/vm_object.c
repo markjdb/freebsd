@@ -311,7 +311,7 @@ vm_object_init(void)
 }
 
 void
-vm_object_clear_flag(vm_object_t object, u_short bits)
+vm_object_clear_flag(vm_object_t object, u_int bits)
 {
 
 	VM_OBJECT_ASSERT_WLOCKED(object);

@@ -108,8 +108,8 @@ struct vm_object {
 	int shadow_count;		/* how many objects that this is a shadow for */
 	vm_memattr_t memattr;		/* default memory attribute for pages */
 	objtype_t type;			/* type of pager */
-	u_short flags;			/* see below */
 	u_short pg_color;		/* (c) color of first page in obj */
+	u_int flags;			/* see below */
 	blockcount_t paging_in_progress; /* (a) Paging (in or out) so don't collapse or destroy */
 	blockcount_t busy;		/* (a) object is busy, disallow page busy. */
 	int resident_page_count;	/* number of resident pages */
@@ -283,7 +283,7 @@ struct vnode;
  *	The object must be locked or thread private.
  */
 static __inline void
-vm_object_set_flag(vm_object_t object, u_short bits)
+vm_object_set_flag(vm_object_t object, u_int bits)
 {
 
 	object->flags |= bits;
@@ -324,7 +324,7 @@ vm_object_reserv(vm_object_t object)
 	return (false);
 }
 
-void vm_object_clear_flag(vm_object_t object, u_short bits);
+void vm_object_clear_flag(vm_object_t object, u_int bits);
 void vm_object_pip_add(vm_object_t object, short i);
 void vm_object_pip_wakeup(vm_object_t object);
 void vm_object_pip_wakeupn(vm_object_t object, short i);
