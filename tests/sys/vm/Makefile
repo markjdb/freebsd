@@ -3,10 +3,13 @@ PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/sys/vm
 
-ATF_TESTS_C+=	mlock_test \
+ATF_TESTS_C+=	cow_test \
+		mlock_test \
 		mmap_test \
 		page_fault_signal \
 		shared_shadow_inval_test
+
+LIBADD.cow_test+= pthread
 
 BINDIR=		${TESTSDIR}
 ATF_TESTS_SH+=	mmap_map_32bit_test
