@@ -26,11 +26,12 @@
 #define KINST_F_BRANCH		0x01
 #define KINST_F_RIPREL		0x02
 
-#define KINST_JMP_LEN		5
+#define KINST_OFF_LEN	5
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
 static int	kinst_dis_get_byte(void *);
+static int32_t	kinst_displ(uint8_t *, uint8_t *, int);
 
 static void	kinst_provide_module(void *, modctl_t *);
 static void	kinst_getargdesc(void *, dtrace_id_t, void *,
@@ -119,8 +120,8 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	struct kinst_probe *kp;
 	dis86_t d86;
 	int n = 0, mode;
-	int32_t displ;
-	uint8_t *instr, *limit;
+	int32_t displ, origdispl;
+	uint8_t *instr, *limit, *bytes, *dst;
 
 	if (strcmp(symval->name, "trap_check") == 0 ||
 	    strcmp(symval->name, "amd64_syscall") != 0)
@@ -134,16 +135,17 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		return (0);
 
 	while (instr < limit) {
-		if (n >= KINST_PROBE_MAX) {
+		if (++n > KINST_PROBE_MAX) {
 			KINST_LOG("probe list full: %d entries", n);
 			return (1);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
-		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", n++);
+		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d",
+		    (int)(instr - (uint8_t *)symval->value));
 		kp->kp_patchpoint = instr;
 		/*
 		 * Save the first byte of the instruction so that we can
-		 * recover it after we restore the breakpoint.
+		 * recover it when the probe is disabled.
 		 */
 		kp->kp_savedval = *instr;
 		kp->kp_patchval = KINST_PATCHVAL;
@@ -159,26 +161,34 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			KINST_LOG("failed to disassemble instruction at: %p", instr);
 			return (1);
 		}
-		kp->kp_flags = 0;
+		bytes = d86.d86_bytes;
 		/*
-		 * Determine whether the instruction has to be modified before
-		 * we copy it to the trampoline.
+		 * Copy current instruction to the trampoline to be executed
+		 * when the probe fires. In case the instruction takes %rip as
+		 * an implicit operand, we have to modify it first in order for
+		 * the offset encodings to be correct.
+		 *
+		 * TODO: conditional jumps http://unixwiz.net/techtips/x86-jumps.html
 		 */
-		if ((uint8_t)d86.d86_bytes[0] == KINST_CALL)
-			kp->kp_flags |= KINST_F_BRANCH;
-		if (d86.d86_rmindex != -1 &&
-		    d86.d86_bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL)
-			kp->kp_flags |= KINST_F_RIPREL;
-		/* TODO: more cases */
-
+		if (*bytes == KINST_CALL || *bytes == KINST_JMP) {
+			kp->kp_trampoline[0] = *bytes;
+			memcpy(&origdispl, &bytes[1], sizeof(origdispl));
+			dst = instr - d86.d86_len + origdispl + KINST_OFF_LEN;
+			displ = kinst_displ(dst, kp->kp_trampoline,
+			    KINST_OFF_LEN);
+			memcpy(&kp->kp_trampoline[1], &displ, sizeof(displ));
+		} else if (d86.d86_got_modrm &&
+		    bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL) {
+			/* TODO */
+		} else
+			memcpy(&kp->kp_trampoline[0], &d86.d86_bytes, d86.d86_len);
 		/*
-		 * Copy instruction to trampoline.
-		 * TODO: make modifications
+		 * Encode a jmp back to the next instruction so that the thread
+		 * can continue execution normally.
 		 */
-		memcpy(&kp->kp_trampoline[0], &d86.d86_bytes, d86.d86_len);
 		kp->kp_trampoline[d86.d86_len] = KINST_JMP;
-		/* dst - (src + len) */
-		displ = instr - (kp->kp_trampoline + d86.d86_len + KINST_JMP_LEN);
+		displ = kinst_displ(instr, &kp->kp_trampoline[d86.d86_len],
+		    KINST_OFF_LEN);
 		memcpy(&kp->kp_trampoline[d86.d86_len + 1], &displ, sizeof(displ));
 
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
@@ -199,6 +209,12 @@ kinst_dis_get_byte(void *p)
 	(*instr)++;
 
 	return (ret);
+}
+
+static int32_t
+kinst_displ(uint8_t *dst, uint8_t *src, int len)
+{
+	return (dst - (src + len));
 }
 
 static void
@@ -227,11 +243,7 @@ kinst_enable(void *arg, dtrace_id_t id, void *parg)
 	struct kinst_probe *kp = parg;
 
 	kinst_patch_tracepoint(kp, kp->kp_patchval);
-	/*
-	 * TODO: move instruction parsing from provide_module_function() here
-	 * so that we allocate things lazily.
-	 */
-	KINST_LOG("probe %u is enabled", id);
+	KINST_LOG("probe %u (%s) is enabled", id, kp->kp_name);
 }
 
 static void
@@ -240,8 +252,7 @@ kinst_disable(void *arg, dtrace_id_t id, void *parg)
 	struct kinst_probe *kp = parg;
 
 	kinst_patch_tracepoint(kp, kp->kp_savedval);
-	/* TODO: dealloc trampolines here */
-	KINST_LOG("probe %u is disabled", id);
+	KINST_LOG("probe %u (%s) is disabled", id, kp->kp_name);
 }
 
 static int

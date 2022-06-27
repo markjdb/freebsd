@@ -69,6 +69,7 @@ kinst_trampchunk_alloc(void)
 	 */
 	trampaddr = KERNBASE;
 	off += PAGE_SIZE;
+	/* FIXME: find a thread-safe solution to `off`. */
 	error = vm_map_find(kernel_map, kinst_vmobj, off, &trampaddr,
 	    PAGE_SIZE, 0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
 	if (error != KERN_SUCCESS) {
