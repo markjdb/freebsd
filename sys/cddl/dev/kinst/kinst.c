@@ -21,17 +21,27 @@
 
 #define KINST_CALL		0xe8
 #define KINST_JMP		0xe9
+#define KINST_JMP_LEN		5
+
+#define KINST_NEARJMP_PREFIX	0x0f
+#define KINST_NEARJMP_FIRST	0x80
+#define KINST_NEARJMP_LAST	0x8f
+#define KINST_NEARJMP_LEN	6
+
+#define KINST_SHORTJMP_FIRST	0x70
+#define KINST_SHORTJMP_LAST	0x7f
+#define KINST_SHORTJMP_LEN	2
+
 #define KINST_MODRM_RIPREL	0x05
-
-#define KINST_F_BRANCH		0x01
-#define KINST_F_RIPREL		0x02
-
-#define KINST_OFF_LEN	5
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
 static int	kinst_dis_get_byte(void *);
 static int32_t	kinst_displ(uint8_t *, uint8_t *, int);
+static int	kinst_is_call_or_uncond_jmp(uint8_t *);
+static int	kinst_is_short_jmp(uint8_t *);
+static int	kinst_is_near_jmp(uint8_t *);
+static int	kinst_is_jmp(uint8_t *);
 
 static void	kinst_provide_module(void *, modctl_t *);
 static void	kinst_getargdesc(void *, dtrace_id_t, void *,
@@ -86,6 +96,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 	TAILQ_FOREACH(kp, &kinst_probes, kp_next) {
 		if ((uintptr_t)kp->kp_patchpoint != addr)
 			continue;
+		KINST_LOG("FIRING: %s", kp->kp_name);
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
 		cpu->cpu_dtrace_caller = stack[0];
 		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
@@ -119,9 +130,9 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 {
 	struct kinst_probe *kp;
 	dis86_t d86;
-	int n = 0, mode;
+	int n = 0, mode, opclen, trlen;
 	int32_t displ, origdispl;
-	uint8_t *instr, *limit, *bytes, *dst;
+	uint8_t *instr, *limit, *bytes;
 
 	if (strcmp(symval->name, "trap_check") == 0 ||
 	    strcmp(symval->name, "amd64_syscall") != 0)
@@ -142,15 +153,14 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d",
 		    (int)(instr - (uint8_t *)symval->value));
-		kp->kp_patchpoint = instr;
 		/*
 		 * Save the first byte of the instruction so that we can
 		 * recover it when the probe is disabled.
 		 */
 		kp->kp_savedval = *instr;
 		kp->kp_patchval = KINST_PATCHVAL;
+		kp->kp_patchpoint = instr;
 		if ((kp->kp_trampoline = kinst_trampoline_alloc()) == NULL) {
-			/* FIXME: prevent semory leak/cleanup resources? */
 			KINST_LOG("cannot allocate trampoline for: %p", instr);
 			return (1);
 		}
@@ -167,29 +177,52 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		 * when the probe fires. In case the instruction takes %rip as
 		 * an implicit operand, we have to modify it first in order for
 		 * the offset encodings to be correct.
-		 *
-		 * TODO: conditional jumps http://unixwiz.net/techtips/x86-jumps.html
 		 */
-		if (*bytes == KINST_CALL || *bytes == KINST_JMP) {
-			kp->kp_trampoline[0] = *bytes;
-			memcpy(&origdispl, &bytes[1], sizeof(origdispl));
-			dst = instr - d86.d86_len + origdispl + KINST_OFF_LEN;
-			displ = kinst_displ(dst, kp->kp_trampoline,
-			    KINST_OFF_LEN);
-			memcpy(&kp->kp_trampoline[1], &displ, sizeof(displ));
+		if (kinst_is_jmp(bytes)) {
+			opclen = kinst_is_near_jmp(bytes) ? 2 : 1;
+			memcpy(&origdispl, &bytes[opclen], sizeof(origdispl));
+			if (kinst_is_short_jmp(bytes)) {
+				kp->kp_trampoline[0] = KINST_NEARJMP_PREFIX;
+				/*
+				 * Convert short-jump to its near-jmp
+				 * equivalent.
+				 */
+				kp->kp_trampoline[1] = *bytes + 0x10;
+				/*
+				 * "Recalculate" the opcode length since we
+				 * converted from a short to near jump. That's
+				 * a hack.
+				 */
+				opclen = 2;
+				trlen = KINST_NEARJMP_LEN;
+				displ = kinst_displ(instr - d86.d86_len +
+				    (origdispl & 0xff) + KINST_SHORTJMP_LEN,
+				    kp->kp_trampoline, trlen);
+			} else {
+				if (kinst_is_call_or_uncond_jmp(bytes))
+					trlen = KINST_JMP_LEN;
+				else
+					trlen = KINST_NEARJMP_LEN;
+				memcpy(kp->kp_trampoline, bytes, opclen);
+				displ = kinst_displ(instr - d86.d86_len +
+				    origdispl + trlen, kp->kp_trampoline, trlen);
+			}
+			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
 		} else if (d86.d86_got_modrm &&
 		    bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL) {
 			/* TODO */
-		} else
+		} else {
 			memcpy(&kp->kp_trampoline[0], &d86.d86_bytes, d86.d86_len);
+			trlen = d86.d86_len;
+		}
 		/*
 		 * Encode a jmp back to the next instruction so that the thread
 		 * can continue execution normally.
 		 */
-		kp->kp_trampoline[d86.d86_len] = KINST_JMP;
-		displ = kinst_displ(instr, &kp->kp_trampoline[d86.d86_len],
-		    KINST_OFF_LEN);
-		memcpy(&kp->kp_trampoline[d86.d86_len + 1], &displ, sizeof(displ));
+		kp->kp_trampoline[trlen] = KINST_JMP;
+		displ = kinst_displ(instr, &kp->kp_trampoline[trlen],
+		    KINST_JMP_LEN);
+		memcpy(&kp->kp_trampoline[trlen + 1], &displ, sizeof(displ));
 
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
 		    symval->name, kp->kp_name, 3, kp);
@@ -215,6 +248,33 @@ static int32_t
 kinst_displ(uint8_t *dst, uint8_t *src, int len)
 {
 	return (dst - (src + len));
+}
+
+static int
+kinst_is_call_or_uncond_jmp(uint8_t *bytes)
+{
+	return (*bytes == KINST_CALL || *bytes == KINST_JMP);
+}
+
+static int
+kinst_is_short_jmp(uint8_t *bytes)
+{
+	return (*bytes >= KINST_SHORTJMP_FIRST && *bytes <= KINST_SHORTJMP_LAST);
+}
+
+static int
+kinst_is_near_jmp(uint8_t *bytes)
+{
+	return (*bytes == KINST_NEARJMP_PREFIX &&
+	    bytes[1] >= KINST_NEARJMP_FIRST && bytes[1] <= KINST_NEARJMP_LAST);
+}
+
+static int
+kinst_is_jmp(uint8_t *bytes)
+{
+	return (kinst_is_call_or_uncond_jmp(bytes) ||
+	    kinst_is_short_jmp(bytes) ||
+	    kinst_is_near_jmp(bytes));
 }
 
 static void
@@ -287,7 +347,6 @@ kinst_unload(void)
 
 	while (!TAILQ_EMPTY(&kinst_probes)) {
 		kp = TAILQ_FIRST(&kinst_probes);
-		/* XXX: move to kinst_disable */
 		kinst_trampoline_dealloc(kp->kp_trampoline);
 		TAILQ_REMOVE(&kinst_probes, kp, kp_next);
 		if (kp != NULL)
