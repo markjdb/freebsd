@@ -32,7 +32,9 @@
 #define KINST_SHORTJMP_LAST	0x7f
 #define KINST_SHORTJMP_LEN	2
 
+#define KINST_MOV_RIPREL	0x8b
 #define KINST_MODRM_RIPREL	0x05
+#define KINST_MOV_LEN		7
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
@@ -96,7 +98,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 	TAILQ_FOREACH(kp, &kinst_probes, kp_next) {
 		if ((uintptr_t)kp->kp_patchpoint != addr)
 			continue;
-		KINST_LOG("FIRING: %s", kp->kp_name);
+		/*KINST_LOG("FIRING: %s", kp->kp_name);*/
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
 		cpu->cpu_dtrace_caller = stack[0];
 		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
@@ -135,7 +137,7 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	uint8_t *instr, *limit, *bytes;
 
 	if (strcmp(symval->name, "trap_check") == 0 ||
-	    strcmp(symval->name, "amd64_syscall") != 0)
+	    strcmp(symval->name, "vm_fault") != 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;
@@ -182,23 +184,27 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			opclen = kinst_is_near_jmp(bytes) ? 2 : 1;
 			memcpy(&origdispl, &bytes[opclen], sizeof(origdispl));
 			if (kinst_is_short_jmp(bytes)) {
-				kp->kp_trampoline[0] = KINST_NEARJMP_PREFIX;
-				/*
-				 * Convert short-jump to its near-jmp
-				 * equivalent.
-				 */
-				kp->kp_trampoline[1] = *bytes + 0x10;
 				/*
 				 * "Recalculate" the opcode length since we
 				 * converted from a short to near jump. That's
 				 * a hack.
 				 */
-				opclen = 2;
+				opclen = 0;
+				kp->kp_trampoline[opclen++] = KINST_NEARJMP_PREFIX;
+				/*
+				 * Convert short-jump to its near-jmp
+				 * equivalent.
+				 */
+				kp->kp_trampoline[opclen++] = *bytes + 0x10;
 				trlen = KINST_NEARJMP_LEN;
 				displ = kinst_displ(instr - d86.d86_len +
 				    (origdispl & 0xff) + KINST_SHORTJMP_LEN,
 				    kp->kp_trampoline, trlen);
 			} else {
+				/*
+				 * FIXME: vm_fault:1622 crashes because 0xeb is
+				 * not handled
+				 */
 				if (kinst_is_call_or_uncond_jmp(bytes))
 					trlen = KINST_JMP_LEN;
 				else
@@ -210,9 +216,22 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
 		} else if (d86.d86_got_modrm &&
 		    bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL) {
-			/* TODO */
+			opclen = 0;
+			/*
+			 * Create a new %rip-relative MOV with a recalculated
+			 * offset to %rip.
+			 */
+			kp->kp_trampoline[opclen++] = d86.d86_rex_prefix;
+			kp->kp_trampoline[opclen++] = KINST_MOV_RIPREL;
+			kp->kp_trampoline[opclen++] = KINST_MODRM_RIPREL;
+			trlen = KINST_MOV_LEN;
+			memcpy(&origdispl, &bytes[d86.d86_rmindex + 1],
+			    sizeof(origdispl));
+			displ = kinst_displ(instr - d86.d86_len +
+			    origdispl + trlen, kp->kp_trampoline, trlen);
+			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
 		} else {
-			memcpy(&kp->kp_trampoline[0], &d86.d86_bytes, d86.d86_len);
+			memcpy(kp->kp_trampoline, d86.d86_bytes, d86.d86_len);
 			trlen = d86.d86_len;
 		}
 		/*
