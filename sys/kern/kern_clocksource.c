@@ -112,7 +112,7 @@ TUNABLE_INT("kern.eventtimer.periodic", &want_periodic);
 struct pcpu_state {
 	struct mtx	et_hw_mtx;	/* Per-CPU timer mutex. */
 	u_int		action;		/* Reconfiguration requests. */
-	u_int		handle;		/* Immediate handle resuests. */
+	u_int		handle;		/* Immediately handle requests. */
 	sbintime_t	now;		/* Last tick time. */
 	sbintime_t	nextevent;	/* Next scheduled event on this CPU. */
 	sbintime_t	nexttick;	/* Next timer tick time. */
