@@ -36,10 +36,10 @@
 #include "opt_alq.h"
 
 #include <sys/param.h>
-#include <sys/queue.h>
 #include <sys/alq.h>
 #include <sys/cons.h>
 #include <sys/cpuset.h>
+#include <sys/domainset.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
@@ -47,8 +47,11 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/pcpu.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
 #include <sys/smp.h>
+#include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/time.h>
@@ -98,7 +101,21 @@ int	ktr_entries = KTR_BOOT_ENTRIES;
 int	ktr_version = KTR_VERSION;
 struct	ktr_entry ktr_buf_init[KTR_BOOT_ENTRIES];
 struct	ktr_entry *ktr_buf = ktr_buf_init;
+#if 0
+struct	ktr_entry *ktr_pcpu_buf[MAXCPU];
+int	ktr_pcpu_idx[MAXCPU];
+#endif
 cpuset_t ktr_cpumask = CPUSET_T_INITIALIZER(KTR_CPUMASK);
+
+static struct sx ktr_lock;
+SX_SYSINIT(ktr, &ktr_lock, "ktr_lock");
+
+/*
+ * Per-CPU KTR entry ring buffers.  The bufp array makes it easy to fetch the
+ * ring buffers from userspace via kvm.
+ */
+DPCPU_DEFINE_STATIC(struct ktr_buffer, ktr_pcpu_buf);
+struct ktr_buffer *ktr_pcpu_bufp[MAXCPU];
 
 static SYSCTL_NODE(_debug, OID_AUTO, ktr, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "KTR options");
@@ -116,16 +133,21 @@ sysctl_debug_ktr_cpumask(SYSCTL_HANDLER_ARGS)
 	cpuset_t imask;
 	int error;
 
+	sx_xlock(&ktr_lock);
 	cpusetobj_strprint(lktr_cpumask_str, &ktr_cpumask);
 	error = sysctl_handle_string(oidp, lktr_cpumask_str,
 	    sizeof(lktr_cpumask_str), req);
-	if (error != 0 || req->newptr == NULL)
+	if (error != 0 || req->newptr == NULL) {
+		sx_xunlock(&ktr_lock);
 		return (error);
-	if (cpusetobj_strscan(&imask, lktr_cpumask_str) == -1)
+	}
+	if (cpusetobj_strscan(&imask, lktr_cpumask_str) == -1) {
+		sx_xunlock(&ktr_lock);
 		return (EINVAL);
+	}
 	CPU_COPY(&imask, &ktr_cpumask);
-
-	return (error);
+	sx_xunlock(&ktr_lock);
+	return (0);
 }
 SYSCTL_PROC(_debug_ktr, OID_AUTO, cpumask,
     CTLFLAG_RWTUN | CTLFLAG_MPSAFE | CTLTYPE_STRING, NULL, 0,
@@ -135,7 +157,8 @@ SYSCTL_PROC(_debug_ktr, OID_AUTO, cpumask,
 static int
 sysctl_debug_ktr_clear(SYSCTL_HANDLER_ARGS)
 {
-	int clear, error;
+	struct ktr_buffer *bufp;
+	int clear, cpu, error;
 
 	clear = 0;
 	error = sysctl_handle_int(oidp, &clear, 0, req);
@@ -143,14 +166,22 @@ sysctl_debug_ktr_clear(SYSCTL_HANDLER_ARGS)
 		return (error);
 
 	if (clear) {
+		sx_xlock(&ktr_lock);
+		CPU_FOREACH(cpu) {
+			bufp = DPCPU_ID_PTR(cpu, ktr_pcpu_buf);
+			bzero(bufp->ktr_buf,
+			    sizeof(struct ktr_entry) * ktr_entries);
+			bufp->ktr_idx = 0;
+		}
 		bzero(ktr_buf, sizeof(*ktr_buf) * ktr_entries);
 		ktr_idx = 0;
+		sx_xunlock(&ktr_lock);
 	}
 
 	return (error);
 }
 SYSCTL_PROC(_debug_ktr, OID_AUTO, clear,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, 0, 0,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, 0, 0,
     sysctl_debug_ktr_clear, "I",
     "Clear KTR Buffer");
 
@@ -168,16 +199,19 @@ sysctl_debug_ktr_mask(SYSCTL_HANDLER_ARGS)
 	error = sysctl_handle_64(oidp, &mask, 0, req);
 	if (error || !req->newptr)
 		return (error);
+	sx_xlock(&ktr_lock);
 	ktr_mask = mask;
-	return (error);
+	sx_xunlock(&ktr_lock);
+	return (0);
 }
 
 SYSCTL_PROC(_debug_ktr, OID_AUTO, mask,
-    CTLTYPE_U64 | CTLFLAG_RWTUN | CTLFLAG_NEEDGIANT,
+    CTLTYPE_U64 | CTLFLAG_RWTUN | CTLFLAG_MPSAFE,
     0, 0, sysctl_debug_ktr_mask, "QU",
     "Bitmask of KTR event classes for which logging is enabled");
 
 #if KTR_ENTRIES > KTR_BOOT_ENTRIES
+/* XXX-MJ doesn't make sense with pcpu buffers */
 /*
  * A simplified version of sysctl_debug_ktr_entries.
  * No need to care about SMP, scheduling, etc.
@@ -206,12 +240,30 @@ SYSINIT(ktr_entries_initializer, SI_SUB_KMEM, SI_ORDER_ANY,
     ktr_entries_initializer, NULL);
 #endif
 
+/* XXX-MJ comment */
+static void
+ktr_pcpu_buf_initializer(void *dummy __unused)
+{
+	struct ktr_buffer *bufp;
+	int cpu;
+
+	CPU_FOREACH(cpu) {
+		bufp = DPCPU_ID_PTR(cpu, ktr_pcpu_buf);
+		ktr_pcpu_bufp[cpu] = bufp;
+		bufp->ktr_idx = 0;
+		bufp->ktr_buf = NULL;
+	}
+}
+SYSINIT(ktr_pcpu_buf_initializer, SI_SUB_CPU, SI_ORDER_ANY,
+    ktr_pcpu_buf_initializer, NULL);
+
 static int
 sysctl_debug_ktr_entries(SYSCTL_HANDLER_ARGS)
 {
+	struct ktr_buffer *bufp;
+	struct ktr_entry *oldbuf[MAXCPU];
 	uint64_t mask;
-	int entries, error;
-	struct ktr_entry *buf, *oldbuf;
+	int cpu, entries, error;
 
 	entries = ktr_entries;
 	error = sysctl_handle_int(oidp, &entries, 0, req);
@@ -219,33 +271,42 @@ sysctl_debug_ktr_entries(SYSCTL_HANDLER_ARGS)
 		return (error);
 	if (entries > KTR_ENTRIES_MAX)
 		return (ERANGE);
+	if (!powerof2(entries))
+		return (EINVAL);
+
+	sx_xlock(&ktr_lock);
 	/* Disable ktr temporarily. */
 	mask = ktr_mask;
 	ktr_mask = 0;
 	/* Wait for threads to go idle. */
 	if ((error = quiesce_all_cpus("ktrent", PCATCH)) != 0) {
 		ktr_mask = mask;
+		sx_xunlock(&ktr_lock);
 		return (error);
 	}
-	if (ktr_buf != ktr_buf_init)
-		oldbuf = ktr_buf;
-	else
-		oldbuf = NULL;
-	/* Allocate a new buffer. */
-	buf = malloc(sizeof(*buf) * entries, M_KTR, M_WAITOK | M_ZERO);
-	/* Install the new buffer and restart ktr. */
-	ktr_buf = buf;
+
+	CPU_FOREACH(cpu) {
+		bufp = DPCPU_ID_PTR(cpu, ktr_pcpu_buf);
+		oldbuf[cpu] = bufp->ktr_buf;
+		bufp->ktr_buf = mallocarray_domainset(entries,
+		    sizeof(struct ktr_entry), M_KTR,
+		    DOMAINSET_PREF(pcpu_find(cpu)->pc_domain),
+		    M_WAITOK | M_ZERO);
+		bufp->ktr_idx = 0;
+	}
 	ktr_entries = entries;
 	ktr_idx = 0;
 	ktr_mask = mask;
-	if (oldbuf != NULL)
-		free(oldbuf, M_KTR);
+	/* XXX-MJ missing memory barriers */
+	sx_xunlock(&ktr_lock);
+	for (int i = 0; i <= mp_maxid; i++)
+		free(oldbuf[i], M_KTR);
 
 	return (error);
 }
 
 SYSCTL_PROC(_debug_ktr, OID_AUTO, entries,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
     0, 0, sysctl_debug_ktr_entries, "I",
     "Number of entries in the KTR buffer");
 
@@ -278,18 +339,19 @@ SYSCTL_STRING(_debug_ktr, OID_AUTO, alq_file, CTLFLAG_RW, ktr_alq_file,
 static int
 sysctl_debug_ktr_alq_enable(SYSCTL_HANDLER_ARGS)
 {
-	int error;
-	int enable;
+	int enable, error;
 
 	enable = ktr_alq_enabled;
-
 	error = sysctl_handle_int(oidp, &enable, 0, req);
 	if (error || !req->newptr)
 		return (error);
 
+	sx_xlock(&ktr_lock);
 	if (enable) {
-		if (ktr_alq_enabled)
+		if (ktr_alq_enabled) {
+			sx_xunlock(&ktr_lock);
 			return (0);
+		}
 		error = alq_open(&ktr_alq, (const char *)ktr_alq_file,
 		    req->td->td_ucred, ALQ_DEFAULT_CMODE,
 		    sizeof(struct ktr_entry), ktr_alq_depth);
@@ -299,17 +361,20 @@ sysctl_debug_ktr_alq_enable(SYSCTL_HANDLER_ARGS)
 			ktr_alq_enabled = 1;
 		}
 	} else {
-		if (ktr_alq_enabled == 0)
+		if (ktr_alq_enabled == 0) {
+			sx_xunlock(&ktr_lock);
 			return (0);
+		}
 		ktr_alq_enabled = 0;
 		alq_close(ktr_alq);
 		ktr_alq = NULL;
 	}
+	sx_xunlock(&ktr_lock);
 
 	return (error);
 }
 SYSCTL_PROC(_debug_ktr, OID_AUTO, alq_enable,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, 0, 0,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, 0, 0,
     sysctl_debug_ktr_alq_enable, "I",
     "Enable KTR logging");
 #endif
@@ -323,13 +388,12 @@ ktr_tracepoint(uint64_t mask, const char *file, int line, const char *format,
 #ifdef KTR_ALQ
 	struct ale *ale = NULL;
 #endif
-	int newindex, saveindex;
 #if defined(KTR_VERBOSE) || defined(KTR_ALQ)
 	struct thread *td;
 #endif
 	int cpu;
 
-	if (KERNEL_PANICKED() || kdb_active)
+	if (KERNEL_PANICKED() || __predict_false(kdb_active))
 		return;
 	if ((ktr_mask & mask) == 0 || ktr_buf == NULL)
 		return;
@@ -361,11 +425,13 @@ ktr_tracepoint(uint64_t mask, const char *file, int line, const char *format,
 	} else
 #endif
 	{
-		do {
-			saveindex = ktr_idx;
-			newindex = (saveindex + 1) % ktr_entries;
-		} while (atomic_cmpset_rel_int(&ktr_idx, saveindex, newindex) == 0);
-		entry = &ktr_buf[saveindex];
+		struct ktr_buffer *bufp;
+		int idx;
+
+		/* XXX-MJ assumes we won't roll over */
+		bufp = DPCPU_ID_PTR(cpu, ktr_pcpu_buf);
+		idx = atomic_fetchadd_int(&bufp->ktr_idx, 1);
+		entry = &bufp->ktr_buf[idx & (ktr_entries - 1)];
 	}
 	entry->ktr_timestamp = KTR_TIME;
 	entry->ktr_cpu = cpu;

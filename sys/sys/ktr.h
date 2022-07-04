@@ -43,7 +43,7 @@
  * Version number for ktr_entry struct.  Increment this when you break binary
  * compatibility.
  */
-#define	KTR_VERSION	2
+#define	KTR_VERSION	3
 
 #define	KTR_PARMS	6
 
@@ -53,13 +53,18 @@
 #include <sys/_cpuset.h>
 
 struct ktr_entry {
-	u_int64_t ktr_timestamp;
+	uint64_t ktr_timestamp;
 	int	ktr_cpu;
 	int	ktr_line;
 	const	char *ktr_file;
 	const	char *ktr_desc;
 	struct	thread *ktr_thread;
 	u_long	ktr_parms[KTR_PARMS];
+};
+
+struct ktr_buffer {
+	int	ktr_idx;
+	struct ktr_entry *ktr_buf;
 };
 
 extern cpuset_t ktr_cpumask;

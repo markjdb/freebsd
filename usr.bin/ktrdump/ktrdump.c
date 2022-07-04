@@ -32,6 +32,7 @@
 #include <sys/ktr.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 
 #include <capsicum_helpers.h>
 #include <err.h>
@@ -57,6 +58,7 @@ static struct nlist nl[] = {
 	{ .n_name = "_ktr_entries" },
 	{ .n_name = "_ktr_idx" },
 	{ .n_name = "_ktr_buf" },
+	{ .n_name = "_ktr_pcpu_bufp" },
 	{ .n_name = NULL }
 };
 
@@ -81,6 +83,19 @@ static char fbuf[PATH_MAX];
 static char obuf[PATH_MAX];
 static char sbuf[KTR_PARMS][SBUFLEN];
 
+static int
+ktrentcmp(void *dummy __unused, const void *a, const void *b)
+{
+	const struct ktr_entry *ka = a;
+	const struct ktr_entry *kb = b;
+
+	if (ka->ktr_timestamp < kb->ktr_timestamp)
+		return (-1);
+	if (ka->ktr_timestamp > kb->ktr_timestamp)
+		return (1);
+	return (0);
+}
+
 /*
  * Reads the ktr trace buffer from kernel memory and prints the trace entries.
  */
@@ -88,6 +103,7 @@ int
 main(int ac, char **av)
 {
 	u_long parms[KTR_PARMS];
+	struct ktr_buffer **bufp;
 	struct ktr_entry *buf;
 	uintmax_t tlast, tnow;
 	unsigned long bufptr;
@@ -96,7 +112,8 @@ main(int ac, char **av)
 	kvm_t *kd;
 	FILE *out;
 	char *p;
-	int version;
+	size_t sz;
+	int maxcpu, version;
 	int entries;
 	int count;
 	int index, index2;
@@ -174,6 +191,10 @@ main(int ac, char **av)
 	if (caph_limit_stderr() < 0)
 		err(1, "unable to limit rights for stderr");
 
+	sz = sizeof(maxcpu);
+	if (sysctlbyname("kern.smp.maxid", &maxcpu, &sz, NULL, 0) == -1)
+		err(1, "sysctlbyname(kern.smp.maxcpus)");
+
 	/*
 	 * Open our execfile and corefile, resolve needed symbols and read in
 	 * the trace buffer.
@@ -219,6 +240,41 @@ main(int ac, char **av)
 		if (kvm_read(kd, nl[1].n_value, &entries, sizeof(entries))
 		    == -1)
 			errx(1, "%s", kvm_geterr(kd));
+		if ((bufp = calloc((maxcpu + 1), sizeof(*bufp))) == NULL)
+			err(1, "calloc");
+		if (kvm_read(kd, nl[4].n_value, bufp,
+		    sizeof(*bufp) * (maxcpu + 1)) == -1)
+			errx(1, "%s", kvm_geterr(kd));
+
+		buf = calloc(entries * (maxcpu + 1), sizeof(*buf));
+		if (buf == NULL)
+			err(1, "calloc");
+
+		for (i = 0; i <= maxcpu; i++) {
+			struct ktr_buffer kbuf;
+
+			if (bufp[i] == NULL)
+				continue;
+
+			if (kvm_read(kd, (uintptr_t)bufp[i], &kbuf,
+			    sizeof(kbuf)) == -1)
+				errx(1, "%s", kvm_geterr(kd));
+
+			if ((bufp[i] = malloc(sizeof(*bufp[i]))) == NULL)
+				err(1, "malloc");
+			bufp[i]->ktr_buf = buf + (i * entries);
+			if (kvm_read(kd, (uintptr_t)kbuf.ktr_buf,
+			    bufp[i]->ktr_buf,
+			    sizeof(struct ktr_entry) * entries) == -1)
+				errx(1, "%s", kvm_geterr(kd));
+			bufp[i]->ktr_idx = kbuf.ktr_idx;
+		}
+
+		qsort_r(buf, entries * (maxcpu + 1), sizeof(*buf),
+		    NULL, ktrentcmp);
+		index = index2 = entries * (maxcpu + 1) - 1;
+
+#if 0
 		if ((buf = malloc(sizeof(*buf) * entries)) == NULL)
 			err(1, NULL);
 		if (kvm_read(kd, nl[2].n_value, &index, sizeof(index)) == -1 ||
@@ -227,6 +283,7 @@ main(int ac, char **av)
 		    kvm_read(kd, bufptr, buf, sizeof(*buf) * entries) == -1 ||
 		    kvm_read(kd, nl[2].n_value, &index2, sizeof(index2)) == -1)
 			errx(1, "%s", kvm_geterr(kd));
+#endif
 	}
 
 	/*
@@ -261,7 +318,7 @@ main(int ac, char **av)
 
 	tlast = UINTPTR_MAX;
 	/*
-	 * Now tear through the trace buffer.
+	 * Now tear through the trace buffers.
 	 *
 	 * In "live" mode, find the oldest entry (first non-NULL entry
 	 * after index2) and walk forward.  Otherwise, start with the
@@ -278,7 +335,7 @@ main(int ac, char **av)
 		} else {
 			i = index - 1;
 			if (i < 0)
-				i = entries - 1;
+				i = entries * (maxcpu + 1) - 1;
 		}
 	}
 dump_entries:
@@ -364,7 +421,7 @@ next:			if ((c = *p++) == '\0')
 				if (i == index2)
 					break;
 				if (--i < 0)
-					i = entries - 1;
+					i = entries * (maxcpu + 1) - 1;
 			}
 		} else {
 			if (++i == entries)
@@ -377,6 +434,7 @@ next:			if ((c = *p++) == '\0')
 	 * new entries since our last pass through the ring.
 	 */
 	if (lflag && !iflag) {
+#if 0
 		while (index == index2) {
 			usleep(50 * 1000);
 			if (kvm_read(kd, nl[2].n_value, &index2,
@@ -388,6 +446,8 @@ next:			if ((c = *p++) == '\0')
 		if (kvm_read(kd, bufptr, buf, sizeof(*buf) * entries) == -1 ||
 		    kvm_read(kd, nl[2].n_value, &index2, sizeof(index2)) == -1)
 			errx(1, "%s", kvm_geterr(kd));
+#endif
+		(void)bufptr;
 		goto dump_entries;
 	}
 
