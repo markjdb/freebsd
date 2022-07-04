@@ -148,6 +148,16 @@ hardclockintr(void)
 	return (done ? FILTER_HANDLED : FILTER_STRAY);
 }
 
+static int
+countruns(const sbintime_t now, sbintime_t *deadline, const sbintime_t period)
+{
+	int runs;
+
+	for (runs = 0; now >= *deadline; runs++)
+		*deadline += period;
+	return (runs);
+}
+
 /*
  * Handle all events for specified time on this CPU
  */
@@ -172,13 +182,8 @@ handleevents(sbintime_t now, int fake)
 	}
 
 	state = DPCPU_PTR(timerstate);
-
-	runs = 0;
-	while (now >= state->nexthard) {
-		state->nexthard += tick_sbt;
-		runs++;
-	}
-	if (runs) {
+	runs = countruns(now, &state->nexthard, tick_sbt);
+	if (runs != 0) {
 		hct = DPCPU_PTR(hardclocktime);
 		*hct = state->nexthard - tick_sbt;
 		if (fake < 2) {
@@ -186,27 +191,21 @@ handleevents(sbintime_t now, int fake)
 			done = 1;
 		}
 	}
-	runs = 0;
-	while (now >= state->nextstat) {
-		state->nextstat += statperiod;
-		runs++;
-	}
-	if (runs && fake < 2) {
+	runs = countruns(now, &state->nextstat, statperiod);
+	if (runs != 0 && fake < 2) {
 		statclock(runs, usermode);
 		done = 1;
 	}
 	if (profiling) {
-		runs = 0;
-		while (now >= state->nextprof) {
-			state->nextprof += profperiod;
-			runs++;
-		}
+		runs = countruns(now, &state->nextprof, profperiod);
 		if (runs && !fake) {
 			profclock(runs, usermode, TRAPF_PC(frame));
 			done = 1;
 		}
-	} else
+	} else {
 		state->nextprof = state->nextstat;
+	}
+
 	if (now >= state->nextcallopt || now >= state->nextcall) {
 		state->nextcall = state->nextcallopt = SBT_MAX;
 		callout_process(now);
