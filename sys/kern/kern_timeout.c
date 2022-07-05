@@ -445,6 +445,9 @@ callout_process(sbintime_t now)
 
 	/* Compute the buckets of the last scan and present times. */
 	firstb = callout_hash(cc->cc_lastscan);
+	KASSERT(cc->cc_lastscan <= now,
+	    ("%s: lastscan %#jx > now %#jx", __func__,
+	    (uintmax_t)cc->cc_lastscan, (uintmax_t)now));
 	cc->cc_lastscan = now;
 	nowb = callout_hash(now);
 
