@@ -33,9 +33,9 @@
 #define KINST_SHORTJMP_LAST	0x7f
 #define KINST_SHORTJMP_LEN	2
 
-#define KINST_MOV_RIPREL	0x8b
 #define KINST_MODRM_RIPREL	0x05
-#define KINST_MOV_LEN		7
+#define KINST_MOD(b)		(((b) & 0xc0) >> 6)
+#define KINST_RM(b)		((b) & 0x07)
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
@@ -223,18 +223,17 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			}
 			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
 		} else if (d86.d86_got_modrm &&
-		    bytes[d86.d86_rmindex] == KINST_MODRM_RIPREL) {
-			opclen = 0;
-			/*
-			 * Create a new %rip-relative MOV with a recalculated
-			 * offset to %rip.
-			 */
-			kp->kp_trampoline[opclen++] = d86.d86_rex_prefix;
-			kp->kp_trampoline[opclen++] = KINST_MOV_RIPREL;
-			kp->kp_trampoline[opclen++] = KINST_MODRM_RIPREL;
-			trlen = KINST_MOV_LEN;
+		    KINST_MOD(bytes[d86.d86_rmindex]) == 0 &&
+		    KINST_RM(bytes[d86.d86_rmindex]) == 5) {
+			opclen = d86.d86_rmindex + 1;
+			trlen = d86.d86_len;
 			memcpy(&origdispl, &bytes[d86.d86_rmindex + 1],
 			    sizeof(origdispl));
+			memcpy(kp->kp_trampoline, bytes, d86.d86_rmindex + 1);
+			/*
+			 * Create a new %rip-relative instruction with a
+			 * recalculated offset to %rip.
+			 */
 			displ = kinst_displ(instr - d86.d86_len +
 			    origdispl + trlen, kp->kp_trampoline, trlen);
 			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
