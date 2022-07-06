@@ -293,7 +293,7 @@ tmpfs_can_alloc_page(vm_object_t obj, vm_pindex_t pindex)
 	return (tm->tm_pages_max > atomic_load_long(&tm->tm_pages_used));
 }
 
-struct pagerops tmpfs_pager_ops = {
+static struct pagerops tmpfs_pager_ops = {
 	.pgo_kvme_type = KVME_TYPE_VNODE,
 	.pgo_alloc = tmpfs_pager_alloc,
 	.pgo_set_writeable_dirty = vm_object_set_writeable_dirty_,
