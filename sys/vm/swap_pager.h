@@ -38,6 +38,7 @@
 #define	_VM_SWAP_PAGER_H_
 
 #include <sys/_types.h>
+#include <sys/queue.h>
 
 struct buf;
 struct swdevt;
@@ -52,7 +53,7 @@ struct swdevt {
 	int	sw_flags;
 	int	sw_nblks;
 	int     sw_used;
-	dev_t	sw_dev;
+	__dev_t	sw_dev;
 	struct vnode *sw_vp;
 	void	*sw_id;
 	__daddr_t sw_first;
