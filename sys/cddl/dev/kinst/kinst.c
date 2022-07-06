@@ -28,6 +28,7 @@
 #define KINST_NEARJMP_LAST	0x8f
 #define KINST_NEARJMP_LEN	6
 
+#define KINST_UNCOND_SHORTJMP	0xeb
 #define KINST_SHORTJMP_FIRST	0x70
 #define KINST_SHORTJMP_LAST	0x7f
 #define KINST_SHORTJMP_LEN	2
@@ -184,27 +185,34 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 			opclen = kinst_is_near_jmp(bytes) ? 2 : 1;
 			memcpy(&origdispl, &bytes[opclen], sizeof(origdispl));
 			if (kinst_is_short_jmp(bytes)) {
-				/*
-				 * "Recalculate" the opcode length since we
-				 * converted from a short to near jump. That's
-				 * a hack.
-				 */
-				opclen = 0;
-				kp->kp_trampoline[opclen++] = KINST_NEARJMP_PREFIX;
-				/*
-				 * Convert short-jump to its near-jmp
-				 * equivalent.
-				 */
-				kp->kp_trampoline[opclen++] = *bytes + 0x10;
-				trlen = KINST_NEARJMP_LEN;
+				if (*bytes == KINST_UNCOND_SHORTJMP) {
+					/*
+					 * Convert unconditional short JMP to a
+					 * regular JMP.
+					 */
+					kp->kp_trampoline[0] = KINST_JMP;
+					trlen = KINST_JMP_LEN;
+				} else {
+					/*
+					 * "Recalculate" the opcode length
+					 * since we are converting from a short
+					 * to near jump. That's a hack.
+					 */
+					opclen = 0;
+					kp->kp_trampoline[opclen++] =
+					    KINST_NEARJMP_PREFIX;
+					/*
+					 * Convert short-jump to its near-jmp
+					 * equivalent.
+					 */
+					kp->kp_trampoline[opclen++] =
+					    *bytes + 0x10;
+					trlen = KINST_NEARJMP_LEN;
+				}
 				displ = kinst_displ(instr - d86.d86_len +
 				    (origdispl & 0xff) + KINST_SHORTJMP_LEN,
 				    kp->kp_trampoline, trlen);
 			} else {
-				/*
-				 * FIXME: vm_fault:1622 crashes because 0xeb is
-				 * not handled
-				 */
 				if (kinst_is_call_or_uncond_jmp(bytes))
 					trlen = KINST_JMP_LEN;
 				else
@@ -278,7 +286,13 @@ kinst_is_call_or_uncond_jmp(uint8_t *bytes)
 static int
 kinst_is_short_jmp(uint8_t *bytes)
 {
-	return (*bytes >= KINST_SHORTJMP_FIRST && *bytes <= KINST_SHORTJMP_LAST);
+	/*
+	 * KINST_UNCOND_SHORTJMP could be kinst_is_call_or_uncond_jmp() but I
+	 * think it's easier to work with if we have it here.
+	 */
+	return ((*bytes >= KINST_SHORTJMP_FIRST &&
+	    *bytes <= KINST_SHORTJMP_LAST) ||
+	    *bytes == KINST_UNCOND_SHORTJMP);
 }
 
 static int
