@@ -37,6 +37,8 @@
 #define KINST_MOD(b)		(((b) & 0xc0) >> 6)
 #define KINST_RM(b)		((b) & 0x07)
 
+#define KINST_OFF(i, v)		((int)((i) - (uint8_t *)(v)))
+
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
 static int	kinst_dis_get_byte(void *);
@@ -52,10 +54,14 @@ static void	kinst_getargdesc(void *, dtrace_id_t, void *,
 static void	kinst_destroy(void *, dtrace_id_t, void *);
 static void	kinst_enable(void *, dtrace_id_t, void *);
 static void	kinst_disable(void *, dtrace_id_t, void *);
-static int	kinst_linker_file_cb(linker_file_t, void *);
 static void	kinst_load(void *);
 static int	kinst_unload(void);
 static int	kinst_modevent(module_t, int, void *);
+
+static int	kinst_linker_file_cb(linker_file_t, void *);
+static int	kinst_open(struct cdev *, int, int, struct thread *);
+static int	kinst_ioctl(struct cdev *, u_long, caddr_t, int,
+		    struct thread *);
 
 static dtrace_pattr_t kinst_attr = {
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
@@ -65,19 +71,28 @@ static dtrace_pattr_t kinst_attr = {
 { DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_ISA },
 };
 
-static const dtrace_pops_t kinst_pops = {
-	.dtps_provide =		NULL,
-	.dtps_provide_module =	kinst_provide_module,
-	.dtps_enable =		kinst_enable,
-	.dtps_disable =		kinst_disable,
-	.dtps_suspend =		NULL,
-	.dtps_resume =		NULL,
-	.dtps_getargdesc =	kinst_getargdesc,
-	.dtps_getargval =	NULL,
-	.dtps_usermode =	NULL,
-	.dtps_destroy =		kinst_destroy
+static dtrace_pops_t kinst_pops = {
+	.dtps_provide		= NULL,
+	.dtps_provide_module	= kinst_provide_module,
+	.dtps_enable		= kinst_enable,
+	.dtps_disable		= kinst_disable,
+	.dtps_suspend		= NULL,
+	.dtps_resume		= NULL,
+	.dtps_getargdesc	= kinst_getargdesc,
+	.dtps_getargval		= NULL,
+	.dtps_usermode		= NULL,
+	.dtps_destroy		= kinst_destroy
 };
 
+static struct cdevsw kinst_cdevsw = {
+	.d_name			= "kinst",
+	.d_version		= D_VERSION,
+	.d_flags		= D_TRACKCLOSE,
+	.d_open			= kinst_open,
+	.d_ioctl		= kinst_ioctl,
+};
+
+static struct cdev		*kinst_cdev;
 static dtrace_provider_id_t	kinst_id;
 TAILQ_HEAD(, kinst_probe)	kinst_probes;
 
@@ -128,17 +143,19 @@ kinst_patch_tracepoint(struct kinst_probe *kp, kinst_patchval_t val)
 }
 
 int
-kinst_provide_module_function(linker_file_t lf, int symindx,
-    linker_symval_t *symval, void *opaque)
+kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
+    void *opaque)
 {
 	struct kinst_probe *kp;
 	dis86_t d86;
-	int n = 0, mode, opclen, trlen;
+	dtrace_kinst_probedesc_t *pd;
+	int n, mode, opclen, trlen;
 	int32_t displ, origdispl;
 	uint8_t *instr, *limit, *bytes;
 
+	pd = opaque;
 	if (strcmp(symval->name, "trap_check") == 0 ||
-	    strcmp(symval->name, "vm_fault") != 0)
+	    strcmp(symval->name, pd->func) != 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;
@@ -148,14 +165,17 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 	if (instr >= limit)
 		return (0);
 
+	n = 0;
 	while (instr < limit) {
+		if (KINST_OFF(instr, symval->value) != pd->off)
+			continue;
 		if (++n > KINST_PROBE_MAX) {
 			KINST_LOG("probe list full: %d entries", n);
-			return (1);
+			return (ENOMEM);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d",
-		    (int)(instr - (uint8_t *)symval->value));
+		    KINST_OFF(instr, symval->value));
 		/*
 		 * Save the first byte of the instruction so that we can
 		 * recover it when the probe is disabled.
@@ -165,14 +185,15 @@ kinst_provide_module_function(linker_file_t lf, int symindx,
 		kp->kp_patchpoint = instr;
 		if ((kp->kp_trampoline = kinst_trampoline_alloc()) == NULL) {
 			KINST_LOG("cannot allocate trampoline for: %p", instr);
-			return (1);
+			return (ENOMEM);
 		}
 		d86.d86_data = (void **)&instr;
 		d86.d86_get_byte = kinst_dis_get_byte;
 		d86.d86_check_func = NULL;
 		if (dtrace_disx86(&d86, mode) != 0) {
 			KINST_LOG("failed to disassemble instruction at: %p", instr);
-			return (1);
+			/* XXX: is EINVAL the correct error? */
+			return (EINVAL);
 		}
 		bytes = d86.d86_bytes;
 		/*
@@ -279,7 +300,7 @@ kinst_displ(uint8_t *dst, uint8_t *src, int len)
 static int
 kinst_is_call_or_uncond_jmp(uint8_t *bytes)
 {
-	return (*bytes == KINST_CALL || *bytes == KINST_JMP);
+	return (bytes[0] == KINST_CALL || bytes[0] == KINST_JMP);
 }
 
 static int
@@ -289,16 +310,17 @@ kinst_is_short_jmp(uint8_t *bytes)
 	 * KINST_UNCOND_SHORTJMP could be kinst_is_call_or_uncond_jmp() but I
 	 * think it's easier to work with if we have it here.
 	 */
-	return ((*bytes >= KINST_SHORTJMP_FIRST &&
-	    *bytes <= KINST_SHORTJMP_LAST) ||
-	    *bytes == KINST_UNCOND_SHORTJMP);
+	return ((bytes[0] >= KINST_SHORTJMP_FIRST &&
+	    bytes[0] <= KINST_SHORTJMP_LAST) ||
+	    bytes[0] == KINST_UNCOND_SHORTJMP);
 }
 
 static int
 kinst_is_near_jmp(uint8_t *bytes)
 {
-	return (*bytes == KINST_NEARJMP_PREFIX &&
-	    bytes[1] >= KINST_NEARJMP_FIRST && bytes[1] <= KINST_NEARJMP_LAST);
+	return (bytes[0] == KINST_NEARJMP_PREFIX &&
+	    bytes[1] >= KINST_NEARJMP_FIRST &&
+	    bytes[1] <= KINST_NEARJMP_LAST);
 }
 
 static int
@@ -312,11 +334,6 @@ kinst_is_jmp(uint8_t *bytes)
 static void
 kinst_provide_module(void *arg, modctl_t *lf)
 {
-	/*
-	 * Invoke kinst_provide_module_function() once for each function symbol
-	 * in the module "lf".
-	 */
-	linker_file_function_listall(lf, kinst_provide_module_function, NULL);
 }
 
 static void
@@ -347,27 +364,19 @@ kinst_disable(void *arg, dtrace_id_t id, void *parg)
 	KINST_LOG("probe %u (%s) is disabled", id, kp->kp_name);
 }
 
-static int
-kinst_linker_file_cb(linker_file_t lf, void *arg)
-{
-	kinst_provide_module(arg, lf);
-
-	return (0);
-}
-
 static void
 kinst_load(void *dummy)
 {
 	TAILQ_INIT(&kinst_probes);
 	kinst_trampoline_init();
 
+	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
+	    "dtrace/kinst");
+
 	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
 	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
 		return;
 	dtrace_invop_add(kinst_invop);
-
-	/* Loop over all functions in the kernel and loaded modules. */
-	linker_file_foreach(kinst_linker_file_cb, NULL);
 }
 
 static int
@@ -385,6 +394,7 @@ kinst_unload(void)
 			free(kp, M_KINST);
 	}
 	kinst_trampoline_deinit();
+	destroy_dev(kinst_cdev);
 
 	return (dtrace_unregister(kinst_id));
 }
@@ -403,6 +413,46 @@ kinst_modevent(module_t mod __unused, int type, void *data __unused)
 		break;
 	default:
 		error = EOPNOTSUPP;
+		break;
+	}
+
+	return (error);
+}
+
+static int
+kinst_linker_file_cb(linker_file_t lf, void *arg)
+{
+	/*
+	 * Invoke kinst_make_probe_function() once for each function symbol in
+	 * the module "lf".
+	 */
+	linker_file_function_listall(lf, kinst_make_probe, arg);
+
+	return (0);
+}
+
+static int
+kinst_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
+    struct thread *td __unused)
+{
+	return (0);
+}
+
+static int
+kinst_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t addr,
+    int flags __unused, struct thread *td __unused)
+{
+	dtrace_kinst_probedesc_t *pd;
+	int error = 0;
+
+	switch (cmd) {
+	case DTRACEIOC_KINST_MKPROBE:
+		pd = (dtrace_kinst_probedesc_t *)addr;
+		/* Loop over all functions in the kernel and loaded modules. */
+		linker_file_foreach(kinst_linker_file_cb, pd);
+		break;
+	default:
+		error = ENOTTY;
 		break;
 	}
 

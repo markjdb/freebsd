@@ -24,7 +24,7 @@ struct kinst_probe {
 
 int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
 void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
-int	kinst_provide_module_function(struct linker_file *, int,
-	    struct linker_symval *, void *);
+int	kinst_make_probe(struct linker_file *, int, struct linker_symval *,
+	    void *);
 
 #endif /* _KINST_H_ */

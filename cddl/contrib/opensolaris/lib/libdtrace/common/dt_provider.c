@@ -701,6 +701,27 @@ dt_probe_info(dtrace_hdl_t *dtp,
 			prp = dt_probe_discover(pvp, pdp);
 	}
 
+	if (strcmp(pvp->pv_desc.dtvd_name, "kinst") == 0) {
+		dtrace_kinst_probedesc_t pd;
+		int dev;
+
+		if ((dev = open("/dev/dtrace/kinst", O_WRONLY)) < 0)
+			return (NULL);
+		strlcpy(pd.func, pdp->dtpd_func, sizeof(pd.func));
+		/* TODO: what do we do in case func is a wildcard? */
+		/*
+		 * Signify wildcards with off = -1 and create probes for all
+		 * instructions at once instead of calling the ioctl for every
+		 * single instruction.
+		 */
+		if (n_is_glob)
+			pd.off = -1;
+		else
+			pd.off = strtol(pdp->dtpd_name, NULL, 10);
+		if (ioctl(dev, DTRACEIOC_KINST_MKPROBE, &pd) != 0)
+			return (NULL);
+	}
+
 	/*
 	 * If no probe was found in our cache, convert the caller's partial
 	 * probe description into a fully-formed matching probe description by
