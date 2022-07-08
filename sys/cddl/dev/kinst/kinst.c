@@ -37,8 +37,6 @@
 #define KINST_MOD(b)		(((b) & 0xc0) >> 6)
 #define KINST_RM(b)		((b) & 0x07)
 
-#define KINST_OFF(i, v)		((int)((i) - (uint8_t *)(v)))
-
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 
 static int	kinst_dis_get_byte(void *);
@@ -60,6 +58,7 @@ static int	kinst_modevent(module_t, int, void *);
 
 static int	kinst_linker_file_cb(linker_file_t, void *);
 static int	kinst_open(struct cdev *, int, int, struct thread *);
+static int	kinst_close(struct cdev *, int, int, struct thread *);
 static int	kinst_ioctl(struct cdev *, u_long, caddr_t, int,
 		    struct thread *);
 
@@ -89,6 +88,7 @@ static struct cdevsw kinst_cdevsw = {
 	.d_version		= D_VERSION,
 	.d_flags		= D_TRACKCLOSE,
 	.d_open			= kinst_open,
+	.d_close		= kinst_close,
 	.d_ioctl		= kinst_ioctl,
 };
 
@@ -149,13 +149,13 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	struct kinst_probe *kp;
 	dis86_t d86;
 	dtrace_kinst_probedesc_t *pd;
-	int n, mode, opclen, trlen;
+	int n, off, mode, opclen, trlen;
 	int32_t displ, origdispl;
 	uint8_t *instr, *limit, *bytes;
 
 	pd = opaque;
-	if (strcmp(symval->name, "trap_check") == 0 ||
-	    strcmp(symval->name, pd->func) != 0)
+	if (strcmp(symval->name, pd->func) != 0 ||
+	    strcmp(symval->name, "trap_check") == 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;
@@ -167,15 +167,21 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	n = 0;
 	while (instr < limit) {
-		if (KINST_OFF(instr, symval->value) != pd->off)
+		off = (int)(instr - (uint8_t *)symval->value);
+		/*
+		 * If pd->off is -1 we want to create probes for all
+		 * instructions at once to reduce overhead.
+		 */
+		if (pd->off != off && pd->off != -1) {
+			instr += dtrace_instr_size(instr);
 			continue;
+		}
 		if (++n > KINST_PROBE_MAX) {
 			KINST_LOG("probe list full: %d entries", n);
 			return (ENOMEM);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
-		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d",
-		    KINST_OFF(instr, symval->value));
+		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", off);
 		/*
 		 * Save the first byte of the instruction so that we can
 		 * recover it when the probe is disabled.
@@ -344,6 +350,14 @@ kinst_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 static void
 kinst_destroy(void *arg, dtrace_id_t id, void *parg)
 {
+	struct kinst_probe *kp;
+
+	while (!TAILQ_EMPTY(&kinst_probes)) {
+		kp = TAILQ_FIRST(&kinst_probes);
+		TAILQ_REMOVE(&kinst_probes, kp, kp_next);
+		kinst_trampoline_dealloc(kp->kp_trampoline);
+		free(kp, M_KINST);
+	}
 }
 
 static void
@@ -373,8 +387,8 @@ kinst_load(void *dummy)
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");
 
-	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER,
-	    NULL, &kinst_pops, NULL, &kinst_id) != 0)
+	if (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER, NULL,
+	    &kinst_pops, NULL, &kinst_id) != 0)
 		return;
 	dtrace_invop_add(kinst_invop);
 }
@@ -382,18 +396,8 @@ kinst_load(void *dummy)
 static int
 kinst_unload(void)
 {
-	struct kinst_probe *kp;
-
-	dtrace_invop_remove(kinst_invop);
-
-	while (!TAILQ_EMPTY(&kinst_probes)) {
-		kp = TAILQ_FIRST(&kinst_probes);
-		kinst_trampoline_dealloc(kp->kp_trampoline);
-		TAILQ_REMOVE(&kinst_probes, kp, kp_next);
-		if (kp != NULL)
-			free(kp, M_KINST);
-	}
 	kinst_trampoline_deinit();
+	dtrace_invop_remove(kinst_invop);
 	destroy_dev(kinst_cdev);
 
 	return (dtrace_unregister(kinst_id));
@@ -435,6 +439,15 @@ static int
 kinst_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
     struct thread *td __unused)
 {
+	return (0);
+}
+
+static int
+kinst_close(struct cdev *dev __unused, int fflag __unused, int devtype __unused,
+    struct thread *td __unused)
+{
+	dtrace_condense(kinst_id);
+
 	return (0);
 }
 
