@@ -708,7 +708,10 @@ dt_probe_info(dtrace_hdl_t *dtp,
 		if ((dev = open("/dev/dtrace/kinst", O_WRONLY)) < 0)
 			return (NULL);
 		strlcpy(pd.func, pdp->dtpd_func, sizeof(pd.func));
-		/* TODO: what do we do in case func is a wildcard? */
+		/* 
+		 * TODO: what do we do in case func is a wildcard?
+		 * TODO: allow range syntax (x-y)
+		 */
 		/*
 		 * Signify wildcards with off = -1 and create probes for all
 		 * instructions at once instead of calling the ioctl for every
