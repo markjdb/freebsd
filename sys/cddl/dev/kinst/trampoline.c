@@ -17,6 +17,7 @@
 #include <vm/vm_pager.h>
 
 #include "extern.h"
+#include "kinst_isa.h"
 #include "trampoline.h"
 
 /*

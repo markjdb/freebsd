@@ -5,7 +5,8 @@
 #define _KINST_H_
 
 #include <sys/queue.h>
-#include "extern.h"
+
+#include "kinst_isa.h"
 
 #define KINST_PROBE_MAX	0x8000	/* 32k */
 
@@ -21,6 +22,10 @@ struct kinst_probe {
 	kinst_patchval_t kp_patchval;
 	kinst_patchval_t kp_savedval;
 };
+
+extern dtrace_provider_id_t			kinst_id;
+/* TODO: convert to hashtable */
+extern TAILQ_HEAD(kinsthead, kinst_probe)	kinst_probes;
 
 int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
 void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
