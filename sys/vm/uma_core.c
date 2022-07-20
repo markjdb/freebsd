@@ -158,7 +158,7 @@ static MALLOC_DEFINE(M_UMA, "UMA", "UMA Misc");
 /*
  * Are we allowed to allocate buckets?
  */
-static int bucketdisable = 1;
+static int __read_frequently bucketdisable = 1;
 
 /* Linked list of all kegs in the system */
 static LIST_HEAD(,uma_keg) uma_kegs = LIST_HEAD_INITIALIZER(uma_kegs);
