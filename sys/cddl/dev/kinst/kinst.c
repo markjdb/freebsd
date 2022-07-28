@@ -10,6 +10,7 @@
 
 #include <sys/dtrace.h>
 
+#include "extern.h"
 #include "kinst.h"
 #include "trampoline.h"
 
@@ -59,10 +60,9 @@ static struct cdevsw kinst_cdevsw = {
 	.d_ioctl		= kinst_ioctl,
 };
 
-struct kinsthead kinst_probes = TAILQ_HEAD_INITIALIZER(kinst_probes);
-
-dtrace_provider_id_t		kinst_id;
-static struct cdev		*kinst_cdev;
+dtrace_provider_id_t	kinst_id;
+struct kinst_probe	**kinst_probetab;
+static struct cdev	*kinst_cdev;
 
 static int
 kinst_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
@@ -119,20 +119,16 @@ kinst_provide_module(void *arg, modctl_t *lf)
 static void
 kinst_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 {
-	/* TODO? */
+	/* TODO */
 }
 
 static void
 kinst_destroy(void *arg, dtrace_id_t id, void *parg)
 {
-	struct kinst_probe *kp;
+	struct kinst_probe *kp = parg;
 
-	while (!TAILQ_EMPTY(&kinst_probes)) {
-		kp = TAILQ_FIRST(&kinst_probes);
-		TAILQ_REMOVE(&kinst_probes, kp, kp_next);
-		kinst_trampoline_dealloc(kp->kp_trampoline);
-		free(kp, M_KINST);
-	}
+	kinst_trampoline_dealloc(kp->kp_trampoline);
+	free(kp, M_KINST);
 }
 
 static void
@@ -154,7 +150,8 @@ kinst_disable(void *arg, dtrace_id_t id, void *parg)
 static int
 kinst_load(void *dummy)
 {
-	TAILQ_INIT(&kinst_probes);
+	kinst_probetab = malloc(KINST_PROBETAB_MAX *
+	    sizeof(struct kinst_probe *), M_KINST, M_WAITOK | M_ZERO);
 	kinst_trampoline_init();
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");
@@ -167,6 +164,7 @@ kinst_load(void *dummy)
 static int
 kinst_unload(void *dummy)
 {
+	free(kinst_probetab, M_KINST);
 	kinst_trampoline_deinit();
 	dtrace_invop_remove(kinst_invop);
 	destroy_dev(kinst_cdev);

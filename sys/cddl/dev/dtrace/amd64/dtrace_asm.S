@@ -70,10 +70,14 @@
 	decq	%rdi
 	movq	%rsp, %rsi
 	movq	TF_RAX(%rsp), %rdx
+	subq	$16, %rsp	/* reserve space for the call address */
 	call	dtrace_invop
+	subq	$16, %rsp	/* restore reserved space */
 	ENTRY(dtrace_invop_callsite)
 	cmpl	$DTRACE_INVOP_PUSHL_EBP, %eax
 	je	bp_push
+	cmpl	$DTRACE_INVOP_CALL, %eax
+	je	bp_call
 	cmpl	$DTRACE_INVOP_LEAVE, %eax
 	je	bp_leave
 	cmpl	$DTRACE_INVOP_NOP, %eax
@@ -105,6 +109,31 @@ bp_push:
 	movq	%rax, 40(%rsp)		/* store calling SS */
 	movq	32(%rsp), %rax		/* reload calling RSP */
 	movq	%rbp, (%rax)		/* store %rbp there */
+	popq	%rax			/* pop off temp */
+	iretq				/* return from interrupt */
+	/*NOTREACHED*/
+
+bp_call:
+	INTR_POP
+	subq	$16, %rsp		/* make room for %rbp */
+	pushq	%rax			/* push temp */
+	movq	24(%rsp), %rax		/* load calling RIP */
+	movq	%rax, 8(%rsp)		/* store calling RIP */
+	movq	32(%rsp), %rax		/* load calling CS */
+	movq	%rax, 16(%rsp)		/* store calling CS */
+	movq	40(%rsp), %rax		/* load calling RFLAGS */
+	movq	%rax, 24(%rsp)		/* store calling RFLAGS */
+	movq	48(%rsp), %rax		/* load calling RSP */
+	subq	$8, %rax		/* make room for %rbp */
+	movq	%rax, 32(%rsp)		/* store calling RSP */
+	movq	56(%rsp), %rax		/* load calling SS */
+	movq	%rax, 40(%rsp)		/* store calling SS */
+	movq	32(%rsp), %rax		/* reload calling RSP */
+	movq	%rbp, (%rax)		/* store %rbp there */
+
+	movq	-TF_RIP(%rsp), %rax	/* load call address */
+	movq	%rax, 48(%rsp)		/* store call address */
+
 	popq	%rax			/* pop off temp */
 	iretq				/* return from interrupt */
 	/*NOTREACHED*/

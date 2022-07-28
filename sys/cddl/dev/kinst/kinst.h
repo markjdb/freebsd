@@ -8,24 +8,25 @@
 
 #include "kinst_isa.h"
 
-#define KINST_PROBE_MAX	0x8000	/* 32k */
-
 struct linker_file;
 struct linker_symval;
 
 struct kinst_probe {
-	TAILQ_ENTRY(kinst_probe) kp_next;
-	char		kp_name[16];
-	dtrace_id_t	kp_id;
-	uint8_t		*kp_trampoline;
-	kinst_patchval_t *kp_patchpoint;
-	kinst_patchval_t kp_patchval;
-	kinst_patchval_t kp_savedval;
+	char			kp_name[16];
+	dtrace_id_t		kp_id;
+	int			kp_rval;
+	uint8_t			kp_len;
+	kinst_patchval_t	kp_patchval;
+	kinst_patchval_t	kp_savedval;
+	kinst_patchval_t	*kp_patchpoint;
+	uint8_t			*kp_trampoline;
 };
 
-extern dtrace_provider_id_t			kinst_id;
-/* TODO: convert to hashtable */
-extern TAILQ_HEAD(kinsthead, kinst_probe)	kinst_probes;
+extern dtrace_provider_id_t	kinst_id;
+extern struct kinst_probe	**kinst_probetab;
+
+#define KINST_PROBETAB_MAX	0x8000	/* 32k */
+#define KINST_ADDR2NDX(addr)	(((uintptr_t)(addr)) & (KINST_PROBETAB_MAX - 1))
 
 int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
 void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
