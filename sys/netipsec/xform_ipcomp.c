@@ -92,8 +92,8 @@ SYSCTL_VNET_PCPUSTAT(_net_inet_ipcomp, IPSECCTL_STATS, stats,
 
 static MALLOC_DEFINE(M_IPCOMP, "ipcomp", "IPCOMP");
 
-static int ipcomp_input_cb(struct cryptop *crp);
-static int ipcomp_output_cb(struct cryptop *crp);
+static void ipcomp_input_cb(struct cryptop *crp);
+static void ipcomp_output_cb(struct cryptop *crp);
 
 /*
  * RFC 3173 p 2.2. Non-Expansion Policy:
@@ -280,7 +280,7 @@ bad:
 /*
  * IPComp input callback from the crypto driver.
  */
-static int
+static void
 ipcomp_input_cb(struct cryptop *crp)
 {
 	IPSEC_DEBUG_DECLARE(char buf[IPSEC_ADDRSTRLEN]);
@@ -290,7 +290,7 @@ ipcomp_input_cb(struct cryptop *crp)
 	struct secasindex *saidx;
 	caddr_t addr;
 	crypto_session_t cryptoid;
-	int hlen = IPCOMP_HLENGTH, error, clen;
+	int hlen = IPCOMP_HLENGTH, clen;
 	int skip, protoff;
 	uint8_t nproto;
 
@@ -316,18 +316,16 @@ ipcomp_input_cb(struct cryptop *crp)
 			CURVNET_RESTORE();
 			crypto_reset(crp);
 			crypto_dispatch(crp);
-			return (0);
+			return;
 		}
 		IPCOMPSTAT_INC(ipcomps_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
-		error = crp->crp_etype;
 		goto bad;
 	}
 	/* Shouldn't happen... */
 	if (m == NULL) {
 		IPCOMPSTAT_INC(ipcomps_crypto);
 		DPRINTF(("%s: null mbuf returned from crypto\n", __func__));
-		error = EINVAL;
 		goto bad;
 	}
 	IPCOMPSTAT_INC(ipcomps_hist[sav->alg_comp]);
@@ -344,7 +342,6 @@ ipcomp_input_cb(struct cryptop *crp)
 	if (m->m_len < skip + hlen && (m = m_pullup(m, skip + hlen)) == NULL) {
 		IPCOMPSTAT_INC(ipcomps_hdrops);		/*XXX*/
 		DPRINTF(("%s: m_pullup failed\n", __func__));
-		error = EINVAL;				/*XXX*/
 		goto bad;
 	}
 
@@ -353,8 +350,7 @@ ipcomp_input_cb(struct cryptop *crp)
 	nproto = ((struct ipcomp *) addr)->comp_nxt;
 
 	/* Remove the IPCOMP header */
-	error = m_striphdr(m, skip, hlen);
-	if (error) {
+	if (m_striphdr(m, skip, hlen) != 0) {
 		IPCOMPSTAT_INC(ipcomps_hdrops);
 		DPRINTF(("%s: bad mbuf chain, IPCA %s/%08lx\n", __func__,
 		    ipsec_address(&sav->sah->saidx.dst, buf, sizeof(buf)),
@@ -368,12 +364,12 @@ ipcomp_input_cb(struct cryptop *crp)
 	switch (saidx->dst.sa.sa_family) {
 #ifdef INET6
 	case AF_INET6:
-		error = ipsec6_common_input_cb(m, sav, skip, protoff);
+		(void)ipsec6_common_input_cb(m, sav, skip, protoff);
 		break;
 #endif
 #ifdef INET
 	case AF_INET:
-		error = ipsec4_common_input_cb(m, sav, skip, protoff);
+		(void)ipsec4_common_input_cb(m, sav, skip, protoff);
 		break;
 #endif
 	default:
@@ -381,7 +377,7 @@ ipcomp_input_cb(struct cryptop *crp)
 		    saidx->dst.sa.sa_family, saidx);
 	}
 	CURVNET_RESTORE();
-	return error;
+	return;
 bad:
 	CURVNET_RESTORE();
 	if (sav != NULL)
@@ -392,7 +388,6 @@ bad:
 		free(xd, M_IPCOMP);
 	if (crp != NULL)
 		crypto_freereq(crp);
-	return error;
 }
 
 /*
@@ -531,7 +526,7 @@ bad:
 /*
  * IPComp output callback from the crypto driver.
  */
-static int
+static void
 ipcomp_output_cb(struct cryptop *crp)
 {
 	IPSEC_DEBUG_DECLARE(char buf[IPSEC_ADDRSTRLEN]);
@@ -541,7 +536,7 @@ ipcomp_output_cb(struct cryptop *crp)
 	struct mbuf *m;
 	crypto_session_t cryptoid;
 	u_int idx;
-	int error, skip, protoff;
+	int skip, protoff;
 
 	m = crp->crp_buf.cb_mbuf;
 	xd = crp->crp_opaque;
@@ -563,18 +558,16 @@ ipcomp_output_cb(struct cryptop *crp)
 			CURVNET_RESTORE();
 			crypto_reset(crp);
 			crypto_dispatch(crp);
-			return (0);
+			return;
 		}
 		IPCOMPSTAT_INC(ipcomps_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
-		error = crp->crp_etype;
 		goto bad;
 	}
 	/* Shouldn't happen... */
 	if (m == NULL) {
 		IPCOMPSTAT_INC(ipcomps_crypto);
 		DPRINTF(("%s: bogus return buffer from crypto\n", __func__));
-		error = EINVAL;
 		goto bad;
 	}
 	IPCOMPSTAT_INC(ipcomps_hist[sav->alg_comp]);
@@ -593,7 +586,6 @@ ipcomp_output_cb(struct cryptop *crp)
 			    "for IPCA %s/%08lx\n",
 			    __func__, ipsec_address(&sav->sah->saidx.dst, buf,
 			    sizeof(buf)), (u_long) ntohl(sav->spi)));
-			error = ENOBUFS;
 			goto bad;
 		}
 		ipcomp = (struct ipcomp *)(mtod(mo, caddr_t) + roff);
@@ -640,7 +632,6 @@ ipcomp_output_cb(struct cryptop *crp)
 			    sav->sah->saidx.dst.sa.sa_family,
 			    ipsec_address(&sav->sah->saidx.dst, buf,
 				sizeof(buf)), (u_long) ntohl(sav->spi)));
-			error = EPFNOSUPPORT;
 			goto bad;
 		}
 	} else {
@@ -657,9 +648,9 @@ ipcomp_output_cb(struct cryptop *crp)
 	crypto_freereq(crp);
 
 	/* NB: m is reclaimed by ipsec_process_done. */
-	error = ipsec_process_done(m, sp, sav, idx);
+	(void)ipsec_process_done(m, sp, sav, idx);
 	CURVNET_RESTORE();
-	return (error);
+	return;
 bad:
 	if (m)
 		m_freem(m);
@@ -668,7 +659,6 @@ bad:
 	crypto_freereq(crp);
 	key_freesav(&sav);
 	key_freesp(&sp);
-	return (error);
 }
 
 #ifdef INET

@@ -1472,7 +1472,7 @@ ovpn_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	return (error);
 }
 
-static int
+static void
 ovpn_encrypt_tx_cb(struct cryptop *crp)
 {
 	struct epoch_tracker et;
@@ -1492,7 +1492,7 @@ ovpn_encrypt_tx_cb(struct cryptop *crp)
 		CURVNET_RESTORE();
 		OVPN_COUNTER_ADD(sc, lost_data_pkts_out, 1);
 		m_freem(m);
-		return (0);
+		return;
 	}
 
 	MPASS(crp->crp_buf.cb_type == CRYPTO_BUF_MBUF);
@@ -1509,8 +1509,6 @@ ovpn_encrypt_tx_cb(struct cryptop *crp)
 
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-
-	return (0);
 }
 
 static void
@@ -1595,7 +1593,7 @@ ovpn_find_key(struct ovpn_softc *sc, struct ovpn_kpeer *peer,
 	return (key);
 }
 
-static int
+static void
 ovpn_decrypt_rx_cb(struct cryptop *crp)
 {
 	struct epoch_tracker et;
@@ -1618,7 +1616,7 @@ ovpn_decrypt_rx_cb(struct cryptop *crp)
 		OVPN_COUNTER_ADD(sc, lost_data_pkts_in, 1);
 		OVPN_RUNLOCK(sc);
 		m_freem(m);
-		return (0);
+		return;
 	}
 
 	CURVNET_SET(sc->ifp->if_vnet);
@@ -1635,7 +1633,7 @@ ovpn_decrypt_rx_cb(struct cryptop *crp)
 		OVPN_COUNTER_ADD(sc, lost_data_pkts_in, 1);
 		m_freem(m);
 		CURVNET_RESTORE();
-		return (0);
+		return;
 	}
 
 	key = ovpn_find_key(sc, peer, ohdr);
@@ -1650,7 +1648,7 @@ ovpn_decrypt_rx_cb(struct cryptop *crp)
 		OVPN_COUNTER_ADD(sc, lost_data_pkts_in, 1);
 		m_freem(m);
 		CURVNET_RESTORE();
-		return (0);
+		return;
 	}
 
 	/* Now remove the outer headers */
@@ -1666,8 +1664,6 @@ ovpn_decrypt_rx_cb(struct cryptop *crp)
 
 	crypto_freereq(crp);
 	atomic_add_int(&sc->refcount, -1);
-
-	return (0);
 }
 
 static int
@@ -2332,18 +2328,10 @@ ovpn_udp_input(struct mbuf *m, int off, struct inpcb *inp,
 
 	atomic_add_int(&sc->refcount, 1);
 	OVPN_RUNLOCK(sc);
-<<<<<<< HEAD
 	if (V_async_crypto)
-		ret = crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
+		crypto_dispatch_async(crp, CRYPTO_ASYNC_ORDERED);
 	else
-		ret = crypto_dispatch(crp);
-	if (ret != 0) {
-		OVPN_COUNTER_ADD(sc, lost_data_pkts_in, 1);
-	}
-
-=======
-	crypto_dispatch(crp);
->>>>>>> 0aee9228efc2 (crypto: Remove the return value from crypto_dispatch(_async)())
+		crypto_dispatch(crp);
 	return (true);
 }
 

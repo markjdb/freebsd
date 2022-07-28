@@ -122,7 +122,7 @@ g_eli_auth_keygen(struct g_eli_softc *sc, off_t offset, u_char *key)
  *
  * g_eli_start -> g_eli_auth_read -> g_io_request -> g_eli_read_done -> g_eli_auth_run -> G_ELI_AUTH_READ_DONE -> g_io_deliver
  */
-static int
+static void
 g_eli_auth_read_done(struct cryptop *crp)
 {
 	struct g_eli_softc *sc;
@@ -130,7 +130,7 @@ g_eli_auth_read_done(struct cryptop *crp)
 
 	if (crp->crp_etype == EAGAIN) {
 		g_eli_crypto_rerun(crp);
-		return (0);
+		return;
 	}
 	bp = (struct bio *)crp->crp_opaque;
 	bp->bio_inbed++;
@@ -173,7 +173,7 @@ g_eli_auth_read_done(struct cryptop *crp)
 	 * Do we have all sectors already?
 	 */
 	if (bp->bio_inbed < bp->bio_children)
-		return (0);
+		return;
 
 	if (bp->bio_error == 0) {
 		u_int i, lsec, nsec, data_secsize, decr_secsize, encr_secsize;
@@ -276,7 +276,6 @@ g_eli_auth_read_done(struct cryptop *crp)
 	 */
 	g_io_deliver(bp, bp->bio_error);
 	atomic_subtract_int(&sc->sc_inflight, 1);
-	return (0);
 }
 
 /*
@@ -284,7 +283,7 @@ g_eli_auth_read_done(struct cryptop *crp)
  *
  * g_eli_start -> g_eli_auth_run -> G_ELI_AUTH_WRITE_DONE -> g_io_request -> g_eli_write_done -> g_io_deliver
  */
-static int
+static void
 g_eli_auth_write_done(struct cryptop *crp)
 {
 	struct g_eli_softc *sc;
@@ -294,7 +293,7 @@ g_eli_auth_write_done(struct cryptop *crp)
 
 	if (crp->crp_etype == EAGAIN) {
 		g_eli_crypto_rerun(crp);
-		return (0);
+		return;
 	}
 	bp = (struct bio *)crp->crp_opaque;
 	bp->bio_inbed++;
@@ -315,7 +314,7 @@ g_eli_auth_write_done(struct cryptop *crp)
 	 * All sectors are already encrypted?
 	 */
 	if (bp->bio_inbed < bp->bio_children)
-		return (0);
+		return;
 	if (bp->bio_error != 0) {
 		G_ELI_LOGREQ(0, bp, "Crypto WRITE request failed (error=%d).",
 		    bp->bio_error);
@@ -325,7 +324,7 @@ g_eli_auth_write_done(struct cryptop *crp)
 		g_destroy_bio(cbp);
 		g_io_deliver(bp, bp->bio_error);
 		atomic_subtract_int(&sc->sc_inflight, 1);
-		return (0);
+		return;
 	}
 	cp = LIST_FIRST(&sc->sc_geom->consumer);
 	cbp = bp->bio_driver1;
@@ -367,7 +366,6 @@ g_eli_auth_write_done(struct cryptop *crp)
 		G_ELI_LOGREQ(2, cbp2, "Sending request.");
 		g_io_request(cbp2, cp);
 	}
-	return (0);
 }
 
 void

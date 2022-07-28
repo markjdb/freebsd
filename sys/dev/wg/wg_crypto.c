@@ -204,10 +204,9 @@ void blake2s_final(struct blake2s_state *state, uint8_t *out)
 }
 #endif
 
-static int
-crypto_callback(struct cryptop *crp)
+static void
+crypto_callback(struct cryptop *crp __unused)
 {
-	return (0);
 }
 
 int

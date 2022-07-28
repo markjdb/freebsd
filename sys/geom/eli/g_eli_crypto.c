@@ -45,13 +45,11 @@
 #ifdef _KERNEL
 MALLOC_DECLARE(M_ELI);
 
-static int
+static void
 g_eli_crypto_done(struct cryptop *crp)
 {
-
 	crp->crp_opaque = (void *)crp;
 	wakeup(crp);
-	return (0);
 }
 
 static int

@@ -614,7 +614,7 @@ cod_free(struct cryptop_data *cod)
 	free(cod, M_CRYPTODEV);
 }
 
-static int
+static void
 cryptodev_cb(struct cryptop *crp)
 {
 	struct cryptop_data *cod = crp->crp_opaque;
@@ -628,7 +628,6 @@ cryptodev_cb(struct cryptop *crp)
 	cod->done = true;
 	mtx_unlock(&cod->cse->lock);
 	wakeup(cod);
-	return (0);
 }
 
 static int

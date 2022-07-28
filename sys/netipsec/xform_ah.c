@@ -112,8 +112,8 @@ static MALLOC_DEFINE(M_AH, "ah", "IPsec AH");
 
 static unsigned char ipseczeroes[256];	/* larger than an ip6 extension hdr */
 
-static int ah_input_cb(struct cryptop*);
-static int ah_output_cb(struct cryptop*);
+static void ah_input_cb(struct cryptop*);
+static void ah_output_cb(struct cryptop*);
 
 int
 xform_ah_authsize(const struct auth_hash *esph)
@@ -688,7 +688,7 @@ bad:
 /*
  * AH input callback from the crypto driver.
  */
-static int
+static void
 ah_input_cb(struct cryptop *crp)
 {
 	IPSEC_DEBUG_DECLARE(char buf[IPSEC_ADDRSTRLEN]);
@@ -699,7 +699,7 @@ ah_input_cb(struct cryptop *crp)
 	struct secasindex *saidx;
 	caddr_t ptr;
 	crypto_session_t cryptoid;
-	int authsize, rplen, ahsize, error, skip, protoff;
+	int authsize, rplen, ahsize, skip, protoff;
 	uint8_t nxt;
 
 	SECASVAR_RLOCK_TRACKER;
@@ -727,11 +727,10 @@ ah_input_cb(struct cryptop *crp)
 			CURVNET_RESTORE();
 			crypto_reset(crp);
 			crypto_dispatch(crp);
-			return (0);
+			return;
 		}
 		AHSTAT_INC(ahs_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
-		error = crp->crp_etype;
 		goto bad;
 	} else {
 		AHSTAT_INC(ahs_hist[sav->alg_auth]);
@@ -743,7 +742,6 @@ ah_input_cb(struct cryptop *crp)
 	if (m == NULL) {
 		AHSTAT_INC(ahs_crypto);
 		DPRINTF(("%s: bogus returned buffer from crypto\n", __func__));
-		error = EINVAL;
 		goto bad;
 	}
 
@@ -763,7 +761,6 @@ ah_input_cb(struct cryptop *crp)
 		    ipsec_address(&saidx->dst, buf, sizeof(buf)),
 		    (u_long) ntohl(sav->spi)));
 		AHSTAT_INC(ahs_badauth);
-		error = EACCES;
 		goto bad;
 	}
 	/* Fix the Next Protocol field. */
@@ -790,7 +787,6 @@ ah_input_cb(struct cryptop *crp)
 		if (ipsec_updatereplay(ntohl(seq), sav)) {
 			SECASVAR_RUNLOCK(sav);
 			AHSTAT_INC(ahs_replay);
-			error = EACCES;
 			goto bad;
 		}
 		SECASVAR_RUNLOCK(sav);
@@ -799,8 +795,7 @@ ah_input_cb(struct cryptop *crp)
 	/*
 	 * Remove the AH header and authenticator from the mbuf.
 	 */
-	error = m_striphdr(m, skip, ahsize);
-	if (error) {
+	if (m_striphdr(m, skip, ahsize) != 0) {
 		DPRINTF(("%s: mangled mbuf chain for SA %s/%08lx\n", __func__,
 		    ipsec_address(&saidx->dst, buf, sizeof(buf)),
 		    (u_long) ntohl(sav->spi)));
@@ -811,12 +806,12 @@ ah_input_cb(struct cryptop *crp)
 	switch (saidx->dst.sa.sa_family) {
 #ifdef INET6
 	case AF_INET6:
-		error = ipsec6_common_input_cb(m, sav, skip, protoff);
+		(void)ipsec6_common_input_cb(m, sav, skip, protoff);
 		break;
 #endif
 #ifdef INET
 	case AF_INET:
-		error = ipsec4_common_input_cb(m, sav, skip, protoff);
+		(void)ipsec4_common_input_cb(m, sav, skip, protoff);
 		break;
 #endif
 	default:
@@ -824,7 +819,7 @@ ah_input_cb(struct cryptop *crp)
 		    saidx->dst.sa.sa_family, saidx);
 	}
 	CURVNET_RESTORE();
-	return error;
+	return;
 bad:
 	CURVNET_RESTORE();
 	if (sav)
@@ -835,7 +830,6 @@ bad:
 		free(xd, M_AH);
 	if (crp != NULL)
 		crypto_freereq(crp);
-	return error;
 }
 
 /*
@@ -1087,7 +1081,7 @@ bad:
 /*
  * AH output callback from the crypto driver.
  */
-static int
+static void
 ah_output_cb(struct cryptop *crp)
 {
 	struct xform_data *xd;
@@ -1097,7 +1091,7 @@ ah_output_cb(struct cryptop *crp)
 	crypto_session_t cryptoid;
 	caddr_t ptr;
 	u_int idx;
-	int skip, error;
+	int skip;
 
 	m = crp->crp_buf.cb_mbuf;
 	xd = (struct xform_data *) crp->crp_opaque;
@@ -1119,11 +1113,10 @@ ah_output_cb(struct cryptop *crp)
 			CURVNET_RESTORE();
 			crypto_reset(crp);
 			crypto_dispatch(crp);
-			return (0);
+			return;
 		}
 		AHSTAT_INC(ahs_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
-		error = crp->crp_etype;
 		m_freem(m);
 		goto bad;
 	}
@@ -1132,7 +1125,6 @@ ah_output_cb(struct cryptop *crp)
 	if (m == NULL) {
 		AHSTAT_INC(ahs_crypto);
 		DPRINTF(("%s: bogus returned buffer from crypto\n", __func__));
-		error = EINVAL;
 		goto bad;
 	}
 	/*
@@ -1159,16 +1151,15 @@ ah_output_cb(struct cryptop *crp)
 #endif
 
 	/* NB: m is reclaimed by ipsec_process_done. */
-	error = ipsec_process_done(m, sp, sav, idx);
+	(void)ipsec_process_done(m, sp, sav, idx);
 	CURVNET_RESTORE();
-	return (error);
+	return;
 bad:
 	CURVNET_RESTORE();
 	free(xd, M_AH);
 	crypto_freereq(crp);
 	key_freesav(&sav);
 	key_freesp(&sp);
-	return (error);
 }
 
 static struct xformsw ah_xformsw = {

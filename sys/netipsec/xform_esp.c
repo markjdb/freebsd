@@ -104,8 +104,8 @@ SYSCTL_VNET_PCPUSTAT(_net_inet_esp, IPSECCTL_STATS, stats,
 
 static MALLOC_DEFINE(M_ESP, "esp", "IPsec ESP");
 
-static int esp_input_cb(struct cryptop *op);
-static int esp_output_cb(struct cryptop *crp);
+static void esp_input_cb(struct cryptop *op);
+static void esp_output_cb(struct cryptop *crp);
 
 size_t
 esp_hdrsiz(struct secasvar *sav)
@@ -490,7 +490,7 @@ bad:
 /*
  * ESP input callback from the crypto driver.
  */
-static int
+static void
 esp_input_cb(struct cryptop *crp)
 {
 	IPSEC_DEBUG_DECLARE(char buf[128]);
@@ -501,7 +501,7 @@ esp_input_cb(struct cryptop *crp)
 	struct secasvar *sav;
 	struct secasindex *saidx;
 	crypto_session_t cryptoid;
-	int hlen, skip, protoff, error, alen;
+	int hlen, skip, protoff, alen;
 
 	SECASVAR_RLOCK_TRACKER;
 
@@ -525,7 +525,7 @@ esp_input_cb(struct cryptop *crp)
 			CURVNET_RESTORE();
 			crypto_reset(crp);
 			crypto_dispatch(crp);
-			return (0);
+			return;
 		}
 
 		/* EBADMSG indicates authentication failure. */
@@ -533,7 +533,6 @@ esp_input_cb(struct cryptop *crp)
 			ESPSTAT_INC(esps_noxform);
 			DPRINTF(("%s: crypto error %d\n", __func__,
 				crp->crp_etype));
-			error = crp->crp_etype;
 			goto bad;
 		}
 	}
@@ -542,7 +541,6 @@ esp_input_cb(struct cryptop *crp)
 	if (m == NULL) {
 		ESPSTAT_INC(esps_crypto);
 		DPRINTF(("%s: bogus returned buffer from crypto\n", __func__));
-		error = EINVAL;
 		goto bad;
 	}
 	ESPSTAT_INC(esps_hist[sav->alg_enc]);
@@ -557,7 +555,6 @@ esp_input_cb(struct cryptop *crp)
 			    ipsec_address(&saidx->dst, buf, sizeof(buf)),
 			    (u_long) ntohl(sav->spi)));
 			ESPSTAT_INC(esps_badauth);
-			error = EACCES;
 			goto bad;
 		}
 		m->m_flags |= M_AUTHIPDGM;
@@ -589,7 +586,6 @@ esp_input_cb(struct cryptop *crp)
 			DPRINTF(("%s: packet replay check for %s\n", __func__,
 			    ipsec_sa2str(sav, buf, sizeof(buf))));
 			ESPSTAT_INC(esps_replay);
-			error = EACCES;
 			goto bad;
 		}
 		SECASVAR_RUNLOCK(sav);
@@ -602,8 +598,7 @@ esp_input_cb(struct cryptop *crp)
 		hlen = sizeof (struct newesp) + sav->ivlen;
 
 	/* Remove the ESP header and IV from the mbuf. */
-	error = m_striphdr(m, skip, hlen);
-	if (error) {
+	if (m_striphdr(m, skip, hlen) != 0) {
 		ESPSTAT_INC(esps_hdrops);
 		DPRINTF(("%s: bad mbuf chain, SA %s/%08lx\n", __func__,
 		    ipsec_address(&sav->sah->saidx.dst, buf, sizeof(buf)),
@@ -622,7 +617,6 @@ esp_input_cb(struct cryptop *crp)
 		    m->m_pkthdr.len - skip,
 		    ipsec_address(&sav->sah->saidx.dst, buf, sizeof(buf)),
 		    (u_long) ntohl(sav->spi)));
-		error = EINVAL;
 		goto bad;
 	}
 
@@ -634,7 +628,6 @@ esp_input_cb(struct cryptop *crp)
 			    "SA %s/%08lx\n", __func__, ipsec_address(
 			    &sav->sah->saidx.dst, buf, sizeof(buf)),
 			    (u_long) ntohl(sav->spi)));
-			error = EINVAL;
 			goto bad;
 		}
 	}
@@ -655,12 +648,12 @@ esp_input_cb(struct cryptop *crp)
 	switch (saidx->dst.sa.sa_family) {
 #ifdef INET6
 	case AF_INET6:
-		error = ipsec6_common_input_cb(m, sav, skip, protoff);
+		(void)ipsec6_common_input_cb(m, sav, skip, protoff);
 		break;
 #endif
 #ifdef INET
 	case AF_INET:
-		error = ipsec4_common_input_cb(m, sav, skip, protoff);
+		(void)ipsec4_common_input_cb(m, sav, skip, protoff);
 		break;
 #endif
 	default:
@@ -668,7 +661,7 @@ esp_input_cb(struct cryptop *crp)
 		    saidx->dst.sa.sa_family, saidx);
 	}
 	CURVNET_RESTORE();
-	return error;
+	return;
 bad:
 	if (sav != NULL)
 		key_freesav(&sav);
@@ -681,8 +674,8 @@ bad:
 		crypto_freereq(crp);
 	}
 	CURVNET_RESTORE();
-	return error;
 }
+
 /*
  * ESP output routine, called by ipsec[46]_perform_request().
  */
@@ -985,7 +978,7 @@ bad:
 /*
  * ESP output callback from the crypto driver.
  */
-static int
+static void
 esp_output_cb(struct cryptop *crp)
 {
 	struct xform_data *xd;
@@ -994,7 +987,6 @@ esp_output_cb(struct cryptop *crp)
 	struct mbuf *m;
 	crypto_session_t cryptoid;
 	u_int idx;
-	int error;
 
 	xd = (struct xform_data *) crp->crp_opaque;
 	CURVNET_SET(xd->vnet);
@@ -1014,11 +1006,10 @@ esp_output_cb(struct cryptop *crp)
 			CURVNET_RESTORE();
 			crypto_reset(crp);
 			crypto_dispatch(crp);
-			return (0);
+			return;
 		}
 		ESPSTAT_INC(esps_noxform);
 		DPRINTF(("%s: crypto error %d\n", __func__, crp->crp_etype));
-		error = crp->crp_etype;
 		m_freem(m);
 		goto bad;
 	}
@@ -1027,7 +1018,6 @@ esp_output_cb(struct cryptop *crp)
 	if (m == NULL) {
 		ESPSTAT_INC(esps_crypto);
 		DPRINTF(("%s: bogus returned buffer from crypto\n", __func__));
-		error = EINVAL;
 		goto bad;
 	}
 	free(xd, M_ESP);
@@ -1059,9 +1049,9 @@ esp_output_cb(struct cryptop *crp)
 #endif
 
 	/* NB: m is reclaimed by ipsec_process_done. */
-	error = ipsec_process_done(m, sp, sav, idx);
+	(void)ipsec_process_done(m, sp, sav, idx);
 	CURVNET_RESTORE();
-	return (error);
+	return;
 bad:
 	free(xd, M_ESP);
 	free(crp->crp_aad, M_ESP);
@@ -1069,7 +1059,6 @@ bad:
 	key_freesav(&sav);
 	key_freesp(&sp);
 	CURVNET_RESTORE();
-	return (error);
 }
 
 static struct xformsw esp_xformsw = {

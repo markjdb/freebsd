@@ -1757,7 +1757,7 @@ ccr_ccm_done(struct ccr_softc *sc, struct ccr_session *s,
  * Use the software session for requests not supported by the crypto
  * engine (e.g. CCM and GCM requests with an empty payload).
  */
-static int
+static void
 ccr_soft_done(struct cryptop *crp)
 {
 	struct cryptop *orig;
@@ -1766,7 +1766,6 @@ ccr_soft_done(struct cryptop *crp)
 	orig->crp_etype = crp->crp_etype;
 	crypto_freereq(crp);
 	crypto_done(orig);
-	return (0);
 }
 
 static void

@@ -466,7 +466,7 @@ struct cryptop {
 
 	void		*crp_opaque;	/* Opaque pointer, passed along */
 
-	int (*crp_callback)(struct cryptop *); /* Callback function */
+	void (*crp_callback)(struct cryptop *); /* Callback function */
 
 	struct bintime	crp_tstamp;	/* performance time stamp */
 	uint32_t	crp_seq;	/* used for ordered dispatch */

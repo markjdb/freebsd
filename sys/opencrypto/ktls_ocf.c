@@ -173,13 +173,12 @@ SYSCTL_COUNTER_U64(_kern_ipc_tls_stats_ocf, OID_AUTO, retries, CTLFLAG_RD,
     &ocf_retries,
     "Number of OCF encryption operation retries");
 
-static int
+static void
 ktls_ocf_callback_sync(struct cryptop *crp __unused)
 {
-	return (0);
 }
 
-static int
+static void
 ktls_ocf_callback_async(struct cryptop *crp)
 {
 	struct ocf_operation *oo;
@@ -189,7 +188,6 @@ ktls_ocf_callback_async(struct cryptop *crp)
 	oo->done = true;
 	mtx_unlock(&oo->os->lock);
 	wakeup(oo);
-	return (0);
 }
 
 static int
@@ -229,7 +227,7 @@ ktls_ocf_dispatch(struct ktls_ocf_session *os, struct cryptop *crp)
 	return (error);
 }
 
-static int
+static void
 ktls_ocf_dispatch_async_cb(struct cryptop *crp)
 {
 	struct ktls_ocf_encrypt_state *state;
@@ -240,13 +238,12 @@ ktls_ocf_dispatch_async_cb(struct cryptop *crp)
 		crypto_reset(crp);
 		counter_u64_add(ocf_retries, 1);
 		crypto_dispatch(crp);
-		return (0);
+		return;
 	}
 
 	error = crp->crp_etype;
 	crypto_destroyreq(crp);
 	ktls_encrypt_cb(state, error);
-	return (0);
 }
 
 static int

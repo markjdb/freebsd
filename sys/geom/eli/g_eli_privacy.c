@@ -83,7 +83,7 @@ g_eli_bio_copyin(struct bio *bp, void *kaddr)
  *
  * g_eli_start -> g_eli_crypto_read -> g_io_request -> g_eli_read_done -> g_eli_crypto_run -> G_ELI_CRYPTO_READ_DONE -> g_io_deliver
  */
-static int
+static void
 g_eli_crypto_read_done(struct cryptop *crp)
 {
 	struct g_eli_softc *sc;
@@ -91,7 +91,7 @@ g_eli_crypto_read_done(struct cryptop *crp)
 
 	if (crp->crp_etype == EAGAIN) {
 		g_eli_crypto_rerun(crp);
-		return (0);
+		return;
 	}
 	bp = (struct bio *)crp->crp_opaque;
 	bp->bio_inbed++;
@@ -113,7 +113,7 @@ g_eli_crypto_read_done(struct cryptop *crp)
 	 * Do we have all sectors already?
 	 */
 	if (bp->bio_inbed < bp->bio_children)
-		return (0);
+		return;
 
 	if (bp->bio_error != 0) {
 		G_ELI_LOGREQ(0, bp, "Crypto READ request failed (error=%d).",
@@ -126,7 +126,6 @@ g_eli_crypto_read_done(struct cryptop *crp)
 	g_io_deliver(bp, bp->bio_error);
 	if (sc != NULL)
 		atomic_subtract_int(&sc->sc_inflight, 1);
-	return (0);
 }
 
 /*
@@ -134,7 +133,7 @@ g_eli_crypto_read_done(struct cryptop *crp)
  *
  * g_eli_start -> g_eli_crypto_run -> G_ELI_CRYPTO_WRITE_DONE -> g_io_request -> g_eli_write_done -> g_io_deliver
  */
-static int
+static void
 g_eli_crypto_write_done(struct cryptop *crp)
 {
 	struct g_eli_softc *sc;
@@ -144,7 +143,7 @@ g_eli_crypto_write_done(struct cryptop *crp)
 
 	if (crp->crp_etype == EAGAIN) {
 		g_eli_crypto_rerun(crp);
-		return (0);
+		return;
 	}
 	bp = (struct bio *)crp->crp_opaque;
 	bp->bio_inbed++;
@@ -166,7 +165,7 @@ g_eli_crypto_write_done(struct cryptop *crp)
 	 * All sectors are already encrypted?
 	 */
 	if (bp->bio_inbed < bp->bio_children)
-		return (0);
+		return;
 	bp->bio_inbed = 0;
 	bp->bio_children = 1;
 	cbp = bp->bio_driver1;
@@ -178,7 +177,7 @@ g_eli_crypto_write_done(struct cryptop *crp)
 		g_destroy_bio(cbp);
 		g_io_deliver(bp, bp->bio_error);
 		atomic_subtract_int(&sc->sc_inflight, 1);
-		return (0);
+		return;
 	}
 	cbp->bio_data = bp->bio_driver2;
 	/* 
@@ -194,7 +193,6 @@ g_eli_crypto_write_done(struct cryptop *crp)
 	 * Send encrypted data to the provider.
 	 */
 	g_io_request(cbp, cp);
-	return (0);
 }
 
 /*

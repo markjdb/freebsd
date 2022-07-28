@@ -113,24 +113,22 @@ aes_random_to_key(struct krb5_key_state *ks, const void *in)
 	aes_set_key(ks, in);
 }
 
-static int
+static void
 aes_crypto_cb(struct cryptop *crp)
 {
 	struct aes_state *as = (struct aes_state *) crp->crp_opaque;
 
 	if (CRYPTO_SESS_SYNC(crp->crp_session))
-		return (0);
+		return;
 
 	if (crp->crp_etype == EAGAIN) {
 		crypto_reset(crp);
 		crypto_dispatch(crp);
-		return (0);
+		return;
 	}
 	mtx_lock(&as->as_lock);
 	wakeup(crp);
 	mtx_unlock(&as->as_lock);
-
-	return (0);
 }
 
 static void

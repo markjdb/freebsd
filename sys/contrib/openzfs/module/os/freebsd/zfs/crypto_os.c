@@ -133,7 +133,7 @@ crypto_mac(const crypto_key_t *key, const void *in_data, size_t in_data_size,
 	crypto_mac_final(&ctx, out_data, out_data_size);
 }
 
-static int
+static void
 freebsd_zfs_crypt_done(struct cryptop *crp)
 {
 	freebsd_crypt_session_t *ses;
@@ -143,14 +143,11 @@ freebsd_zfs_crypt_done(struct cryptop *crp)
 	ses->fs_done = true;
 	mtx_unlock(&ses->fs_lock);
 	wakeup(crp);
-	return (0);
 }
 
-static int
+static void
 freebsd_zfs_crypt_done_sync(struct cryptop *crp)
 {
-
-	return (0);
 }
 
 void
