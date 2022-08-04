@@ -119,14 +119,16 @@ static int	aac_sa_get_mailbox(struct aac_softc *sc, int mb);
 static void	aac_sa_set_interrupts(struct aac_softc *sc, int enable);
 
 const struct aac_interface aac_sa_interface = {
-	aac_sa_get_fwstatus,
-	aac_sa_qnotify,
-	aac_sa_get_istatus,
-	aac_sa_clear_istatus,
-	aac_sa_set_mailbox,
-	aac_sa_get_mailbox,
-	aac_sa_set_interrupts,
-	NULL, NULL, NULL
+	.aif_get_fwstatus = aac_sa_get_fwstatus,
+	.aif_qnotify = aac_sa_qnotify,
+	.aif_get_istatus = aac_sa_get_istatus,
+	.aif_clr_istatus = aac_sa_clear_istatus,
+	.aif_set_mailbox = aac_sa_set_mailbox,
+	.aif_get_mailbox = aac_sa_get_mailbox,
+	.aif_set_interrupts = aac_sa_set_interrupts,
+	.aif_send_command = NULL,
+	.aif_get_outb_queue = NULL,
+	.aif_set_outb_queue = NULL,
 };
 
 /* i960Rx interface */
@@ -144,16 +146,16 @@ static int aac_rx_get_outb_queue(struct aac_softc *sc);
 static void aac_rx_set_outb_queue(struct aac_softc *sc, int index);
 
 const struct aac_interface aac_rx_interface = {
-	aac_rx_get_fwstatus,
-	aac_rx_qnotify,
-	aac_rx_get_istatus,
-	aac_rx_clear_istatus,
-	aac_rx_set_mailbox,
-	aac_rx_get_mailbox,
-	aac_rx_set_interrupts,
-	aac_rx_send_command,
-	aac_rx_get_outb_queue,
-	aac_rx_set_outb_queue
+	.aif_get_fwstatus = aac_rx_get_fwstatus,
+	.aif_qnotify = aac_rx_qnotify,
+	.aif_get_istatus = aac_rx_get_istatus,
+	.aif_clr_istatus = aac_rx_clear_istatus,
+	.aif_set_mailbox = aac_rx_set_mailbox,
+	.aif_get_mailbox = aac_rx_get_mailbox,
+	.aif_set_interrupts = aac_rx_set_interrupts,
+	.aif_send_command = aac_rx_send_command,
+	.aif_get_outb_queue = aac_rx_get_outb_queue,
+	.aif_set_outb_queue = aac_rx_set_outb_queue
 };
 
 /* Rocket/MIPS interface */
@@ -171,16 +173,16 @@ static int aac_rkt_get_outb_queue(struct aac_softc *sc);
 static void aac_rkt_set_outb_queue(struct aac_softc *sc, int index);
 
 const struct aac_interface aac_rkt_interface = {
-	aac_rkt_get_fwstatus,
-	aac_rkt_qnotify,
-	aac_rkt_get_istatus,
-	aac_rkt_clear_istatus,
-	aac_rkt_set_mailbox,
-	aac_rkt_get_mailbox,
-	aac_rkt_set_interrupts,
-	aac_rkt_send_command,
-	aac_rkt_get_outb_queue,
-	aac_rkt_set_outb_queue
+	.aif_get_fwstatus = aac_rkt_get_fwstatus,
+	.aif_qnotify = aac_rkt_qnotify,
+	.aif_get_istatus = aac_rkt_get_istatus,
+	.aif_clr_istatus = aac_rkt_clear_istatus,
+	.aif_set_mailbox = aac_rkt_set_mailbox,
+	.aif_get_mailbox = aac_rkt_get_mailbox,
+	.aif_set_interrupts = aac_rkt_set_interrupts,
+	.aif_send_command = aac_rkt_send_command,
+	.aif_get_outb_queue = aac_rkt_get_outb_queue,
+	.aif_set_outb_queue = aac_rkt_set_outb_queue
 };
 
 /* Debugging and Diagnostics */

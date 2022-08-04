@@ -232,8 +232,7 @@ struct aac_common {
 /*
  * Interface operations
  */
-struct aac_interface
-{
+struct aac_interface {
 	int	(*aif_get_fwstatus)(struct aac_softc *sc);
 	void	(*aif_qnotify)(struct aac_softc *sc, int qbit);
 	int	(*aif_get_istatus)(struct aac_softc *sc);
@@ -249,7 +248,6 @@ struct aac_interface
 };
 extern const struct aac_interface	aac_rx_interface;
 extern const struct aac_interface	aac_sa_interface;
-extern const struct aac_interface	aac_fa_interface;
 extern const struct aac_interface	aac_rkt_interface;
 
 #define AAC_GET_FWSTATUS(sc)		((sc)->aac_if->aif_get_fwstatus((sc)))
