@@ -2125,6 +2125,27 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 		lhdr.csum_offset = vtnet_htog16(sc, hdr->csum_offset);
 		m_adj(m, adjsz);
 
+#ifndef __NO_STRICT_ALIGNMENT
+		if (((uintptr_t)m->m_data & 3) == 0 &&
+		    m->m_len > ETHER_HDR_LEN) {
+			struct mbuf *n;
+
+			n = m_gethdr(M_NOWAIT, MT_DATA);
+			if (__predict_false(n == NULL)) {
+				/* XXX-MJ counter */
+				m_freem(m);
+				continue;
+			}
+			memcpy(n->m_data, m->m_data, ETHER_HDR_LEN);
+			m->m_data += ETHER_HDR_LEN;
+			m->m_len -= ETHER_HDR_LEN;
+			n->m_len = ETHER_HDR_LEN;
+			n->m_next = m;
+			m_move_pkthdr(n, m);
+			m = n;
+		}
+#endif
+
 		if (PFIL_HOOKED_IN(sc->vtnet_pfil)) {
 			pfil_return_t pfil;
 
