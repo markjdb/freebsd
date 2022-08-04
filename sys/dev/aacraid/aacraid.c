@@ -120,17 +120,17 @@ static int aac_src_send_command(struct aac_softc *sc, struct aac_command *cm);
 static int aac_src_get_outb_queue(struct aac_softc *sc);
 static void aac_src_set_outb_queue(struct aac_softc *sc, int index);
 
-struct aac_interface aacraid_src_interface = {
-	aac_src_get_fwstatus,
-	aac_src_qnotify,
-	aac_src_get_istatus,
-	aac_src_clear_istatus,
-	aac_src_set_mailbox,
-	aac_src_get_mailbox,
-	aac_src_access_devreg,
-	aac_src_send_command,
-	aac_src_get_outb_queue,
-	aac_src_set_outb_queue
+const struct aac_interface aacraid_src_interface = {
+	.aif_get_fwstatus = aac_src_get_fwstatus,
+	.aif_qnotify = aac_src_qnotify,
+	.aif_get_istatus = aac_src_get_istatus,
+	.aif_clr_istatus = aac_src_clear_istatus,
+	.aif_set_mailbox = aac_src_set_mailbox,
+	.aif_get_mailbox = aac_src_get_mailbox,
+	.aif_access_devreg = aac_src_access_devreg,
+	.aif_send_command = aac_src_send_command,
+	.aif_get_outb_queue = aac_src_get_outb_queue,
+	.aif_set_outb_queue = aac_src_set_outb_queue
 };
 
 /* PMC SRCv interface */
@@ -139,17 +139,17 @@ static void	aac_srcv_set_mailbox(struct aac_softc *sc, u_int32_t command,
 				    u_int32_t arg2, u_int32_t arg3);
 static int	aac_srcv_get_mailbox(struct aac_softc *sc, int mb);
 
-struct aac_interface aacraid_srcv_interface = {
-	aac_src_get_fwstatus,
-	aac_src_qnotify,
-	aac_src_get_istatus,
-	aac_src_clear_istatus,
-	aac_srcv_set_mailbox,
-	aac_srcv_get_mailbox,
-	aac_src_access_devreg,
-	aac_src_send_command,
-	aac_src_get_outb_queue,
-	aac_src_set_outb_queue
+const struct aac_interface aacraid_srcv_interface = {
+	.aif_get_fwstatus = aac_src_get_fwstatus,
+	.aif_qnotify = aac_src_qnotify,
+	.aif_get_istatus = aac_src_get_istatus,
+	.aif_clr_istatus = aac_src_clear_istatus,
+	.aif_set_mailbox = aac_srcv_set_mailbox,
+	.aif_get_mailbox = aac_srcv_get_mailbox,
+	.aif_access_devreg = aac_src_access_devreg,
+	.aif_send_command = aac_src_send_command,
+	.aif_get_outb_queue = aac_src_get_outb_queue,
+	.aif_set_outb_queue = aac_src_set_outb_queue
 };
 
 /* Debugging and Diagnostics */

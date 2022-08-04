@@ -244,8 +244,7 @@ struct aac_common {
 /*
  * Interface operations
  */
-struct aac_interface 
-{
+struct aac_interface {
 	int	(*aif_get_fwstatus)(struct aac_softc *sc);
 	void	(*aif_qnotify)(struct aac_softc *sc, int qbit);
 	int	(*aif_get_istatus)(struct aac_softc *sc);
@@ -259,8 +258,8 @@ struct aac_interface
 	int (*aif_get_outb_queue)(struct aac_softc *sc);
 	void (*aif_set_outb_queue)(struct aac_softc *sc, int index);
 };
-extern struct aac_interface	aacraid_src_interface;
-extern struct aac_interface	aacraid_srcv_interface;
+extern const struct aac_interface	aacraid_src_interface;
+extern const struct aac_interface	aacraid_srcv_interface;
 
 #define AAC_GET_FWSTATUS(sc)		((sc)->aac_if.aif_get_fwstatus((sc)))
 #define AAC_QNOTIFY(sc, qbit)		((sc)->aac_if.aif_qnotify((sc), (qbit)))
