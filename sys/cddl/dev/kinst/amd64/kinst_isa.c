@@ -18,8 +18,8 @@
 #define KINST_STI		0xfb
 #define KINST_POPF		0x9d
 
-#define KINST_CALL		0xe8
-#define KINST_CALL_REG		0xff
+#define KINST_CALL_DIRECT	0xe8
+#define KINST_CALL_REGISTER	0xff
 
 #define KINST_JMP		0xe9
 #define KINST_JMP_LEN		5
@@ -35,22 +35,27 @@
 #define KINST_SHORTJMP_LEN	2
 
 #define KINST_MODRM_RIPREL	0x05
+
 #define KINST_MOD(b)		(((b) & 0xc0) >> 6)
+#define KINST_REG(b)		(((b) & 0x38) >> 3)
 #define KINST_RM(b)		((b) & 0x07)
 
 static int	kinst_dis_get_byte(void *);
 static int32_t	kinst_displ(uint8_t *, uint8_t *, int);
+static int	kinst_is_direct_call(uint8_t *);
+static int	kinst_is_register_call(uint8_t *);
 static int	kinst_is_call(uint8_t *);
 static int	kinst_is_uncond_jmp(uint8_t *);
 static int	kinst_is_short_jmp(uint8_t *);
 static int	kinst_is_near_jmp(uint8_t *);
 static int	kinst_is_jmp(uint8_t *);
+static int	kinst_match_regoff(int);
 
 int
-kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
+kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 {
 	solaris_cpu_t *cpu;
-	uintptr_t *stack;
+	uintptr_t *stack, *retaddr;
 	struct kinst_probe *kp;
 
 	stack = (uintptr_t *)frame->tf_rsp;
@@ -64,19 +69,26 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 	DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
 	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
 	cpu->cpu_dtrace_caller = 0;
-	/* Redirect execution to the trampoline after iret. */
-	frame->tf_rip = (register_t)kp->kp_trampoline;
+
 	/*
-	 * dtrace_invop_start() reserves 16 bytes to store the call address.
-	 * Save the return address of the call 8 bytes below the trapframe.
-	 * TODO explain further
-	 *
-	 * Magic.
+	 * dtrace_invop_start() reserves 16 bytes on the stack as a scratch
+	 * buffer to store the return address of the call instruction.
 	 */
 	if (kinst_is_call(&kp->kp_savedval)) {
-		*(uintptr_t *)((uintptr_t)frame - 8) =
-		    (uintptr_t)(kp->kp_patchpoint + kp->kp_len);
-	}
+		retaddr = (uintptr_t *)(kp->kp_patchpoint + kp->kp_len);
+		*(void **)scratch = retaddr;
+		/*
+		 * The call address can only be computed here because we don't
+		 * know and cannot access the register contents anywhere else.
+		 */
+		if (kinst_is_register_call(&kp->kp_savedval)) {
+			frame->tf_rip =
+			    ((register_t *)frame)[kp->kp_frame_off] +
+			    kp->kp_immediate_off;
+		} else
+			frame->tf_rip = kp->kp_calladdr;
+	} else
+		frame->tf_rip = (register_t)kp->kp_trampoline;
 
 	return (kp->kp_rval);
 }
@@ -101,9 +113,9 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	struct kinst_probe *kp;
 	dis86_t d86;
 	dtrace_kinst_probedesc_t *pd;
-	int n, off, mode, opclen, trlen;
+	int n, off, mode, opclen, trlen, rmidx;
 	int32_t displ, origdispl;
-	uint8_t *curinstr, *instr, *limit, *bytes;
+	uint8_t *curinstr, *instr, *limit, *bytes, *modrm;
 
 	pd = opaque;
 	if (strcmp(symval->name, pd->func) != 0 ||
@@ -166,20 +178,37 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		}
 		bytes = d86.d86_bytes;
 		kp->kp_len = d86.d86_len;
+		if (d86.d86_got_modrm) {
+			rmidx = d86.d86_rmindex;
+			modrm = &bytes[rmidx];
+		}
 
 		/*
 		 * TODO: explain why call needs special handling
 		 */
-		if (kinst_is_call(bytes)) {
+		if (kinst_is_direct_call(bytes)) {
 			memcpy(&origdispl, &bytes[1], sizeof(origdispl));
+			kp->kp_calladdr =
+			    (register_t)(curinstr + origdispl + kp->kp_len);
+			kp->kp_rval = DTRACE_INVOP_CALL;
+			goto done;
+		} else if (kinst_is_register_call(bytes) &&
+		    KINST_REG(*modrm) == 2) {
+			int reg;
+
+			/* FIXME: rip-relative calls */
+
+			reg = KINST_RM(*modrm);
+			kp->kp_frame_off = kinst_match_regoff(reg);
 			/*
-			 * The trampoline is pointing at the call target.
-			 * Although the trampoline has a different function for
-			 * all non-call instructons, we're reusing it here to
-			 * avoid having machine-dependent fields in the probe
-			 * structure.
+			 * If the instruction is longer than 2 bytes,
+			 * it means that there's an offset after MODRM.
 			 */
-			kp->kp_trampoline = curinstr + origdispl + kp->kp_len;
+			if (kp->kp_len > 2) {
+				memcpy(&kp->kp_immediate_off, modrm + 1,
+				    sizeof(kp->kp_immediate_off));
+			} else
+				kp->kp_immediate_off = 0;
 			kp->kp_rval = DTRACE_INVOP_CALL;
 			goto done;
 		}
@@ -235,16 +264,14 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			}
 			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
 		} else if (d86.d86_got_modrm &&
-		    KINST_MOD(bytes[d86.d86_rmindex]) == 0 &&
-		    KINST_RM(bytes[d86.d86_rmindex]) == 5) {
+		    KINST_MOD(*modrm) == 0 && KINST_RM(*modrm) == 5) {
 			/*
 			 * Handle %rip-relative MOVs.
 			 */
-			opclen = d86.d86_rmindex + 1;
+			opclen = rmidx + 1;
 			trlen = kp->kp_len;
-			memcpy(&origdispl, &bytes[d86.d86_rmindex + 1],
-			    sizeof(origdispl));
-			memcpy(kp->kp_trampoline, bytes, d86.d86_rmindex + 1);
+			memcpy(&origdispl, modrm + 1, sizeof(origdispl));
+			memcpy(kp->kp_trampoline, bytes, rmidx + 1);
 			/*
 			 * Create a new %rip-relative instruction with a
 			 * recalculated offset to %rip.
@@ -297,9 +324,21 @@ kinst_displ(uint8_t *dst, uint8_t *src, int len)
 }
 
 static int
+kinst_is_direct_call(uint8_t *bytes)
+{
+	return (bytes[0] == KINST_CALL_DIRECT);
+}
+
+static int
+kinst_is_register_call(uint8_t *bytes)
+{
+	return (bytes[0] == KINST_CALL_REGISTER);
+}
+
+static int
 kinst_is_call(uint8_t *bytes)
 {
-	return (bytes[0] == KINST_CALL || bytes[0] == KINST_CALL_REG);
+	return (kinst_is_direct_call(bytes) || kinst_is_register_call(bytes));
 }
 
 static int
@@ -334,4 +373,50 @@ kinst_is_jmp(uint8_t *bytes)
 	return (kinst_is_uncond_jmp(bytes) ||
 	    kinst_is_short_jmp(bytes) ||
 	    kinst_is_near_jmp(bytes));
+}
+
+enum {
+	KINST_REG_RAX,
+	KINST_REG_RCX,
+	KINST_REG_RDX,
+	KINST_REG_RBX,
+	KINST_REG_RSP,
+	KINST_REG_RBP,
+	KINST_REG_RSI,
+	KINST_REG_RDI,
+};
+
+static int
+kinst_match_regoff(int reg)
+{
+	int off;
+
+	switch (reg) {
+	case KINST_REG_RAX:
+		off = offsetof(struct trapframe, tf_rax);
+		break;
+	case KINST_REG_RCX:
+		off = offsetof(struct trapframe, tf_rcx);
+		break;
+	case KINST_REG_RDX:
+		off = offsetof(struct trapframe, tf_rdx);
+		break;
+	case KINST_REG_RBX:
+		off = offsetof(struct trapframe, tf_rbx);
+		break;
+	case KINST_REG_RSP:
+		off = offsetof(struct trapframe, tf_rsp);
+		break;
+	case KINST_REG_RBP:
+		off = offsetof(struct trapframe, tf_rbp);
+		break;
+	case KINST_REG_RSI:
+		off = offsetof(struct trapframe, tf_rsi);
+		break;
+	case KINST_REG_RDI:
+		off = offsetof(struct trapframe, tf_rdi);
+		break;
+	}
+
+	return (off / sizeof(register_t));
 }

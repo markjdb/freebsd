@@ -19,7 +19,14 @@ struct kinst_probe {
 	kinst_patchval_t	kp_patchval;
 	kinst_patchval_t	kp_savedval;
 	kinst_patchval_t	*kp_patchpoint;
-	uint8_t			*kp_trampoline;
+#ifdef __amd64__
+	int			kp_frame_off;
+	int			kp_immediate_off;
+	union {
+		uint8_t		*kp_trampoline;
+		register_t	kp_calladdr;
+	};
+#endif /* __amd64__ */
 };
 
 extern dtrace_provider_id_t	kinst_id;
