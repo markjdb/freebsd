@@ -515,6 +515,8 @@ pf_free_eth_rule(struct pf_keth_rule *rule)
 
 	if (rule->tag)
 		tag_unref(&V_pf_tags, rule->tag);
+	if (rule->match_tag)
+		tag_unref(&V_pf_tags, rule->match_tag);
 #ifdef ALTQ
 	pf_qid_unref(rule->qid);
 #endif
@@ -2819,6 +2821,9 @@ DIOCGETETHRULE_error:
 
 #define ERROUT(x)	ERROUT_IOCTL(DIOCADDETHRULE_error, x)
 
+		if (nv->len > pf_ioctl_maxcount)
+			ERROUT(ENOMEM);
+
 		nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
 		if (nvlpacked == NULL)
 			ERROUT(ENOMEM);
@@ -2890,6 +2895,10 @@ DIOCGETETHRULE_error:
 #endif
 		if (rule->tagname[0])
 			if ((rule->tag = pf_tagname2tag(rule->tagname)) == 0)
+				error = EBUSY;
+		if (rule->match_tagname[0])
+			if ((rule->match_tag = pf_tagname2tag(
+			    rule->match_tagname)) == 0)
 				error = EBUSY;
 
 		if (error == 0 && rule->ipdst.addr.type == PF_ADDR_TABLE)
@@ -5177,7 +5186,7 @@ DIOCCHANGEADDR_error:
 			break;
 		}
 		/* Ensure there's no more ethernet rules to clean up. */
-		epoch_drain_callbacks(net_epoch_preempt);
+		NET_EPOCH_DRAIN_CALLBACKS();
 		PF_RULES_WLOCK();
 		for (i = 0, ioe = ioes; i < io->size; i++, ioe++) {
 			ioe->anchor[sizeof(ioe->anchor) - 1] = '\0';
@@ -5575,6 +5584,8 @@ DIOCCHANGEADDR_error:
 			break;
 		}
 
+		io->pfiio_name[sizeof(io->pfiio_name) - 1] = '\0';
+
 		bufsiz = io->pfiio_size * sizeof(struct pfi_kif);
 		ifstore = mallocarray(io->pfiio_size, sizeof(struct pfi_kif),
 		    M_TEMP, M_WAITOK | M_ZERO);
@@ -5590,6 +5601,8 @@ DIOCCHANGEADDR_error:
 	case DIOCSETIFFLAG: {
 		struct pfioc_iface *io = (struct pfioc_iface *)addr;
 
+		io->pfiio_name[sizeof(io->pfiio_name) - 1] = '\0';
+
 		PF_RULES_WLOCK();
 		error = pfi_set_flags(io->pfiio_name, io->pfiio_flags);
 		PF_RULES_WUNLOCK();
@@ -5598,6 +5611,8 @@ DIOCCHANGEADDR_error:
 
 	case DIOCCLRIFFLAG: {
 		struct pfioc_iface *io = (struct pfioc_iface *)addr;
+
+		io->pfiio_name[sizeof(io->pfiio_name) - 1] = '\0';
 
 		PF_RULES_WLOCK();
 		error = pfi_clear_flags(io->pfiio_name, io->pfiio_flags);

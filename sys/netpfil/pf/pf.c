@@ -982,7 +982,7 @@ pf_free_src_nodes(struct pf_ksrc_node_list *head)
 }
 
 void
-pf_mtag_initialize()
+pf_mtag_initialize(void)
 {
 
 	pf_mtag_z = uma_zcreate("pf mtags", sizeof(struct m_tag) +
@@ -992,7 +992,7 @@ pf_mtag_initialize()
 
 /* Per-vnet data storage structures initialization. */
 void
-pf_initialize()
+pf_initialize(void)
 {
 	struct pf_keyhash	*kh;
 	struct pf_idhash	*ih;
@@ -1086,14 +1086,14 @@ pf_initialize()
 }
 
 void
-pf_mtag_cleanup()
+pf_mtag_cleanup(void)
 {
 
 	uma_zdestroy(pf_mtag_z);
 }
 
 void
-pf_cleanup()
+pf_cleanup(void)
 {
 	struct pf_keyhash	*kh;
 	struct pf_idhash	*ih;
@@ -1986,7 +1986,7 @@ pf_state_expires(const struct pf_kstate *state)
 }
 
 void
-pf_purge_expired_src_nodes()
+pf_purge_expired_src_nodes(void)
 {
 	struct pf_ksrc_node_list	 freelist;
 	struct pf_srchash	*sh;
@@ -2171,7 +2171,7 @@ relock:
 }
 
 static void
-pf_purge_unlinked_rules()
+pf_purge_unlinked_rules(void)
 {
 	struct pf_krulequeue tmpq;
 	struct pf_krule *r, *r1;
@@ -3836,18 +3836,35 @@ pf_match_eth_addr(const uint8_t *a, const struct pf_keth_rule_addr *r)
 }
 
 static int
+pf_match_eth_tag(struct mbuf *m, struct pf_keth_rule *r, int *tag, int mtag)
+{
+	if (*tag == -1)
+		*tag = mtag;
+
+	return ((!r->match_tag_not && r->match_tag == *tag) ||
+	    (r->match_tag_not && r->match_tag != *tag));
+}
+
+static int
 pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf **m0)
 {
+#ifdef INET
+	struct ip ip;
+#endif
+#ifdef INET6
+	struct ip6_hdr ip6;
+#endif
 	struct mbuf *m = *m0;
 	struct ether_header *e;
 	struct pf_keth_rule *r, *rm, *a = NULL;
 	struct pf_keth_ruleset *ruleset = NULL;
 	struct pf_mtag *mtag;
 	struct pf_keth_ruleq *rules;
-	struct pf_addr *src, *dst;
+	struct pf_addr *src = NULL, *dst = NULL;
 	sa_family_t af = 0;
 	uint16_t proto;
 	int asd = 0, match = 0;
+	int tag = -1;
 	uint8_t action;
 	struct pf_keth_anchor_stackframe	anchor_stack[PF_ANCHOR_STACKSIZE];
 
@@ -3882,39 +3899,33 @@ pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf **m0)
 	switch (proto) {
 #ifdef INET
 	case ETHERTYPE_IP: {
-		struct ip *ip;
-		m = m_pullup(m, sizeof(struct ether_header) +
-		    sizeof(struct ip));
-		if (m == NULL) {
-			*m0 = NULL;
+		if (m_length(m, NULL) < (sizeof(struct ether_header) +
+		    sizeof(ip)))
 			return (PF_DROP);
-		}
+
 		af = AF_INET;
-		ip = mtodo(m, sizeof(struct ether_header));
-		src = (struct pf_addr *)&ip->ip_src;
-		dst = (struct pf_addr *)&ip->ip_dst;
+		m_copydata(m, sizeof(struct ether_header), sizeof(ip),
+		    (caddr_t)&ip);
+		src = (struct pf_addr *)&ip.ip_src;
+		dst = (struct pf_addr *)&ip.ip_dst;
 		break;
 	}
 #endif /* INET */
 #ifdef INET6
 	case ETHERTYPE_IPV6: {
-		struct ip6_hdr *ip6;
-		m = m_pullup(m, sizeof(struct ether_header) +
-		    sizeof(struct ip6_hdr));
-		if (m == NULL) {
-			*m0 = NULL;
+		if (m_length(m, NULL) < (sizeof(struct ether_header) +
+		    sizeof(ip6)))
 			return (PF_DROP);
-		}
+
 		af = AF_INET6;
-		ip6 = mtodo(m, sizeof(struct ether_header));
-		src = (struct pf_addr *)&ip6->ip6_src;
-		dst = (struct pf_addr *)&ip6->ip6_dst;
+		m_copydata(m, sizeof(struct ether_header), sizeof(ip6),
+		    (caddr_t)&ip6);
+		src = (struct pf_addr *)&ip6.ip6_src;
+		dst = (struct pf_addr *)&ip6.ip6_dst;
 		break;
 	}
 #endif /* INET6 */
 	}
-	e = mtod(m, struct ether_header *);
-	*m0 = m;
 
 	PF_RULES_RLOCK();
 
@@ -3947,19 +3958,27 @@ pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf **m0)
 			    "dst");
 			r = TAILQ_NEXT(r, entries);
 		}
-		else if (af != 0 && PF_MISMATCHAW(&r->ipsrc.addr, src, af,
+		else if (src != NULL && PF_MISMATCHAW(&r->ipsrc.addr, src, af,
 		    r->ipsrc.neg, kif, M_GETFIB(m))) {
 			SDT_PROBE3(pf, eth, test_rule, mismatch, r->nr, r,
 			    "ip_src");
 			r = TAILQ_NEXT(r, entries);
 		}
-		else if (af != 0 && PF_MISMATCHAW(&r->ipdst.addr, dst, af,
+		else if (dst != NULL && PF_MISMATCHAW(&r->ipdst.addr, dst, af,
 		    r->ipdst.neg, kif, M_GETFIB(m))) {
 			SDT_PROBE3(pf, eth, test_rule, mismatch, r->nr, r,
 			    "ip_dst");
 			r = TAILQ_NEXT(r, entries);
 		}
+		else if (r->match_tag && !pf_match_eth_tag(m, r, &tag,
+		    mtag ? mtag->tag : 0)) {
+			SDT_PROBE3(pf, eth, test_rule, mismatch, r->nr, r,
+			    "match_tag");
+			r = TAILQ_NEXT(r, entries);
+		}
 		else {
+			if (r->tag)
+				tag = r->tag;
 			if (r->anchor == NULL) {
 				/* Rule matches */
 				rm = r;
@@ -4001,7 +4020,7 @@ pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf **m0)
 		return (PF_DROP);
 	}
 
-	if (r->tag > 0) {
+	if (tag > 0) {
 		if (mtag == NULL)
 			mtag = pf_get_mtag(m);
 		if (mtag == NULL) {
@@ -4009,7 +4028,7 @@ pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf **m0)
 			counter_u64_add(V_pf_status.counters[PFRES_MEMORY], 1);
 			return (PF_DROP);
 		}
-		mtag->tag = r->tag;
+		mtag->tag = tag;
 	}
 
 	if (r->qid != 0) {
@@ -4075,8 +4094,6 @@ pf_test_eth_rule(int dir, struct pfi_kkif *kif, struct mbuf **m0)
 			dnflow.f_id.src_ip6 = src->v6;
 			dnflow.f_id.dst_ip6 = dst->v6;
 			break;
-		default:
-			panic("Unknown address family");
 		}
 
 		mtag->flags |= PF_TAG_DUMMYNET;
@@ -6344,6 +6361,10 @@ pf_route(struct mbuf **m, struct pf_krule *r, int dir, struct ifnet *oifp,
 				    r->rpool.cur->kif->pfik_ifp : NULL;
 			} else {
 				ifp = s->rt_kif ? s->rt_kif->pfik_ifp : NULL;
+				/* If pfsync'd */
+				if (ifp == NULL)
+					ifp = r->rpool.cur->kif ?
+					    r->rpool.cur->kif->pfik_ifp : NULL;
 				PF_STATE_UNLOCK(s);
 			}
 			if (ifp == oifp) {
@@ -6400,6 +6421,9 @@ pf_route(struct mbuf **m, struct pf_krule *r, int dir, struct ifnet *oifp,
 		ifp = s->rt_kif ? s->rt_kif->pfik_ifp : NULL;
 		PF_STATE_UNLOCK(s);
 	}
+	/* If pfsync'd */
+	if (ifp == NULL)
+		ifp = r->rpool.cur->kif ? r->rpool.cur->kif->pfik_ifp : NULL;
 	if (ifp == NULL)
 		goto bad;
 
@@ -6539,6 +6563,10 @@ pf_route6(struct mbuf **m, struct pf_krule *r, int dir, struct ifnet *oifp,
 				    r->rpool.cur->kif->pfik_ifp : NULL;
 			} else {
 				ifp = s->rt_kif ? s->rt_kif->pfik_ifp : NULL;
+				/* If pfsync'd */
+				if (ifp == NULL)
+					ifp = r->rpool.cur->kif ?
+					    r->rpool.cur->kif->pfik_ifp : NULL;
 				PF_STATE_UNLOCK(s);
 			}
 			if (ifp == oifp) {
@@ -6598,6 +6626,9 @@ pf_route6(struct mbuf **m, struct pf_krule *r, int dir, struct ifnet *oifp,
 	if (s)
 		PF_STATE_UNLOCK(s);
 
+	/* If pfsync'd */
+	if (ifp == NULL)
+		ifp = r->rpool.cur->kif ? r->rpool.cur->kif->pfik_ifp : NULL;
 	if (ifp == NULL)
 		goto bad;
 

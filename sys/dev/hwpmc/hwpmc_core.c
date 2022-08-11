@@ -472,8 +472,7 @@ iaf_stop_pmc(int cpu, int ri)
 	cc->pc_iafctrl &= ~(IAF_MASK << (ri * 4));
 	wrmsr(IAF_CTRL, cc->pc_iafctrl);
 
-	cc->pc_globalctrl &= ~(1ULL << (ri + IAF_OFFSET));
-	wrmsr(IA_GLOBAL_CTRL, cc->pc_globalctrl);
+	/* Don't need to write IA_GLOBAL_CTRL, one disable is enough. */
 
 	PMCDBG4(MDP,STO,1,"iafctrl=%x(%x) globalctrl=%jx(%jx)",
 	    cc->pc_iafctrl, (uint32_t) rdmsr(IAF_CTRL),
@@ -778,6 +777,8 @@ iap_allocate_pmc(int cpu, int ri, struct pmc *pm,
 	case PMC_CPU_INTEL_ATOM:
 	case PMC_CPU_INTEL_ATOM_SILVERMONT:
 	case PMC_CPU_INTEL_ATOM_GOLDMONT:
+	case PMC_CPU_INTEL_ATOM_GOLDMONT_P:
+	case PMC_CPU_INTEL_ATOM_TREMONT:
 	case PMC_CPU_INTEL_SKYLAKE:
 	case PMC_CPU_INTEL_SKYLAKE_XEON:
 	case PMC_CPU_INTEL_ICELAKE:
@@ -975,10 +976,7 @@ iap_stop_pmc(int cpu, int ri)
 
 	wrmsr(IAP_EVSEL0 + ri, 0);
 
-	if (core_version >= 2) {
-		cc->pc_globalctrl &= ~(1ULL << ri);
-		wrmsr(IA_GLOBAL_CTRL, cc->pc_globalctrl);
-	}
+	/* Don't need to write IA_GLOBAL_CTRL, one disable is enough. */
 
 	return (0);
 }
@@ -1206,6 +1204,9 @@ core2_intr(struct trapframe *tf)
 	else
 		counter_u64_add(pmc_stats.pm_intr_ignored, 1);
 
+	if (found_interrupt)
+		lapic_reenable_pmc();
+
 	/*
 	 * Reenable all non-stalled PMCs.
 	 */
@@ -1225,9 +1226,6 @@ core2_intr(struct trapframe *tf)
 	    cpu, (uintmax_t) rdmsr(IAF_CTRL),
 	    (uintmax_t) rdmsr(IA_GLOBAL_CTRL),
 	    (uintmax_t) rdmsr(IA_GLOBAL_STATUS));
-
-	if (found_interrupt)
-		lapic_reenable_pmc();
 
 	return (found_interrupt);
 }
