@@ -34,11 +34,11 @@
 #define KINST_SHORTJMP_LAST	0x7f
 #define KINST_SHORTJMP_LEN	2
 
-#define KINST_MODRM_RIPREL	0x05
-
 #define KINST_MOD(b)		(((b) & 0xc0) >> 6)
 #define KINST_REG(b)		(((b) & 0x38) >> 3)
 #define KINST_RM(b)		((b) & 0x07)
+#define KINST_MODRM_RIPREL(b) \
+	(KINST_MOD(b) == 0 && KINST_RM(b) == 5)
 
 static int	kinst_dis_get_byte(void *);
 static int32_t	kinst_displ(uint8_t *, uint8_t *, int);
@@ -70,12 +70,13 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
 	cpu->cpu_dtrace_caller = 0;
 
-	/*
-	 * dtrace_invop_start() reserves 16 bytes on the stack as a scratch
-	 * buffer to store the return address of the call instruction.
-	 */
 	if (kinst_is_call(&kp->kp_savedval)) {
 		retaddr = (uintptr_t *)(kp->kp_patchpoint + kp->kp_len);
+		/*
+		 * dtrace_invop_start() reserves 16 bytes on the stack as a
+		 * scratch buffer to store the return address of the call
+		 * instruction.
+		 */
 		*(void **)scratch = retaddr;
 		/*
 		 * The call address can only be computed here because we don't
@@ -83,8 +84,9 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 		 */
 		if (kinst_is_register_call(&kp->kp_savedval)) {
 			frame->tf_rip =
-			    ((register_t *)frame)[kp->kp_frame_off] +
-			    kp->kp_immediate_off;
+			    *(uintptr_t *)
+			    (((register_t *)frame)[kp->kp_frame_off] +
+			    kp->kp_immediate_off);
 		} else
 			frame->tf_rip = kp->kp_calladdr;
 	} else
@@ -210,6 +212,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			} else
 				kp->kp_immediate_off = 0;
 			kp->kp_rval = DTRACE_INVOP_CALL;
+
 			goto done;
 		}
 
@@ -263,8 +266,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 				    kp->kp_trampoline, trlen);
 			}
 			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
-		} else if (d86.d86_got_modrm &&
-		    KINST_MOD(*modrm) == 0 && KINST_RM(*modrm) == 5) {
+		} else if (d86.d86_got_modrm && KINST_MODRM_RIPREL(*modrm)) {
 			/*
 			 * Handle %rip-relative MOVs.
 			 */
