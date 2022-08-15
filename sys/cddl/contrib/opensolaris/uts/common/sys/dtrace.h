@@ -1338,11 +1338,6 @@ typedef struct {
 							/* get DOF */
 #define	DTRACEIOC_REPLICATE	_IOW('x',18,dtrace_repldesc_t)	
 							/* replicate enab */
-typedef struct {
-	char	func[DTRACE_FUNCNAMELEN];
-	int	off;
-} dtrace_kinst_probedesc_t;
-#define KINSTIOC_MAKEPROBE	_IOW('k',1,dtrace_kinst_probedesc_t)
 #endif
 
 /*

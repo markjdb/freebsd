@@ -131,15 +131,12 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	if (instr >= limit)
 		return (0);
 	/*
-	 * TODO: explain
+	 * TODO: why?
 	 */
 	if (*instr != KINST_PUSHL_EBP)
 		return (0);
 
 	n = 0;
-	/*
-	 * TODO: explain
-	 */
 	while (instr < limit) {
 		off = (int)(instr - (uint8_t *)symval->value);
 		/*
@@ -148,8 +145,11 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		 * all instructions at once, instead of going through the ioctl
 		 * for each new probe.
 		 *
-		 * We also want to ignore the sti and popf instructions.
-		 * TODO: explain why
+		 * We also want to ignore the sti and popf instructions,
+		 * otherwise we cannot use dtrace_sync() to create barriers.
+		 * Those instructions can break the atomicity of the trampoline
+		 * mechanism in case a thread is interrupted while it's
+		 * executing the trampoline.
 		 */
 		if ((pd->off != off && pd->off != -1) ||
 		    *instr == KINST_STI || *instr == KINST_POPF) {
@@ -199,7 +199,6 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			int reg;
 
 			/* FIXME: rip-relative calls */
-
 			reg = KINST_RM(*modrm);
 			kp->kp_frame_off = kinst_match_regoff(reg);
 			/*
@@ -212,7 +211,6 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			} else
 				kp->kp_immediate_off = 0;
 			kp->kp_rval = DTRACE_INVOP_CALL;
-
 			goto done;
 		}
 
@@ -283,8 +281,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			memcpy(&kp->kp_trampoline[opclen], &displ, sizeof(displ));
 		} else {
 			/*
-			 * Regular instructions need no modification, so we
-			 * just copy them to the trampoline as-is.
+			 * Regular instructions need no modification, just copy
+			 * them to the trampoline as-is.
 			 */
 			memcpy(kp->kp_trampoline, bytes, kp->kp_len);
 			trlen = kp->kp_len;

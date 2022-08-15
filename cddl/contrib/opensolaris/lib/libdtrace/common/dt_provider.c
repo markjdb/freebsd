@@ -48,6 +48,7 @@
 #include <dt_list.h>
 #include <dt_pid.h>
 #include <dtrace.h>
+#include <kinst.h>
 
 static dt_provider_t *
 dt_provider_insert(dtrace_hdl_t *dtp, dt_provider_t *pvp, uint_t h)
