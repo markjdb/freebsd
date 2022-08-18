@@ -60,39 +60,43 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 
 	stack = (uintptr_t *)frame->tf_rsp;
 	cpu = &solaris_cpu[curcpu];
-	kp = kinst_probetab[KINST_ADDR2NDX(addr)];
 
-	if ((uintptr_t)kp->kp_patchpoint != addr)
-		return (0);
-	DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-	cpu->cpu_dtrace_caller = stack[0];
-	DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
-	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
-	cpu->cpu_dtrace_caller = 0;
+	LIST_FOREACH(kp, &KINST_GETPROBE(addr), kp_hashnext) {
+		if ((uintptr_t)kp->kp_patchpoint != addr)
+			return (0);
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+		cpu->cpu_dtrace_caller = stack[0];
+		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
+		dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
+		cpu->cpu_dtrace_caller = 0;
 
-	if (kinst_is_call(&kp->kp_savedval)) {
-		retaddr = (uintptr_t *)(kp->kp_patchpoint + kp->kp_len);
-		/*
-		 * dtrace_invop_start() reserves 16 bytes on the stack as a
-		 * scratch buffer to store the return address of the call
-		 * instruction.
-		 */
-		*(void **)scratch = retaddr;
-		/*
-		 * The call address can only be computed here because we don't
-		 * know and cannot access the register contents anywhere else.
-		 */
-		if (kinst_is_register_call(&kp->kp_savedval)) {
-			frame->tf_rip =
-			    *(uintptr_t *)
-			    (((register_t *)frame)[kp->kp_frame_off] +
-			    kp->kp_immediate_off);
+		if (kinst_is_call(&kp->kp_savedval)) {
+			retaddr = (uintptr_t *)(kp->kp_patchpoint + kp->kp_len);
+			/*
+			 * dtrace_invop_start() reserves 16 bytes on the stack
+			 * as a scratch buffer to store the return address of
+			 * the call instruction.
+			 */
+			*(void **)scratch = retaddr;
+			/*
+			 * The call address can only be computed here because
+			 * we don't know and cannot access the register
+			 * contents anywhere else.
+			 */
+			if (kinst_is_register_call(&kp->kp_savedval)) {
+				frame->tf_rip =
+				    *(uintptr_t *)
+				    (((register_t *)frame)[kp->kp_frame_off] +
+				    kp->kp_immediate_off);
+			} else
+				frame->tf_rip = kp->kp_calladdr;
 		} else
-			frame->tf_rip = kp->kp_calladdr;
-	} else
-		frame->tf_rip = (register_t)kp->kp_trampoline;
+			frame->tf_rip = (register_t)kp->kp_trampoline;
 
-	return (kp->kp_rval);
+		return (kp->kp_rval);
+	}
+
+	return (0);
 }
 
 void
@@ -115,13 +119,15 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	struct kinst_probe *kp;
 	dis86_t d86;
 	dtrace_kinst_probedesc_t *pd;
+	const char *func;
 	int n, off, mode, opclen, trlen, rmidx;
 	int32_t displ, origdispl;
 	uint8_t *curinstr, *instr, *limit, *bytes, *modrm;
 
 	pd = opaque;
-	if (strcmp(symval->name, pd->func) != 0 ||
-	    strcmp(symval->name, "trap_check") == 0)
+	func = symval->name;
+	if (strcmp(func, pd->func) != 0 ||
+	    strcmp(func, "trap_check") == 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;
@@ -156,11 +162,21 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			instr += dtrace_instr_size(instr);
 			continue;
 		}
+		/*
+		 * Prevent separate dtrace(1) instances from creating copies of
+		 * the same probe.
+		 */
+		LIST_FOREACH(kp, &KINST_GETPROBE(instr), kp_hashnext) {
+			if (strcmp(kp->kp_func, func) == 0 &&
+			    strtol(kp->kp_name, NULL, 10) == off)
+				return (0);
+		}
 		if (++n > KINST_PROBETAB_MAX) {
 			KINST_LOG("probe list full: %d entries", n);
 			return (ENOMEM);
 		}
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
+		kp->kp_func = func;
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", off);
 		/*
 		 * Save the first byte of the instruction so that we can
@@ -298,8 +314,11 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		kp->kp_rval = DTRACE_INVOP_NOP;
 done:
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
-		    symval->name, kp->kp_name, 3, kp);
-		kinst_probetab[KINST_ADDR2NDX(curinstr)] = kp;
+		    kp->kp_func, kp->kp_name, 3, kp);
+
+		if (&KINST_GETPROBE(curinstr) == NULL)
+			LIST_INIT(&KINST_GETPROBE(curinstr));
+		LIST_INSERT_HEAD(&KINST_GETPROBE(curinstr), kp, kp_hashnext);
 	}
 
 	return (0);

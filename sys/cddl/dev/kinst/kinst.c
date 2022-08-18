@@ -61,7 +61,7 @@ static struct cdevsw kinst_cdevsw = {
 };
 
 dtrace_provider_id_t	kinst_id;
-struct kinst_probe	**kinst_probetab;
+struct kinst_probe_list	*kinst_probetab;
 static struct cdev	*kinst_cdev;
 
 static int
@@ -128,6 +128,7 @@ kinst_destroy(void *arg, dtrace_id_t id, void *parg)
 	struct kinst_probe *kp = parg;
 
 	kinst_trampoline_dealloc(kp->kp_trampoline);
+	LIST_REMOVE(kp, kp_hashnext);
 	free(kp, M_KINST);
 }
 
@@ -151,7 +152,7 @@ static int
 kinst_load(void *dummy)
 {
 	kinst_probetab = malloc(KINST_PROBETAB_MAX *
-	    sizeof(struct kinst_probe *), M_KINST, M_WAITOK | M_ZERO);
+	    sizeof(struct kinst_probe_list), M_KINST, M_WAITOK | M_ZERO);
 	kinst_trampoline_init();
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");

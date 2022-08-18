@@ -20,6 +20,8 @@ struct linker_file;
 struct linker_symval;
 
 struct kinst_probe {
+	LIST_ENTRY(kinst_probe)	kp_hashnext;
+	const char		*kp_func;
 	char			kp_name[16];
 	dtrace_id_t		kp_id;
 	int			kp_rval;
@@ -37,11 +39,14 @@ struct kinst_probe {
 #endif /* __amd64__ */
 };
 
+LIST_HEAD(kinst_probe_list, kinst_probe);
+
 extern dtrace_provider_id_t	kinst_id;
-extern struct kinst_probe	**kinst_probetab;
+extern struct kinst_probe_list	*kinst_probetab;
 
 #define KINST_PROBETAB_MAX	0x8000	/* 32k */
 #define KINST_ADDR2NDX(addr)	(((uintptr_t)(addr)) & (KINST_PROBETAB_MAX - 1))
+#define KINST_GETPROBE(i) 	(kinst_probetab[KINST_ADDR2NDX(i)])
 
 int	kinst_invop(uintptr_t, struct trapframe *, uintptr_t);
 void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
