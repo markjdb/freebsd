@@ -36,7 +36,7 @@ struct kinst_probe {
 		register_t	kp_calladdr;
 		uint8_t		*kp_trampoline;
 	};
-	int			kp_is_riprel_call;
+	int			kp_flags;
 #endif /* __amd64__ */
 };
 

@@ -18,8 +18,9 @@
 #define KINST_STI		0xfb
 #define KINST_POPF		0x9d
 
+#define KINST_MOD_DEPENDENT	0xff
+
 #define KINST_CALL_DIRECT	0xe8
-#define KINST_CALL_REGISTER	0xff
 
 #define KINST_JMP		0xe9
 #define KINST_JMP_LEN		5
@@ -37,14 +38,17 @@
 #define KINST_MOD(b)		(((b) & 0xc0) >> 6)
 #define KINST_REG(b)		(((b) & 0x38) >> 3)
 #define KINST_RM(b)		((b) & 0x07)
-#define KINST_MODRM_RIPREL(b) \
-	(KINST_MOD(b) == 0 && KINST_RM(b) == 5)
+#define KINST_MODRM(b)		((KINST_MOD(b) << 3) | KINST_RM(b))
+
+#define KINST_MODRM_RIPREL(b)	(KINST_MODRM(b) == 5)
+
+#define KINST_F_CALL		0x0001
+#define KINST_F_DIRECT_CALL	0x0002
+#define KINST_F_RIPREL_CALL	0x0004
+#define KINST_F_REG_CALL	0x0008
 
 static int	kinst_dis_get_byte(void *);
 static int32_t	kinst_displ(uint8_t *, uint8_t *, int);
-static int	kinst_is_direct_call(uint8_t *);
-static int	kinst_is_register_call(uint8_t *);
-static int	kinst_is_call(uint8_t *);
 static int	kinst_is_uncond_jmp(uint8_t *);
 static int	kinst_is_short_jmp(uint8_t *);
 static int	kinst_is_near_jmp(uint8_t *);
@@ -70,7 +74,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 		dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
 		cpu->cpu_dtrace_caller = 0;
 
-		if (kinst_is_call(&kp->kp_savedval)) {
+		if (kp->kp_flags & KINST_F_CALL) {
 			retaddr = (uintptr_t *)(kp->kp_patchpoint + kp->kp_len);
 			/*
 			 * dtrace_invop_start() reserves 16 bytes on the stack
@@ -83,11 +87,11 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 			 * we don't know and cannot access the register
 			 * contents anywhere else.
 			 */
-			if (kp->kp_is_riprel_call) {
-				frame->tf_rip += kinst_displ(kp->kp_patchpoint +
-				    kp->kp_immediate_off + kp->kp_len,
-				    (uint8_t *)frame->tf_rip, kp->kp_len);
-			} else if (kinst_is_register_call(&kp->kp_savedval)) {
+			if (kp->kp_flags & KINST_F_RIPREL_CALL) {
+				frame->tf_rip =
+				    *(uintptr_t *)(kp->kp_patchpoint +
+				    kp->kp_immediate_off);
+			} else if (kp->kp_flags & KINST_F_REG_CALL) {
 				frame->tf_rip =
 				    *(uintptr_t *)
 				    (((register_t *)frame)[kp->kp_frame_off] +
@@ -189,7 +193,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		kp->kp_savedval = *instr;
 		kp->kp_patchval = KINST_PATCHVAL;
 		kp->kp_patchpoint = instr;
-		kp->kp_is_riprel_call = 0;
+		kp->kp_flags = 0;
 
 		curinstr = instr;
 		d86.d86_data = (void **)&instr;
@@ -206,21 +210,22 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			modrm = &bytes[rmidx];
 		}
 
-		/*
-		 * TODO: explain why call needs special handling
-		 */
-		if (kinst_is_direct_call(bytes)) {
-			memcpy(&origdispl, &bytes[1], sizeof(origdispl));
-			kp->kp_calladdr =
-			    (register_t)(curinstr + origdispl + kp->kp_len);
-			kp->kp_rval = DTRACE_INVOP_CALL;
-			goto done;
-		} else if (kinst_is_register_call(bytes)) {
+		if (*bytes != KINST_MOD_DEPENDENT)
+			goto skip;
+		switch (KINST_REG(*modrm)) {
+		case 0:
+			/* TODO: inc */
+			break;
+		case 1:
+			/* TODO: das */
+			break;
+		case 2:	/* FALLTHROUGH */
+		case 3:
 			if (KINST_MODRM_RIPREL(*modrm)) {
 				memcpy(&origdispl, modrm + 1, sizeof(origdispl));
 				kp->kp_immediate_off = origdispl + kp->kp_len;
-				kp->kp_is_riprel_call = 1;
-			} else if (KINST_REG(*modrm) == 2) {	/* XXX: just else? */
+				kp->kp_flags |= KINST_F_RIPREL_CALL;
+			} else {
 				int reg;
 
 				/*
@@ -239,7 +244,25 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 					    kp->kp_len - opclen);
 				} else
 					kp->kp_immediate_off = 0;
+				kp->kp_flags |= KINST_F_REG_CALL;
 			}
+			kp->kp_flags |= KINST_F_CALL;
+			kp->kp_rval = DTRACE_INVOP_CALL;
+			goto done;
+		case 4:	/* FALLTHROUGH */
+		case 5:
+			/* TODO: jmp */
+			break;
+		case 6:
+			/* TODO: push */
+			break;
+		}
+skip:
+		if (*bytes == KINST_CALL_DIRECT) {
+			memcpy(&origdispl, &bytes[1], sizeof(origdispl));
+			kp->kp_calladdr =
+			    (register_t)(curinstr + origdispl + kp->kp_len);
+			kp->kp_flags |= KINST_F_CALL | KINST_F_DIRECT_CALL;
 			kp->kp_rval = DTRACE_INVOP_CALL;
 			goto done;
 		}
@@ -354,24 +377,6 @@ static int32_t
 kinst_displ(uint8_t *dst, uint8_t *src, int len)
 {
 	return (dst - (src + len));
-}
-
-static int
-kinst_is_direct_call(uint8_t *bytes)
-{
-	return (bytes[0] == KINST_CALL_DIRECT);
-}
-
-static int
-kinst_is_register_call(uint8_t *bytes)
-{
-	return (bytes[0] == KINST_CALL_REGISTER);
-}
-
-static int
-kinst_is_call(uint8_t *bytes)
-{
-	return (kinst_is_direct_call(bytes) || kinst_is_register_call(bytes));
 }
 
 static int
