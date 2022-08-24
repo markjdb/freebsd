@@ -83,7 +83,11 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 			 * we don't know and cannot access the register
 			 * contents anywhere else.
 			 */
-			if (kinst_is_register_call(&kp->kp_savedval)) {
+			if (kp->kp_is_riprel_call) {
+				frame->tf_rip += kinst_displ(kp->kp_patchpoint +
+				    kp->kp_immediate_off + kp->kp_len,
+				    (uint8_t *)frame->tf_rip, kp->kp_len);
+			} else if (kinst_is_register_call(&kp->kp_savedval)) {
 				frame->tf_rip =
 				    *(uintptr_t *)
 				    (((register_t *)frame)[kp->kp_frame_off] +
@@ -185,6 +189,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		kp->kp_savedval = *instr;
 		kp->kp_patchval = KINST_PATCHVAL;
 		kp->kp_patchpoint = instr;
+		kp->kp_is_riprel_call = 0;
 
 		curinstr = instr;
 		d86.d86_data = (void **)&instr;
@@ -210,22 +215,31 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			    (register_t)(curinstr + origdispl + kp->kp_len);
 			kp->kp_rval = DTRACE_INVOP_CALL;
 			goto done;
-		} else if (kinst_is_register_call(bytes) &&
-		    KINST_REG(*modrm) == 2) {
-			int reg;
+		} else if (kinst_is_register_call(bytes)) {
+			if (KINST_MODRM_RIPREL(*modrm)) {
+				memcpy(&origdispl, modrm + 1, sizeof(origdispl));
+				kp->kp_immediate_off = origdispl + kp->kp_len;
+				kp->kp_is_riprel_call = 1;
+			} else if (KINST_REG(*modrm) == 2) {	/* XXX: just else? */
+				int reg;
 
-			/* FIXME: rip-relative calls */
-			reg = KINST_RM(*modrm);
-			kp->kp_frame_off = kinst_match_regoff(reg);
-			/*
-			 * If the instruction is longer than 2 bytes,
-			 * it means that there's an offset after MODRM.
-			 */
-			if (kp->kp_len > 2) {
-				memcpy(&kp->kp_immediate_off, modrm + 1,
-				    sizeof(kp->kp_immediate_off));
-			} else
-				kp->kp_immediate_off = 0;
+				/*
+				 * Takes into account both the opcode and the
+				 * MODRM byte.
+				 */
+				opclen = 2;
+				reg = KINST_RM(*modrm);
+				kp->kp_frame_off = kinst_match_regoff(reg);
+				/*
+				 * If the instruction is longer than 2 bytes,
+				 * it means that there's an offset after MODRM.
+				 */
+				if (kp->kp_len > opclen) {
+					memcpy(&kp->kp_immediate_off, modrm + 1,
+					    kp->kp_len - opclen);
+				} else
+					kp->kp_immediate_off = 0;
+			}
 			kp->kp_rval = DTRACE_INVOP_CALL;
 			goto done;
 		}

@@ -30,12 +30,13 @@ struct kinst_probe {
 	kinst_patchval_t	kp_savedval;
 	kinst_patchval_t	*kp_patchpoint;
 #ifdef __amd64__
-	int			kp_frame_off;
-	int			kp_immediate_off;
+	int32_t			kp_frame_off;
+	int32_t			kp_immediate_off;
 	union {
 		register_t	kp_calladdr;
 		uint8_t		*kp_trampoline;
 	};
+	int			kp_is_riprel_call;
 #endif /* __amd64__ */
 };
 
