@@ -1,0 +1,30 @@
+.Dd August 29, 2022
+.Dt SMR 9
+.Os
+.Sh NAME
+.Nm smr ,
+.Nm SMR ,
+.Nm smr_enter
+.Nd "Safe memory reclamation"
+.Sh SYNOPSIS
+.In sys/smr.h
+.Ft void
+.Fn smr_enter "smr_t smr"
+.Ft void
+.Fn smr_exit "smr_t smr"
+.Ft smr_seq_t
+.Fn smr_advance "smr_t smr"
+.Ft smr_t
+.Fn smr_create "const char *name" "int limit" "int flags"
+.Ft void
+.Fn smr_destroy "smr_t smr"
+.Ft bool
+.Fn smr_poll "smr_t smr" "smr_seq_t goal" "bool wait"
+.Ft void
+.Fn smr_synchronize "smr_t smr"
+.Ft bool
+.Fn smr_wait "smr_t smr" "smr_seq_t goal"
+.Sh DESCRIPTION
+.Sh SEE ALSO
+.Xr locking 9 ,
+.Xr uma 9

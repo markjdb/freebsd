@@ -308,6 +308,7 @@ MAN=	accept_filter.9 \
 	rwlock.9 \
 	sbuf.9 \
 	scheduler.9 \
+	smr.9 \
 	SDT.9 \
 	securelevel_gt.9 \
 	selrecord.9 \
