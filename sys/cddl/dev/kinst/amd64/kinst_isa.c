@@ -189,10 +189,6 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
 		kp->kp_func = func;
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", off);
-		/*
-		 * Save the first byte of the instruction so that we can
-		 * recover it when the probe is disabled.
-		 */
 		kp->kp_savedval = *instr;
 		kp->kp_patchval = KINST_PATCHVAL;
 		kp->kp_patchpoint = instr;
@@ -262,6 +258,12 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		}
 skip:
 		if (*bytes == KINST_CALL_DIRECT) {
+			/*
+			 * call instructions cannot be straightforwardly copied
+			 * to a trampoline since they would store the wrong
+			 * return address.  Instead, they are emulated in
+			 * software with some help from kinst_invop().
+			 */
 			memcpy(&origdispl, &bytes[1], sizeof(origdispl));
 			kp->kp_calladdr =
 			    (register_t)(curinstr + origdispl + kp->kp_len);
