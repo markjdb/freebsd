@@ -18,8 +18,7 @@ SUBDIR+=	fasttrap fbt systrace_linux
 .endif
 .if ${MACHINE_CPUARCH} == "amd64"
 SUBDIR+=	systrace_linux32
-# Keep it disconnected from the main build for now.
-#SUBDIR+=	kinst
+SUBDIR+=	kinst
 .endif
 .if ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "aarch64" || \
