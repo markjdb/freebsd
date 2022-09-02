@@ -300,7 +300,8 @@ cpu_pcpu_init(struct pcpu *pcpu, int cpuid, size_t size)
 {
 
 	pcpu->pc_acpi_id = 0xffffffff;
-	pcpu->pc_mpidr = 0xffffffff;
+	pcpu->pc_mpidr_low = 0xffffffff;
+	pcpu->pc_mpidr_high = 0xffffffff;
 }
 
 void
@@ -419,14 +420,6 @@ arm64_get_writable_addr(vm_offset_t addr, vm_offset_t *out)
 
 	return (false);
 }
-
-typedef struct {
-	uint32_t type;
-	uint64_t phys_start;
-	uint64_t virt_start;
-	uint64_t num_pages;
-	uint64_t attr;
-} EFI_MEMORY_DESCRIPTOR;
 
 typedef void (*efi_map_entry_cb)(struct efi_md *);
 

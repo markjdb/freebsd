@@ -326,7 +326,8 @@ struct in6_prflags {
 	struct prf_ra {
 		u_char onlink : 1;
 		u_char autonomous : 1;
-		u_char reserved : 6;
+		u_char ra_derived: 1;
+		u_char reserved : 5;
 	} prf_ra;
 	u_char prf_reserved1;
 	u_short prf_reserved2;
@@ -357,6 +358,7 @@ struct  in6_prefixreq {
 
 #define ipr_raf_onlink		ipr_flags.prf_ra.onlink
 #define ipr_raf_auto		ipr_flags.prf_ra.autonomous
+#define ipr_raf_ra_derived	ipr_flags.prf_ra.ra_derived
 
 #define ipr_statef_onlink	ipr_flags.prf_state.onlink
 
@@ -881,7 +883,7 @@ int	ip6_setmoptions(struct inpcb *, struct sockopt *);
 #define IN6_IFAUPDATE_DADDELAY	0x1 /* first time to configure an address */
 
 int	in6_mask2len(struct in6_addr *, u_char *);
-int	in6_control(struct socket *, u_long, caddr_t, struct ifnet *,
+int	in6_control(struct socket *, u_long, void *, struct ifnet *,
 	struct thread *);
 int	in6_update_ifa(struct ifnet *, struct in6_aliasreq *,
 	struct in6_ifaddr *, int);

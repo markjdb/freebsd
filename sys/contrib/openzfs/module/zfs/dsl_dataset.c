@@ -6,7 +6,7 @@
  * You may not use this file except in compliance with the License.
  *
  * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
- * or http://www.opensolaris.org/os/licensing.
+ * or https://opensource.org/licenses/CDDL-1.0.
  * See the License for the specific language governing permissions
  * and limitations under the License.
  *
@@ -87,6 +87,8 @@ int zfs_max_recordsize =  1 * 1024 * 1024;
 int zfs_max_recordsize = 16 * 1024 * 1024;
 #endif
 static int zfs_allow_redacted_dataset_mount = 0;
+
+int zfs_snapshot_history_enabled = 1;
 
 #define	SWITCH64(x, y) \
 	{ \
@@ -534,7 +536,7 @@ dsl_dataset_snap_remove(dsl_dataset_t *ds, const char *name, dmu_tx_t *tx,
 	matchtype_t mt = 0;
 	int err;
 
-	dsl_dir_snap_cmtime_update(ds->ds_dir);
+	dsl_dir_snap_cmtime_update(ds->ds_dir, tx);
 
 	if (dsl_dataset_phys(ds)->ds_flags & DS_FLAG_CI_DATASET)
 		mt = MT_NORMALIZE;
@@ -1865,9 +1867,10 @@ dsl_dataset_snapshot_sync_impl(dsl_dataset_t *ds, const char *snapname,
 
 	dsl_scan_ds_snapshotted(ds, tx);
 
-	dsl_dir_snap_cmtime_update(ds->ds_dir);
+	dsl_dir_snap_cmtime_update(ds->ds_dir, tx);
 
-	spa_history_log_internal_ds(ds->ds_prev, "snapshot", tx, " ");
+	if (zfs_snapshot_history_enabled)
+		spa_history_log_internal_ds(ds->ds_prev, "snapshot", tx, " ");
 }
 
 void
@@ -2809,6 +2812,8 @@ dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 	    dsl_get_userrefs(ds));
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_DEFER_DESTROY,
 	    dsl_get_defer_destroy(ds));
+	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_SNAPSHOTS_CHANGED,
+	    dsl_dir_snap_cmtime(ds->ds_dir).tv_sec);
 	dsl_dataset_crypt_stats(ds, nv);
 
 	if (dsl_dataset_phys(ds)->ds_prev_snap_obj != 0) {
@@ -4982,6 +4987,9 @@ ZFS_MODULE_PARAM(zfs, zfs_, max_recordsize, INT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs, zfs_, allow_redacted_dataset_mount, INT, ZMOD_RW,
 	"Allow mounting of redacted datasets");
+
+ZFS_MODULE_PARAM(zfs, zfs_, snapshot_history_enabled, INT, ZMOD_RW,
+	"Include snapshot events in pool history/events");
 
 EXPORT_SYMBOL(dsl_dataset_hold);
 EXPORT_SYMBOL(dsl_dataset_hold_flags);

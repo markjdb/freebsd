@@ -153,7 +153,7 @@ static bool
 is_boot_cpu(uint64_t target_cpu)
 {
 
-	return (cpuid_to_pcpu[0]->pc_mpidr == (target_cpu & CPU_AFF_MASK));
+	return (PCPU_GET_MPIDR(cpuid_to_pcpu[0]) == (target_cpu & CPU_AFF_MASK));
 }
 
 static void
@@ -207,7 +207,7 @@ init_secondary(uint64_t cpu)
 {
 	struct pcpu *pcpup;
 	pmap_t pmap0;
-	u_int mpidr;
+	uint64_t mpidr;
 
 	ptrauth_mp_start(cpu);
 
@@ -218,10 +218,10 @@ init_secondary(uint64_t cpu)
 	 */
 	mpidr = READ_SPECIALREG(mpidr_el1) & CPU_AFF_MASK;
 	if (cpu >= MAXCPU || cpuid_to_pcpu[cpu] == NULL ||
-	    cpuid_to_pcpu[cpu]->pc_mpidr != mpidr) {
+	    PCPU_GET_MPIDR(cpuid_to_pcpu[cpu]) != mpidr) {
 		for (cpu = 0; cpu < mp_maxid; cpu++)
 			if (cpuid_to_pcpu[cpu] != NULL &&
-			    cpuid_to_pcpu[cpu]->pc_mpidr == mpidr)
+			    PCPU_GET_MPIDR(cpuid_to_pcpu[cpu]) == mpidr)
 				break;
 		if ( cpu >= MAXCPU)
 			panic("MPIDR for this CPU is not in pcpu table");
@@ -495,6 +495,8 @@ static bool
 start_cpu(u_int cpuid, uint64_t target_cpu, int domain)
 {
 	struct pcpu *pcpup;
+	vm_offset_t pcpu_mem;
+	vm_size_t size;
 	vm_paddr_t pa;
 	int err, naps;
 
@@ -508,13 +510,17 @@ start_cpu(u_int cpuid, uint64_t target_cpu, int domain)
 
 	KASSERT(cpuid < MAXCPU, ("Too many CPUs"));
 
-	pcpup = (void *)kmem_malloc_domainset(DOMAINSET_PREF(domain),
-	    sizeof(*pcpup), M_WAITOK | M_ZERO);
-	pcpu_init(pcpup, cpuid, sizeof(struct pcpu));
-	pcpup->pc_mpidr = target_cpu & CPU_AFF_MASK;
+	size = round_page(sizeof(*pcpup) + DPCPU_SIZE);
+	pcpu_mem = kmem_malloc_domainset(DOMAINSET_PREF(domain), size,
+	    M_WAITOK | M_ZERO);
+	pmap_disable_promotion(pcpu_mem, size);
 
-	dpcpu[cpuid - 1] = (void *)kmem_malloc_domainset(
-	    DOMAINSET_PREF(domain), DPCPU_SIZE, M_WAITOK | M_ZERO);
+	pcpup = (struct pcpu *)pcpu_mem;
+	pcpu_init(pcpup, cpuid, sizeof(struct pcpu));
+	pcpup->pc_mpidr_low = target_cpu & CPU_AFF_MASK;
+	pcpup->pc_mpidr_high = (target_cpu & CPU_AFF_MASK) >> 32;
+
+	dpcpu[cpuid - 1] = (void *)(pcpup + 1);
 	dpcpu_init(dpcpu[cpuid - 1], cpuid);
 
 	bootstacks[cpuid] = (void *)kmem_malloc_domainset(
@@ -538,9 +544,9 @@ start_cpu(u_int cpuid, uint64_t target_cpu, int domain)
 		    cpuid, target_cpu, err));
 
 		pcpu_destroy(pcpup);
-		kmem_free((vm_offset_t)dpcpu[cpuid - 1], DPCPU_SIZE);
 		dpcpu[cpuid - 1] = NULL;
 		kmem_free((vm_offset_t)bootstacks[cpuid], PAGE_SIZE);
+		kmem_free(pcpu_mem, size);
 		bootstacks[cpuid] = NULL;
 		mp_ncpus--;
 		return (false);
@@ -683,11 +689,15 @@ cpu_init_fdt(void)
 void
 cpu_mp_start(void)
 {
+	uint64_t mpidr;
+
 	mtx_init(&ap_boot_mtx, "ap boot", NULL, MTX_SPIN);
 
 	/* CPU 0 is always boot CPU. */
 	CPU_SET(0, &all_cpus);
-	cpuid_to_pcpu[0]->pc_mpidr = READ_SPECIALREG(mpidr_el1) & CPU_AFF_MASK;
+	mpidr = READ_SPECIALREG(mpidr_el1) & CPU_AFF_MASK;
+	cpuid_to_pcpu[0]->pc_mpidr_low = mpidr;
+	cpuid_to_pcpu[0]->pc_mpidr_high = mpidr >> 32;
 
 	switch(arm64_bus_method) {
 #ifdef DEV_ACPI

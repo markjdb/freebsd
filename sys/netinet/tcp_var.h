@@ -249,8 +249,8 @@ struct tcpcb {
 	int	t_dupacks;		/* consecutive dup acks recd */
 	int	t_lognum;		/* Number of log entries */
 	int	t_loglimit;		/* Maximum number of log entries */
-	uint32_t r_cep;			/* Number of received CE marked packets */
-	uint32_t s_cep;			/* Synced number of delivered CE packets */
+	uint32_t t_rcep;			/* Number of received CE marked packets */
+	uint32_t t_scep;			/* Synced number of delivered CE packets */
 	int64_t	t_pacing_rate;		/* bytes / sec, -1 => unlimited */
 	struct tcp_log_stailq t_logs;	/* Log buffer */
 	struct tcp_log_id_node *t_lin;
@@ -1085,7 +1085,6 @@ void	 tcp_twclose(struct tcptw *, int);
 void	 tcp_ctlinput(int, struct sockaddr *, void *);
 int	 tcp_ctloutput(struct socket *, struct sockopt *);
 void 	 tcp_ctlinput_viaudp(int, struct sockaddr *, void *, void *);
-void	 tcp_drain(void);
 void	 tcp_fini(void *);
 char	*tcp_log_addrs(struct in_conninfo *, struct tcphdr *, const void *,
 	    const void *);
@@ -1187,7 +1186,6 @@ void	 tcp_tw_zone_change(void);
 int	 tcp_twcheck(struct inpcb *, struct tcpopt *, struct tcphdr *,
 	    struct mbuf *, int);
 void	 tcp_setpersist(struct tcpcb *);
-void	 tcp_slowtimo(void);
 void	 tcp_record_dsack(struct tcpcb *tp, tcp_seq start, tcp_seq end, int tlp);
 struct tcptemp *
 	 tcpip_maketemplate(struct inpcb *);
@@ -1211,7 +1209,8 @@ uint32_t tcp_hc_getmtu(struct in_conninfo *);
 void	 tcp_hc_updatemtu(struct in_conninfo *, uint32_t);
 void	 tcp_hc_update(struct in_conninfo *, struct hc_metrics_lite *);
 
-extern	struct pr_usrreqs tcp_usrreqs;
+extern	struct protosw tcp_protosw;		/* shared for TOE */
+extern	struct protosw tcp6_protosw;		/* shared for TOE */
 
 uint32_t tcp_new_ts_offset(struct in_conninfo *);
 tcp_seq	 tcp_new_isn(struct in_conninfo *);
