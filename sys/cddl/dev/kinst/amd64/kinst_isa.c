@@ -14,7 +14,7 @@
 #include "kinst.h"
 #include "trampoline.h"
 
-#define KINST_PUSHL_EBP		0x55
+#define KINST_PUSHL_RBP		0x55
 #define KINST_STI		0xfb
 #define KINST_POPF		0x9d
 
@@ -144,10 +144,13 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	if (instr >= limit)
 		return (0);
+
 	/*
-	 * TODO: why?
+	 * Ignore functions not beginning with the usual function prologue.
+	 * These might correspond to assembly routines with which we should not
+	 * meddle.
 	 */
-	if (*instr != KINST_PUSHL_EBP)
+	if (*instr != KINST_PUSHL_RBP)
 		return (0);
 
 	n = 0;
