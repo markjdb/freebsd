@@ -340,14 +340,21 @@ skip:
 			memcpy(kp->kp_trampoline, bytes, kp->kp_len);
 			trlen = kp->kp_len;
 		}
+
 		/*
-		 * Encode a jmp back to the next instruction so that the thread
-		 * can continue execution normally.
+		 * The following jmp takes us back to the original code.  It is
+		 * encoded as "jmp *0(%rip)" (six bytes), followed by the
+		 * absolute address of the instruction following the one that
+		 * was traced (eight bytes).
 		 */
-		kp->kp_trampoline[trlen] = KINST_JMP;
-		displ = kinst_displ(instr, &kp->kp_trampoline[trlen],
-		    KINST_JMP_LEN);
-		memcpy(&kp->kp_trampoline[trlen + 1], &displ, sizeof(displ));
+		kp->kp_trampoline[trlen + 0] = 0xff;
+		kp->kp_trampoline[trlen + 1] = 0x25;
+		kp->kp_trampoline[trlen + 2] = 0x00;
+		kp->kp_trampoline[trlen + 3] = 0x00;
+		kp->kp_trampoline[trlen + 4] = 0x00;
+		kp->kp_trampoline[trlen + 5] = 0x00;
+		memcpy(&kp->kp_trampoline[trlen + 6], &instr, sizeof(uint64_t));
+
 		kp->kp_rval = DTRACE_INVOP_NOP;
 done:
 		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
