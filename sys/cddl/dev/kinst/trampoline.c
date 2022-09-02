@@ -17,6 +17,8 @@
  * Each trampoline is 32 bytes long and contains [instruction, jmp]. Since we
  * have 2 instructions stored in the trampoline, and each of them can take up
  * to 16 bytes, 32 bytes is enough to cover even the worst case scenario.
+ *
+ * XXX-MJ this is amd64-specific
  */
 #define KINST_TRAMP_SIZE	32
 #define KINST_TRAMPCHUNK_SIZE	PAGE_SIZE
@@ -51,6 +53,8 @@ kinst_trampchunk_alloc(void)
 	/*
 	 * Fill the trampolines with breakpoint instructions so that the kernel
 	 * will crash cleanly if things somehow go wrong.
+	 *
+	 * XXX-MJ assumes patchval is one byte, not true on !amd64
 	 */
 	memset((void *)trampaddr, KINST_PATCHVAL, KINST_TRAMPCHUNK_SIZE);
 
