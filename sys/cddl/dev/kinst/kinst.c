@@ -153,6 +153,7 @@ kinst_load(void *dummy)
 {
 	kinst_probetab = malloc(KINST_PROBETAB_MAX *
 	    sizeof(struct kinst_probe_list), M_KINST, M_WAITOK | M_ZERO);
+	kinst_trampoline_init();
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");
 	dtrace_invop_add(kinst_invop);
@@ -165,6 +166,7 @@ static int
 kinst_unload(void *dummy)
 {
 	free(kinst_probetab, M_KINST);
+	kinst_trampoline_deinit();
 	dtrace_invop_remove(kinst_invop);
 	destroy_dev(kinst_cdev);
 
