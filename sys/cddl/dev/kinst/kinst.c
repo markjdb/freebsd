@@ -69,6 +69,8 @@ kinst_probe_create(struct kinst_probe *kp, linker_file_t lf)
 {
 	kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
 	    kp->kp_func, kp->kp_name, 3, kp);
+
+	LIST_INSERT_HEAD(KINST_GETPROBE(kp->kp_patchpoint), kp, kp_hashnext);
 }
 
 static int
@@ -173,6 +175,8 @@ kinst_load(void *dummy)
 		return (error);
 	kinst_probetab = malloc(KINST_PROBETAB_MAX *
 	    sizeof(struct kinst_probe_list), M_KINST, M_WAITOK | M_ZERO);
+	for (int i = 0; i < KINST_PROBETAB_MAX; i++)
+		LIST_INIT(&kinst_probetab[i]);
 	kinst_trampoline_init();
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");

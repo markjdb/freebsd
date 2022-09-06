@@ -90,7 +90,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	stack = (uintptr_t *)frame->tf_rsp;
 	cpu = &solaris_cpu[curcpu];
 
-	LIST_FOREACH(kp, &KINST_GETPROBE(addr), kp_hashnext) {
+	LIST_FOREACH(kp, KINST_GETPROBE(addr), kp_hashnext) {
 		if ((uintptr_t)kp->kp_patchpoint != addr)
 			return (0);
 
@@ -105,18 +105,20 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 			 * dtrace_invop_start() reserves space on the stack to
 			 * store the return address of the call instruction.
 			 */
-			retaddr = (uintptr_t)(kp->kp_patchpoint + kp->kp_len);
+			retaddr =
+			    (uintptr_t)(kp->kp_patchpoint + kp->kp_instlen);
 			*(uintptr_t *)scratch = retaddr;
 
 			if ((kp->kp_flags & KINST_F_DIRECT_CALL) != 0) {
 				frame->tf_rip = (uintptr_t)(kp->kp_patchpoint +
-				    kp->kp_disp + kp->kp_len);
+				    kp->kp_disp + kp->kp_instlen);
 			} else {
 				register_t rval;
 
 				if (kp->kp_reg1 == -1 && kp->kp_reg2 == -1) {
 					/* rip-relative */
-					rval = frame->tf_rip - 1 + kp->kp_len;
+					rval = frame->tf_rip - 1 +
+					    kp->kp_instlen;
 				} else {
 					/* indirect */
 					rval =
@@ -170,6 +172,18 @@ kinst_set_disp32(struct kinst_probe *kp, uint8_t *bytes)
 	kp->kp_disp = (int64_t)disp32;
 }
 
+static int
+kinst_dis_get_byte(void *p)
+{
+	int ret;
+	uint8_t **instr = p;
+
+	ret = **instr;
+	(*instr)++;
+
+	return (ret);
+}
+
 /*
  * Set up all of the state needed to faithfully execute a probed instruction.
  *
@@ -197,19 +211,27 @@ kinst_set_disp32(struct kinst_probe *kp, uint8_t *bytes)
  * 32-bit displacement.
  */
 static int
-kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
+kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 {
-	uint64_t instr;
+	dis86_t d86;
 	uint8_t *bytes, modrm, rex;
 	int dispoff, i, ilen, opcidx;
 
-	bytes = d86->d86_bytes;
+	d86.d86_data = &instr;
+	d86.d86_get_byte = kinst_dis_get_byte;
+	d86.d86_check_func = NULL;
+	if (dtrace_disx86(&d86, SIZE64) != 0) {
+		KINST_LOG("failed to disassemble instruction at: %p", instr);
+		return (EINVAL);
+	}
+	bytes = d86.d86_bytes;
+	kp->kp_instlen = d86.d86_len;
 
 	/*
 	 * Skip over prefixes, save REX.
 	 */
 	rex = 0;
-	for (i = 0; i < kp->kp_len; i++) {
+	for (i = 0; i < kp->kp_instlen; i++) {
 		switch (bytes[i]) {
 		case 0xf0 ... 0xf3:
 			/* group 1 */
@@ -235,7 +257,7 @@ kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
 		}
 		break;
 	}
-	KASSERT(i < kp->kp_len,
+	KASSERT(i < kp->kp_instlen,
 	    ("%s: failed to disassemble instruction at %p", __func__, bytes));
 	opcidx = i;
 
@@ -288,8 +310,8 @@ kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
 		kinst_set_disp32(kp, &bytes[dispoff]);
 		break;
 	case 0xff:
-		MPASS(d86->d86_got_modrm);
-		switch (KINST_MODRM_REG(bytes[d86->d86_rmindex])) {
+		MPASS(d86.d86_got_modrm);
+		switch (KINST_MODRM_REG(bytes[d86.d86_rmindex])) {
 		case 0x02:
 		case 0x03:
 			/* indirect call */
@@ -309,23 +331,23 @@ kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
 	 * might still have to extract operand info if this is a call
 	 * instruction.
 	 */
-	if (d86->d86_got_modrm) {
+	if (d86.d86_got_modrm) {
 		uint8_t mod, rm, sib;
 
 		kp->kp_reg1 = kp->kp_reg2 = -1;
 
-		modrm = bytes[d86->d86_rmindex];
+		modrm = bytes[d86.d86_rmindex];
 		mod = KINST_MODRM_MOD(modrm);
 		rm = KINST_MODRM_RM(modrm);
 		if (mod == 0 && rm == 5) {
 			kp->kp_flags |= KINST_F_RIPREL;
-			dispoff = d86->d86_rmindex + 1;
+			dispoff = d86.d86_rmindex + 1;
 			kinst_set_disp32(kp, &bytes[dispoff]);
 		} else if ((kp->kp_flags & KINST_F_CALL) != 0) {
 			bool havesib;
 
 			havesib = (mod != 3 && rm == 4);
-			dispoff = d86->d86_rmindex + (havesib ? 2 : 1);
+			dispoff = d86.d86_rmindex + (havesib ? 2 : 1);
 			if (mod == 1)
 				kinst_set_disp8(kp, bytes[dispoff]);
 			else if (mod == 2)
@@ -334,7 +356,7 @@ kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
 				kp->kp_flags |= KINST_F_MOD_DIRECT;
 
 			if (havesib) {
-				sib = bytes[d86->d86_rmindex + 1];
+				sib = bytes[d86.d86_rmindex + 1];
 				if (KINST_SIB_BASE(sib) != 5) {
 					kp->kp_reg1 = KINST_SIB_BASE(sib) |
 					    (KINST_REX_B(rex) << 3);
@@ -363,7 +385,7 @@ kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
 	if (kp->kp_trampoline == NULL)
 		return (ENOMEM);
 
-	ilen = kp->kp_len;
+	ilen = kp->kp_instlen;
 	if ((kp->kp_flags & KINST_F_RIPREL) != 0) {
 		uint32_t disp32;
 
@@ -418,22 +440,10 @@ kinst_instr_dissect(struct kinst_probe *kp, dis86_t *d86)
 	kp->kp_trampoline[ilen + 4] = 0x00;
 	kp->kp_trampoline[ilen + 5] = 0x00;
 
-	instr = (uintptr_t)kp->kp_patchpoint + kp->kp_len;
-	memcpy(&kp->kp_trampoline[ilen + 6], &instr, sizeof(uint64_t));
+	instr = kp->kp_patchpoint + kp->kp_instlen;
+	memcpy(&kp->kp_trampoline[ilen + 6], &instr, sizeof(uintptr_t));
 
 	return (0);
-}
-
-static int
-kinst_dis_get_byte(void *p)
-{
-	int ret;
-	uint8_t **instr = p;
-
-	ret = **instr;
-	(*instr)++;
-
-	return (ret);
 }
 
 int
@@ -441,11 +451,10 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
     void *opaque)
 {
 	struct kinst_probe *kp;
-	dis86_t d86;
 	dtrace_kinst_probedesc_t *pd;
 	const char *func;
-	int error, mode, n, off;
-	uint8_t *curinstr, *instr, *limit;
+	int error, n, off;
+	uint8_t *instr, *limit;
 
 	pd = opaque;
 	func = symval->name;
@@ -454,7 +463,6 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	instr = (uint8_t *)symval->value;
 	limit = (uint8_t *)symval->value + symval->size;
-	mode = (DATAMODEL_LP64 == DATAMODEL_NATIVE) ? SIZE64 : SIZE32;
 
 	if (instr >= limit)
 		return (0);
@@ -491,7 +499,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		 * Prevent separate dtrace(1) instances from creating copies of
 		 * the same probe.
 		 */
-		LIST_FOREACH(kp, &KINST_GETPROBE(instr), kp_hashnext) {
+		LIST_FOREACH(kp, KINST_GETPROBE(instr), kp_hashnext) {
 			if (strcmp(kp->kp_func, func) == 0 &&
 			    strtol(kp->kp_name, NULL, 10) == off)
 				return (0);
@@ -506,27 +514,13 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		kp->kp_savedval = *instr;
 		kp->kp_patchval = KINST_PATCHVAL;
 		kp->kp_patchpoint = instr;
-		kp->kp_flags = 0;
 
-		curinstr = instr;
-		d86.d86_data = (void **)&instr;
-		d86.d86_get_byte = kinst_dis_get_byte;
-		d86.d86_check_func = NULL;
-		if (dtrace_disx86(&d86, mode) != 0) {
-			KINST_LOG("failed to disassemble instruction at: %p", instr);
-			return (EINVAL);
-		}
-		kp->kp_len = d86.d86_len;
-
-		error = kinst_instr_dissect(kp, &d86);
+		error = kinst_instr_dissect(kp, instr);
 		if (error != 0)
 			return (error);
+		instr += kp->kp_instlen;
 
 		kinst_probe_create(kp, lf);
-
-		if (&KINST_GETPROBE(curinstr) == NULL)
-			LIST_INIT(&KINST_GETPROBE(curinstr));
-		LIST_INSERT_HEAD(&KINST_GETPROBE(curinstr), kp, kp_hashnext);
 	}
 
 	return (0);

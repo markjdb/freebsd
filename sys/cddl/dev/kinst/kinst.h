@@ -29,13 +29,15 @@ struct kinst_probe {
 	kinst_patchval_t	*kp_patchpoint;
 
 #ifdef __amd64__
-	uint8_t			kp_len;
+	int			kp_flags;
+	int			kp_instlen;
+	uint8_t			*kp_trampoline;
+
+	/* operands to "call" instruction branch target */
 	int			kp_reg1;
 	int			kp_reg2;
 	int			kp_scale;
 	int64_t			kp_disp;
-	uint8_t			*kp_trampoline;
-	int			kp_flags;
 #endif /* __amd64__ */
 };
 
@@ -45,7 +47,7 @@ extern struct kinst_probe_list	*kinst_probetab;
 
 #define KINST_PROBETAB_MAX	0x8000	/* 32k */
 #define KINST_ADDR2NDX(addr)	(((uintptr_t)(addr)) & (KINST_PROBETAB_MAX - 1))
-#define KINST_GETPROBE(i) 	(kinst_probetab[KINST_ADDR2NDX(i)])
+#define KINST_GETPROBE(i) 	(&kinst_probetab[KINST_ADDR2NDX(i)])
 
 struct linker_file;
 struct linker_symval;
@@ -56,6 +58,6 @@ int	kinst_make_probe(struct linker_file *, int, struct linker_symval *,
 void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
 void	kinst_probe_create(struct kinst_probe *, struct linker_file *);
 
-#endif /*_KERNEL */
+#endif /* _KERNEL */
 
 #endif /* _KINST_H_ */
