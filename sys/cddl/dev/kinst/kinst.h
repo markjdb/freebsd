@@ -24,18 +24,17 @@ struct kinst_probe {
 	const char		*kp_func;
 	char			kp_name[16];
 	dtrace_id_t		kp_id;
-	int			kp_rval;
-	uint8_t			kp_len;
 	kinst_patchval_t	kp_patchval;
 	kinst_patchval_t	kp_savedval;
 	kinst_patchval_t	*kp_patchpoint;
+
 #ifdef __amd64__
-	int32_t			kp_frame_off;
-	int32_t			kp_immediate_off;
-	union {
-		register_t	kp_calladdr;
-		uint8_t		*kp_trampoline;
-	};
+	uint8_t			kp_len;
+	int			kp_reg1;
+	int			kp_reg2;
+	int			kp_scale;
+	int64_t			kp_disp;
+	uint8_t			*kp_trampoline;
 	int			kp_flags;
 #endif /* __amd64__ */
 };
