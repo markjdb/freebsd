@@ -449,8 +449,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	pd = opaque;
 	func = symval->name;
-	if (strcmp(func, pd->func) != 0 ||
-	    strcmp(func, "trap_check") == 0)
+	if (strcmp(func, pd->func) != 0 || strcmp(func, "trap_check") == 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;

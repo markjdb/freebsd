@@ -194,7 +194,8 @@ kinst_modevent(module_t mod __unused, int type, void *data __unused)
 }
 
 SYSINIT(kinst_load, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_load, NULL);
-SYSUNINIT(kinst_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_unload, NULL);
+SYSUNINIT(kinst_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, kinst_unload,
+    NULL);
 
 DEV_MODULE(kinst, kinst_modevent, NULL);
 MODULE_VERSION(kinst, 1);
