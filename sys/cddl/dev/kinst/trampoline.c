@@ -3,9 +3,11 @@
  */
 #include <sys/param.h>
 #include <sys/bitset.h>
+#include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/malloc.h>
 #include <sys/queue.h>
-
-#include <sys/dtrace.h>
+#include <sys/sx.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -46,19 +48,21 @@ struct trampchunk {
 	BITSET_DEFINE(, KINST_TRAMPS_PER_CHUNK) free;
 };
 
-static struct trampchunk *kinst_trampchunk_alloc(void);
-
 static vm_object_t		kinst_vmobj;
 static TAILQ_HEAD(, trampchunk)	kinst_trampchunks =
     TAILQ_HEAD_INITIALIZER(kinst_trampchunks);
+static struct sx		kinst_tramp_sx;
+SX_SYSINIT(kinst_tramp_sx, &kinst_tramp_sx, "kinst tramp");
 
 static struct trampchunk *
 kinst_trampchunk_alloc(void)
 {
-	static int off = 0;
+	static int objoff = 0;
 	struct trampchunk *chunk;
 	vm_offset_t trampaddr;
-	int error;
+	int error, off;
+
+	sx_assert(&kinst_tramp_sx, SX_XLOCKED);
 
 	vm_object_reference(kinst_vmobj);
 
@@ -73,7 +77,8 @@ kinst_trampchunk_alloc(void)
 	 * address above KERNBASE, so this satisfies both requirements.
 	 */
 	trampaddr = KERNBASE;
-	off += KINST_TRAMPCHUNK_SIZE;
+	off = objoff;
+	objoff += KINST_TRAMPCHUNK_SIZE;
 	error = vm_map_find(kernel_map, kinst_vmobj, off, &trampaddr,
 	    KINST_TRAMPCHUNK_SIZE, 0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL,
 	    0);
@@ -93,6 +98,8 @@ kinst_trampchunk_alloc(void)
 	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
 	if (error != KERN_SUCCESS) {
 		KINST_LOG("trampoline chunk wiring failed: %d", error);
+		(void)vm_map_remove(kernel_map, trampaddr,
+		    trampaddr + KINST_TRAMPCHUNK_SIZE);
 		return (NULL);
 	}
 
@@ -117,6 +124,8 @@ kinst_trampchunk_alloc(void)
 static void
 kinst_trampchunk_free(struct trampchunk *chunk)
 {
+	sx_assert(&kinst_tramp_sx, SX_XLOCKED);
+
 	TAILQ_REMOVE(&kinst_trampchunks, chunk, next);
 	(void)vm_map_remove(kernel_map, (vm_offset_t)chunk->addr,
 	    (vm_offset_t)(chunk->addr + KINST_TRAMPCHUNK_SIZE));
@@ -127,7 +136,7 @@ int
 kinst_trampoline_init(void)
 {
 	kinst_vmobj = vm_pager_allocate(OBJT_PHYS, NULL, KINST_VMOBJ_SIZE,
-	    VM_PROT_ALL, 0, curthread->td_ucred);
+	    VM_PROT_ALL, 0, NULL);
 	if (kinst_vmobj == NULL) {
 		KINST_LOG("cannot allocate vm_object");
 		return (1);
@@ -151,28 +160,29 @@ kinst_trampoline_alloc(void)
 	uint8_t *tramp;
 	int off;
 
-	/* Find a the first free trampoline. */
+	sx_xlock(&kinst_tramp_sx);
 	TAILQ_FOREACH(chunk, &kinst_trampchunks, next) {
 		/* All trampolines from this chunk are already allocated. */
 		if ((off = BIT_FFS(KINST_TRAMPS_PER_CHUNK, &chunk->free)) == 0)
 			continue;
 		/* BIT_FFS() returns indices starting at 1 instead of 0. */
 		off--;
-		/* Mark trampoline as allocated. */
-		goto found;
+		break;
 	}
-	/*
-	 * We didn't find any free trampoline in the current list, we need to
-	 * allocate a new one.
-	 */
-	if ((chunk = kinst_trampchunk_alloc()) == NULL) {
-		KINST_LOG("cannot allocate new trampchunk");
-		return (NULL);
+	if (chunk == NULL) {
+		/*
+		 * We didn't find any free trampoline in the current list,
+		 * allocate a new one.
+		 */
+		if ((chunk = kinst_trampchunk_alloc()) == NULL) {
+			KINST_LOG("cannot allocate new trampchunk");
+			return (NULL);
+		}
+		off = 0;
 	}
-	off = 0;
-found:
 	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
 	tramp = chunk->addr + off * KINST_TRAMP_SIZE;
+	sx_xunlock(&kinst_tramp_sx);
 
 	return (tramp);
 }
@@ -183,6 +193,10 @@ kinst_trampoline_dealloc(uint8_t *tramp)
 	struct trampchunk *chunk;
 	int off;
 
+	if (tramp == NULL)
+		return;
+
+	sx_xlock(&kinst_tramp_sx);
 	TAILQ_FOREACH(chunk, &kinst_trampchunks, next) {
 		for (off = 0; off < KINST_TRAMPS_PER_CHUNK; off++) {
 			if (chunk->addr + off * KINST_TRAMP_SIZE == tramp) {
@@ -193,6 +207,7 @@ kinst_trampoline_dealloc(uint8_t *tramp)
 				if (BIT_ISFULLSET(KINST_TRAMPS_PER_CHUNK,
 				    &chunk->free))
 					kinst_trampchunk_free(chunk);
+				sx_xunlock(&kinst_tramp_sx);
 				return;
 			}
 		}
