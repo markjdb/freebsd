@@ -522,8 +522,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		if (error != 0)
 			return (error);
 
-		kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
-		    kp->kp_func, kp->kp_name, 3, kp);
+		kinst_probe_create(kp, lf);
 
 		if (&KINST_GETPROBE(curinstr) == NULL)
 			LIST_INIT(&KINST_GETPROBE(curinstr));

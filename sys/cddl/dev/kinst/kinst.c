@@ -19,7 +19,7 @@ MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 static d_open_t		kinst_open;
 static d_close_t	kinst_close;
 static d_ioctl_t	kinst_ioctl;
-static int	kinst_linker_file_cb(linker_file_t, void *);
+
 static void	kinst_provide_module(void *, modctl_t *);
 static void	kinst_getargdesc(void *, dtrace_id_t, void *,
 		    dtrace_argdesc_t *);
@@ -60,9 +60,16 @@ static struct cdevsw kinst_cdevsw = {
 	.d_ioctl		= kinst_ioctl,
 };
 
-dtrace_provider_id_t	kinst_id;
+static dtrace_provider_id_t	kinst_id;
 struct kinst_probe_list	*kinst_probetab;
 static struct cdev	*kinst_cdev;
+
+void
+kinst_probe_create(struct kinst_probe *kp, linker_file_t lf)
+{
+	kp->kp_id = dtrace_probe_create(kinst_id, lf->filename,
+	    kp->kp_func, kp->kp_name, 3, kp);
+}
 
 static int
 kinst_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
@@ -76,8 +83,23 @@ kinst_close(struct cdev *dev __unused, int fflag __unused, int devtype __unused,
     struct thread *td __unused)
 {
 	dtrace_condense(kinst_id);
-
 	return (0);
+}
+
+static int
+kinst_linker_file_cb(linker_file_t lf, void *arg)
+{
+	dtrace_kinst_probedesc_t *pd;
+
+	pd = arg;
+	if (pd->mod[0] != '\0' && strcmp(pd->mod, lf->filename) != 0)
+		return (0);
+
+	/*
+	 * Invoke kinst_make_probe_function() once for each function symbol in
+	 * the module "lf".
+	 */
+	return (linker_file_function_listall(lf, kinst_make_probe, arg));
 }
 
 static int
@@ -90,6 +112,9 @@ kinst_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t addr,
 	switch (cmd) {
 	case KINSTIOC_MAKEPROBE:
 		pd = (dtrace_kinst_probedesc_t *)addr;
+		pd->func[sizeof(pd->func) - 1] = '\0';
+		pd->mod[sizeof(pd->mod) - 1] = '\0';
+
 		/* Loop over all functions in the kernel and loaded modules. */
 		error = linker_file_foreach(kinst_linker_file_cb, pd);
 		break;
@@ -101,16 +126,6 @@ kinst_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t addr,
 	return (error);
 }
 
-static int
-kinst_linker_file_cb(linker_file_t lf, void *arg)
-{
-	/*
-	 * Invoke kinst_make_probe_function() once for each function symbol in
-	 * the module "lf".
-	 */
-	return (linker_file_function_listall(lf, kinst_make_probe, arg));
-}
-
 static void
 kinst_provide_module(void *arg, modctl_t *lf)
 {
@@ -119,7 +134,6 @@ kinst_provide_module(void *arg, modctl_t *lf)
 static void
 kinst_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 {
-	/* TODO */
 }
 
 static void
@@ -151,15 +165,19 @@ kinst_disable(void *arg, dtrace_id_t id, void *parg)
 static int
 kinst_load(void *dummy)
 {
+	int error;
+
+	error = dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER, NULL,
+	    &kinst_pops, NULL, &kinst_id);
+	if (error != 0)
+		return (error);
 	kinst_probetab = malloc(KINST_PROBETAB_MAX *
 	    sizeof(struct kinst_probe_list), M_KINST, M_WAITOK | M_ZERO);
 	kinst_trampoline_init();
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");
 	dtrace_invop_add(kinst_invop);
-
-	return (dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER, NULL,
-	    &kinst_pops, NULL, &kinst_id) != 0);
+	return (0);
 }
 
 static int

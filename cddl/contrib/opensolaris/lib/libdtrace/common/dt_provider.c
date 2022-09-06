@@ -707,6 +707,7 @@ dt_probe_info(dtrace_hdl_t *dtp,
 
 			if ((dev = open("/dev/dtrace/kinst", O_WRONLY)) < 0)
 				return (NULL);
+			memset(&pd, 0, sizeof(pd));
 			strlcpy(pd.func, pdp->dtpd_func, sizeof(pd.func));
 			/*
 			 * TODO: what do we do in case func is a wildcard?
