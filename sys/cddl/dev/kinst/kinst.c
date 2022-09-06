@@ -1,6 +1,9 @@
 /*
  * SPDX-License-Identifier: CDDL 1.0
+ *
+ * Copyright 2022 Christos Margiolis <christos@FreeBSD.org>
  */
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -10,9 +13,7 @@
 
 #include <sys/dtrace.h>
 
-#include "extern.h"
 #include "kinst.h"
-#include "trampoline.h"
 
 MALLOC_DEFINE(M_KINST, "kinst", "Kernel Instruction Tracing");
 

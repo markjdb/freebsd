@@ -1,6 +1,10 @@
 /*
  * SPDX-License-Identifier: CDDL 1.0
+ *
+ * Copyright 2022 Christos Margiolis <christos@FreeBSD.org>
+ * Copyright 2022 Mark Johnston <markj@FreeBSD.org>
  */
+
 #include <sys/param.h>
 #include <sys/bitset.h>
 #include <sys/kernel.h>
@@ -18,9 +22,8 @@
 #include <vm/vm_page.h>
 #include <vm/vm_pager.h>
 
-#include "extern.h"
+#include "kinst.h"
 #include "kinst_isa.h"
-#include "trampoline.h"
 
 /*
  * Each trampoline is 32 bytes long and contains [instruction, jmp]. Since we

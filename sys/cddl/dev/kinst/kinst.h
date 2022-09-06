@@ -1,6 +1,9 @@
 /*
  * SPDX-License-Identifier: CDDL 1.0
+ *
+ * Copyright 2022 Christos Margiolis <christos@FreeBSD.org>
  */
+
 #ifndef _KINST_H_
 #define _KINST_H_
 
@@ -57,6 +60,20 @@ int	kinst_make_probe(struct linker_file *, int, struct linker_symval *,
 	    void *);
 void	kinst_patch_tracepoint(struct kinst_probe *, kinst_patchval_t);
 void	kinst_probe_create(struct kinst_probe *, struct linker_file *);
+
+int	kinst_trampoline_init(void);
+int	kinst_trampoline_deinit(void);
+uint8_t	*kinst_trampoline_alloc(void);
+void	kinst_trampoline_dealloc(uint8_t *);
+
+#ifdef MALLOC_DECLARE
+MALLOC_DECLARE(M_KINST);
+#endif /* MALLOC_DECLARE */
+
+#define KINST_LOG_HELPER(fmt, ...)	\
+	printf("%s:%d: " fmt "%s\n", __func__, __LINE__, __VA_ARGS__)
+#define KINST_LOG(...)			\
+	KINST_LOG_HELPER(__VA_ARGS__, "")
 
 #endif /* _KERNEL */
 

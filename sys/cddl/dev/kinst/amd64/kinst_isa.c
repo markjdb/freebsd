@@ -1,6 +1,10 @@
 /*
  * SPDX-License-Identifier: CDDL 1.0
+ *
+ * Copyright 2022 Christos Margiolis <christos@FreeBSD.org>
+ * Copyright 2022 Mark Johnston <markj@FreeBSD.org>
  */
+
 #include <sys/param.h>
 
 #include <machine/cpufunc.h>
@@ -10,9 +14,7 @@
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 #include <dis_tables.h>
 
-#include "extern.h"
 #include "kinst.h"
-#include "trampoline.h"
 
 #define KINST_PUSHL_RBP		0x55
 #define KINST_STI		0xfb
