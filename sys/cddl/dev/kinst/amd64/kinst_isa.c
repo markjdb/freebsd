@@ -401,6 +401,8 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 			memcpy(kp->kp_trampoline, bytes, dispoff);
 			memcpy(&kp->kp_trampoline[dispoff], &disp32,
 			    sizeof(int32_t));
+			memcpy(&kp->kp_trampoline[dispoff + 4],
+			    &bytes[dispoff + 4], ilen - (dispoff + 4));
 		} else if (bytes[opcidx] == 0xeb) {
 			/* Instruction length changes from 2 to 5. */
 			disp32 = (uint32_t)
