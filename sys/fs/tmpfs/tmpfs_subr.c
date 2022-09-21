@@ -636,7 +636,7 @@ tmpfs_free_node_locked(struct tmpfs_mount *tmp, struct tmpfs_node *node,
 
 	/*
 	 * Make sure this is a node type we can deal with. Everything is explicitly
-	 * enumerated without the 'default' clause so the the compiler can throw an
+	 * enumerated without the 'default' clause so the compiler can throw an
 	 * error in case a new type is added.
 	 */
 	switch (node->tn_type) {
@@ -1051,7 +1051,6 @@ tmpfs_alloc_file(struct vnode *dvp, struct vnode **vpp, struct vattr *vap,
 	struct tmpfs_node *parent;
 
 	ASSERT_VOP_ELOCKED(dvp, "tmpfs_alloc_file");
-	MPASS(cnp->cn_flags & HASBUF);
 
 	tmp = VFS_TO_TMPFS(dvp->v_mount);
 	dnode = VP_TO_TMPFS_DIR(dvp);
