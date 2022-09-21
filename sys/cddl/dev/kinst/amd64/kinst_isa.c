@@ -186,6 +186,13 @@ kinst_dis_get_byte(void *p)
 	return (ret);
 }
 
+static uint32_t
+kinst_riprel_disp(struct kinst_probe *kp)
+{
+	return ((uint32_t)((intptr_t)kp->kp_patchpoint + kp->kp_disp -
+	    (intptr_t)kp->kp_trampoline));
+}
+
 /*
  * Set up all of the state needed to faithfully execute a probed instruction.
  *
@@ -291,6 +298,8 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp8(kp, bytes[dispoff]);
+		/* Instruction length changes from 2 to 6. */
+		kp->kp_disp -= 4;
 		break;
 	case 0xe9:
 		/* unconditional jmp near */
@@ -303,6 +312,8 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp8(kp, bytes[dispoff]);
+		/* Instruction length changes from 2 to 5. */
+		kp->kp_disp -= 3;
 		break;
 	case 0xe8:
 	case 0x9a:
@@ -391,23 +402,17 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 	if ((kp->kp_flags & KINST_F_RIPREL) != 0) {
 		uint32_t disp32;
 
+		disp32 = kinst_riprel_disp(kp);
 		if ((kp->kp_flags & KINST_F_JMP) == 0 ||
 		    bytes[opcidx] == 0x0f ||
 		    bytes[opcidx] == 0xe9 ||
 		    bytes[opcidx] == 0xff) {
-			disp32 = (uint32_t)
-			    ((intptr_t)kp->kp_patchpoint + kp->kp_disp -
-			    (intptr_t)kp->kp_trampoline);
 			memcpy(kp->kp_trampoline, bytes, dispoff);
 			memcpy(&kp->kp_trampoline[dispoff], &disp32,
 			    sizeof(int32_t));
 			memcpy(&kp->kp_trampoline[dispoff + 4],
 			    &bytes[dispoff + 4], ilen - (dispoff + 4));
 		} else if (bytes[opcidx] == 0xeb) {
-			/* Instruction length changes from 2 to 5. */
-			disp32 = (uint32_t)
-			    ((intptr_t)kp->kp_patchpoint + kp->kp_disp -
-			    (intptr_t)kp->kp_trampoline - 3L);
 			memcpy(kp->kp_trampoline, bytes, opcidx);
 			kp->kp_trampoline[opcidx] = 0xe9;
 			memcpy(&kp->kp_trampoline[opcidx + 1], &disp32,
@@ -415,9 +420,6 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 			ilen = 5;
 		} else if (bytes[opcidx] >= 0x70 && bytes[opcidx] <= 0x7f)  {
 			/* Instruction length changes from 2 to 6. */
-			disp32 = (uint32_t)
-			    ((intptr_t)kp->kp_patchpoint + kp->kp_disp -
-			    (intptr_t)kp->kp_trampoline - 4L);
 			memcpy(kp->kp_trampoline, bytes, opcidx);
 			kp->kp_trampoline[opcidx] = 0x0f;
 			kp->kp_trampoline[opcidx + 1] = bytes[opcidx] + 0x10;
