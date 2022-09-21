@@ -360,6 +360,7 @@ struct qat_admin_rings {
 };
 
 struct qat_accel_init_cb {
+	int qaic_done;
 	int qaic_status;
 };
 

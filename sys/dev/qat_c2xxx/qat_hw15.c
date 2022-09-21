@@ -68,6 +68,7 @@ __KERNEL_RCSID(0, "$NetBSD: qat_hw15.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $");
 #include <sys/proc.h>
 #include <sys/systm.h>
 
+#include <machine/atomic.h>
 #include <machine/bus.h>
 
 #include <opencrypto/xform.h>
@@ -407,7 +408,9 @@ qat_adm_ring_send_init_msg_sync(struct qat_softc *sc,
 {
 	struct fw_init_req initmsg;
 	struct qat_accel_init_cb cb;
-	int error;
+	int error, ms;
+
+	memset(&cb, 0, sizeof(cb));
 
 	error = qat_adm_ring_build_init_msg(sc, &initmsg, cmd, ae, &cb);
 	if (error)
@@ -418,11 +421,15 @@ qat_adm_ring_send_init_msg_sync(struct qat_softc *sc,
 	if (error)
 		return error;
 
-	error = tsleep(&cb, PZERO, "qat_init", hz * 3 / 2);
-	if (error) {
+	for (ms = 1500; ms > 0; ms--) {
+		if (atomic_load_acq_int(&cb.qaic_done) == 1)
+			break;
+		DELAY(1000);
+	}
+	if (ms == 0) {
 		device_printf(sc->sc_dev,
-		    "Timed out initialization firmware: %d\n", error);
-		return error;
+		    "Timed out initializing firmware: %d\n", error);
+		return EIO;
 	}
 	if (cb.qaic_status) {
 		device_printf(sc->sc_dev, "Failed to initialize firmware\n");
@@ -498,7 +505,7 @@ qat_adm_ring_intr(struct qat_softc *sc, void *arg, void *msg)
 		init_cb->qaic_status =
 		    __SHIFTOUT(init_resp->comn_resp.comn_status,
 		    COMN_RESP_INIT_ADMIN_STATUS);
-		wakeup(init_cb);
+		atomic_store_rel_int(&init_cb->qaic_done, 1);
 		break;
 	default:
 		device_printf(sc->sc_dev,
