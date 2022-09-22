@@ -144,7 +144,6 @@ kinst_destroy(void *arg, dtrace_id_t id, void *parg)
 {
 	struct kinst_probe *kp = parg;
 
-	kinst_trampoline_dealloc(kp->kp_trampoline);
 	LIST_REMOVE(kp, kp_hashnext);
 	free(kp, M_KINST);
 }
@@ -170,15 +169,20 @@ kinst_load(void *dummy)
 {
 	int error;
 
-	error = dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER, NULL,
-	    &kinst_pops, NULL, &kinst_id);
+	error = kinst_trampoline_init();
 	if (error != 0)
 		return (error);
+
+	error = dtrace_register("kinst", &kinst_attr, DTRACE_PRIV_USER, NULL,
+	    &kinst_pops, NULL, &kinst_id);
+	if (error != 0) {
+		kinst_trampoline_deinit();
+		return (error);
+	}
 	kinst_probetab = malloc(KINST_PROBETAB_MAX *
 	    sizeof(struct kinst_probe_list), M_KINST, M_WAITOK | M_ZERO);
 	for (int i = 0; i < KINST_PROBETAB_MAX; i++)
 		LIST_INIT(&kinst_probetab[i]);
-	kinst_trampoline_init();
 	kinst_cdev = make_dev(&kinst_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
 	    "dtrace/kinst");
 	dtrace_invop_add(kinst_invop);

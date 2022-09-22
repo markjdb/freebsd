@@ -82,12 +82,51 @@ kinst_regval(struct trapframe *frame, int reg)
 	return (((register_t *)frame)[kinst_regoff(reg)]);
 }
 
+static uint32_t
+kinst_riprel_disp(struct kinst_probe *kp, void *dst)
+{
+	return ((uint32_t)((intptr_t)kp->kp_patchpoint + kp->kp_disp -
+	    (intptr_t)dst));
+}
+
+static void
+kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
+{
+	uint8_t *instr;
+	uint32_t disp;
+	int ilen;
+
+	ilen = kp->kp_tinstlen;
+
+	memcpy(tramp, kp->kp_template, ilen);
+	if ((kp->kp_flags & KINST_F_RIPREL) != 0) {
+		disp = kinst_riprel_disp(kp, tramp);
+		memcpy(&tramp[kp->kp_dispoff], &disp, sizeof(uint32_t));
+	}
+
+	/*
+	 * The following position-independent jmp takes us back to the
+	 * original code.  It is encoded as "jmp *0(%rip)" (six bytes),
+	 * followed by the absolute address of the instruction following
+	 * the one that was traced (eight bytes).
+	 */
+	tramp[ilen + 0] = 0xff;
+	tramp[ilen + 1] = 0x25;
+	tramp[ilen + 2] = 0x00;
+	tramp[ilen + 3] = 0x00;
+	tramp[ilen + 4] = 0x00;
+	tramp[ilen + 5] = 0x00;
+	instr = kp->kp_patchpoint + kp->kp_instlen;
+	memcpy(&tramp[ilen + 6], &instr, sizeof(uintptr_t));
+}
+
 int
 kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 {
 	solaris_cpu_t *cpu;
 	uintptr_t *stack, retaddr;
 	struct kinst_probe *kp;
+	uint8_t *tramp;
 
 	stack = (uintptr_t *)frame->tf_rsp;
 	cpu = &solaris_cpu[curcpu];
@@ -138,7 +177,9 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 			}
 			return (DTRACE_INVOP_CALL);
 		} else {
-			frame->tf_rip = (register_t)kp->kp_trampoline;
+			tramp = curthread->td_kinst;
+			kinst_trampoline_populate(kp, tramp);
+			frame->tf_rip = (register_t)tramp;
 			return (DTRACE_INVOP_NOP);
 		}
 	}
@@ -186,13 +227,6 @@ kinst_dis_get_byte(void *p)
 	return (ret);
 }
 
-static uint32_t
-kinst_riprel_disp(struct kinst_probe *kp)
-{
-	return ((uint32_t)((intptr_t)kp->kp_patchpoint + kp->kp_disp -
-	    (intptr_t)kp->kp_trampoline));
-}
-
 /*
  * Set up all of the state needed to faithfully execute a probed instruction.
  *
@@ -234,7 +268,7 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		return (EINVAL);
 	}
 	bytes = d86.d86_bytes;
-	kp->kp_instlen = d86.d86_len;
+	kp->kp_instlen = kp->kp_tinstlen = d86.d86_len;
 
 	/*
 	 * Skip over prefixes, save REX.
@@ -298,8 +332,6 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp8(kp, bytes[dispoff]);
-		/* Instruction length changes from 2 to 6. */
-		kp->kp_disp -= 4;
 		break;
 	case 0xe9:
 		/* unconditional jmp near */
@@ -312,8 +344,6 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp8(kp, bytes[dispoff]);
-		/* Instruction length changes from 2 to 5. */
-		kp->kp_disp -= 3;
 		break;
 	case 0xe8:
 	case 0x9a:
@@ -394,60 +424,39 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 	 * 32-bit displacement, and the adjust displacement needs to be
 	 * computed.
 	 */
-	kp->kp_trampoline = kinst_trampoline_alloc();
-	if (kp->kp_trampoline == NULL)
-		return (ENOMEM);
-
 	ilen = kp->kp_instlen;
 	if ((kp->kp_flags & KINST_F_RIPREL) != 0) {
-		uint32_t disp32;
-
-		disp32 = kinst_riprel_disp(kp);
 		if ((kp->kp_flags & KINST_F_JMP) == 0 ||
 		    bytes[opcidx] == 0x0f ||
 		    bytes[opcidx] == 0xe9 ||
 		    bytes[opcidx] == 0xff) {
-			memcpy(kp->kp_trampoline, bytes, dispoff);
-			memcpy(&kp->kp_trampoline[dispoff], &disp32,
-			    sizeof(int32_t));
-			memcpy(&kp->kp_trampoline[dispoff + 4],
+			memcpy(kp->kp_template, bytes, dispoff);
+			memcpy(&kp->kp_template[dispoff + 4],
 			    &bytes[dispoff + 4], ilen - (dispoff + 4));
+			kp->kp_dispoff = dispoff;
 		} else if (bytes[opcidx] == 0xeb) {
-			memcpy(kp->kp_trampoline, bytes, opcidx);
-			kp->kp_trampoline[opcidx] = 0xe9;
-			memcpy(&kp->kp_trampoline[opcidx + 1], &disp32,
-			    sizeof(int32_t));
-			ilen = 5;
+			memcpy(kp->kp_template, bytes, opcidx);
+			kp->kp_template[opcidx] = 0xe9;
+			kp->kp_dispoff = opcidx + 1;
+
+			/* Instruction length changes from 2 to 5. */
+			kp->kp_tinstlen = 5;
+			kp->kp_disp -= 3;
 		} else if (bytes[opcidx] >= 0x70 && bytes[opcidx] <= 0x7f)  {
+			memcpy(kp->kp_template, bytes, opcidx);
+			kp->kp_template[opcidx] = 0x0f;
+			kp->kp_template[opcidx + 1] = bytes[opcidx] + 0x10;
+			kp->kp_dispoff = opcidx + 2;
+
 			/* Instruction length changes from 2 to 6. */
-			memcpy(kp->kp_trampoline, bytes, opcidx);
-			kp->kp_trampoline[opcidx] = 0x0f;
-			kp->kp_trampoline[opcidx + 1] = bytes[opcidx] + 0x10;
-			memcpy(&kp->kp_trampoline[opcidx + 2], &disp32,
-			    sizeof(int32_t));
-			ilen = 6;
+			kp->kp_tinstlen = 6;
+			kp->kp_disp -= 4;
 		} else {
 			panic("unhandled opcode %#x", bytes[opcidx]);
 		}
 	} else {
-		memcpy(kp->kp_trampoline, bytes, ilen);
+		memcpy(kp->kp_template, bytes, ilen);
 	}
-
-	/*
-	 * The following position-independent jmp takes us back to the
-	 * original code.  It is encoded as "jmp *0(%rip)" (six bytes),
-	 * followed by the absolute address of the instruction following
-	 * the one that was traced (eight bytes).
-	 */
-	kp->kp_trampoline[ilen + 0] = 0xff;
-	kp->kp_trampoline[ilen + 1] = 0x25;
-	kp->kp_trampoline[ilen + 2] = 0x00;
-	kp->kp_trampoline[ilen + 3] = 0x00;
-	kp->kp_trampoline[ilen + 4] = 0x00;
-	kp->kp_trampoline[ilen + 5] = 0x00;
-
-	instr = kp->kp_patchpoint + kp->kp_instlen;
-	memcpy(&kp->kp_trampoline[ilen + 6], &instr, sizeof(uintptr_t));
 
 	return (0);
 }

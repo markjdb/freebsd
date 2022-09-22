@@ -31,10 +31,13 @@ struct kinst_probe {
 	kinst_patchval_t	kp_savedval;
 	kinst_patchval_t	*kp_patchpoint;
 
+	/* XXX-MJ make a md struct for this */
 #ifdef __amd64__
 	int			kp_flags;
-	int			kp_instlen;
-	uint8_t			*kp_trampoline;
+	int			kp_instlen;	/* original instr len */
+	int			kp_tinstlen;	/* trampoline instr len */
+	int			kp_dispoff;
+	uint8_t			kp_template[16];
 
 	/* operands to "call" instruction branch target */
 	int			kp_reg1;
@@ -63,7 +66,7 @@ void	kinst_probe_create(struct kinst_probe *, struct linker_file *);
 
 int	kinst_trampoline_init(void);
 int	kinst_trampoline_deinit(void);
-uint8_t	*kinst_trampoline_alloc(void);
+uint8_t	*kinst_trampoline_alloc(int);
 void	kinst_trampoline_dealloc(uint8_t *);
 
 #ifdef MALLOC_DECLARE
