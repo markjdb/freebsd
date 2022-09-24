@@ -59,7 +59,7 @@ struct gic_v3_acpi_devinfo {
 static device_identify_t gic_v3_acpi_identify;
 static device_probe_t gic_v3_acpi_probe;
 static device_attach_t gic_v3_acpi_attach;
-static bus_alloc_resource_t gic_v3_acpi_bus_alloc_res;
+static bus_get_resource_list_t gic_v3_acpi_get_resource_list;
 
 static void gic_v3_acpi_bus_attach(device_t);
 
@@ -70,8 +70,7 @@ static device_method_t gic_v3_acpi_methods[] = {
 	DEVMETHOD(device_attach,		gic_v3_acpi_attach),
 
 	/* Bus interface */
-	DEVMETHOD(bus_alloc_resource,		gic_v3_acpi_bus_alloc_res),
-	DEVMETHOD(bus_activate_resource,	bus_generic_activate_resource),
+	DEVMETHOD(bus_get_resource_list,	gic_v3_acpi_get_resource_list),
 
 	/* End */
 	DEVMETHOD_END
@@ -433,8 +432,8 @@ gic_v3_acpi_bus_attach(device_t dev)
 			resource_list_init(&di->di_rl);
 			di->di_gic_dinfo.gic_domain = -1;
 			di->di_gic_dinfo.is_vgic = 1;
-			sc->gic_nchildren++;
 			device_set_ivars(child, di);
+			sc->gic_nchildren++;
 		}
 	}
 
@@ -443,31 +442,13 @@ gic_v3_acpi_bus_attach(device_t dev)
 	bus_generic_attach(dev);
 }
 
-static struct resource *
-gic_v3_acpi_bus_alloc_res(device_t bus, device_t child, int type, int *rid,
-    rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
+static struct resource_list *
+gic_v3_acpi_get_resource_list(device_t bus, device_t child)
 {
 	struct gic_v3_acpi_devinfo *di;
-	struct resource_list_entry *rle;
 
-	/* We only allocate memory */
-	if (type != SYS_RES_MEMORY)
-		return (NULL);
+	di = device_get_ivars(child);
+	KASSERT(di != NULL, ("%s: No devinfo", __func__));
 
-	if (RMAN_IS_DEFAULT_RANGE(start, end)) {
-		if ((di = device_get_ivars(child)) == NULL)
-			return (NULL);
-
-		/* Find defaults for this rid */
-		rle = resource_list_find(&di->di_rl, type, *rid);
-		if (rle == NULL)
-			return (NULL);
-
-		start = rle->start;
-		end = rle->end;
-		count = rle->count;
-	}
-
-	return (bus_generic_alloc_resource(bus, child, type, rid, start, end,
-	    count, flags));
+	return (&di->di_rl);
 }
