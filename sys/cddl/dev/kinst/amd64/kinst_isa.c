@@ -178,8 +178,20 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 			return (DTRACE_INVOP_CALL);
 		} else {
 			tramp = curthread->td_kinst;
-			kinst_trampoline_populate(kp, tramp);
-			frame->tf_rip = (register_t)tramp;
+			if (tramp == NULL) {
+				/*
+				 * A trampoline allocation failed, so this probe
+				 * is effectively disabled.  We can't safely
+				 * print anything here, but the trampoline
+				 * allocator should have left a breadcrumb in
+				 * the dmesg.
+				 */
+				kinst_patch_tracepoint(kp, kp->kp_savedval);
+				frame->tf_rip = (register_t)kp->kp_patchpoint;
+			} else {
+				kinst_trampoline_populate(kp, tramp);
+				frame->tf_rip = (register_t)tramp;
+			}
 			return (DTRACE_INVOP_NOP);
 		}
 	}
@@ -230,6 +242,7 @@ kinst_dis_get_byte(void *p)
 /*
  * Set up all of the state needed to faithfully execute a probed instruction.
  *
+ * XXX-MJ out of date now
  * In the simple case, we copy the instruction unmodified to a per-probe
  * trampoline, wherein it is followed by a jump back to the original code.
  * There are some wrinkles to handle:
@@ -417,7 +430,8 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		return (0);
 
 	/*
-	 * Allocate and populate an instruction trampoline.
+	 * Allocate and populate an instruction trampoline template.
+	 *
 	 * Position-independent instructions can simply be copied, but
 	 * position-dependent instructions require some surgery: jump
 	 * instructions with an 8-bit displacement need to be converted to use a

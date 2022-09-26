@@ -77,9 +77,6 @@ kinst_trampchunk_alloc(void)
 	 * Allocate virtual memory for the trampoline chunk. The returned
 	 * address is saved in "trampaddr".
 	 *
-	 * VM_PROT_ALL expands to VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXEC,
-	 * i.e., the mapping will be writeable and executable.
-	 *
 	 * Setting "trampaddr" to KERNBASE causes vm_map_find() to return an
 	 * address above KERNBASE, so this satisfies both requirements.
 	 */
@@ -162,9 +159,11 @@ kinst_trampoline_alloc_locked(int how)
 		 * We didn't find any free trampoline in the current list,
 		 * allocate a new one.
 		 */
-		if ((chunk = kinst_trampchunk_alloc()) == NULL)
-			/* XXX-MJ need to handle this somehow */
-			panic("cannot allocate a new trampoline chunk");
+		if ((chunk = kinst_trampchunk_alloc()) == NULL) {
+			printf("kinst: failed to allocate trampoline, "
+			    "probes may not fire\n");
+			return (NULL);
+		}
 		off = 0;
 	}
 	BIT_CLR(KINST_TRAMPS_PER_CHUNK, off, &chunk->free);
@@ -184,7 +183,7 @@ kinst_trampoline_alloc(int how)
 }
 
 static void
-kinst_trampoline_dealloc_locked(uint8_t *tramp)
+kinst_trampoline_dealloc_locked(uint8_t *tramp, bool freechunks)
 {
 	struct trampchunk *chunk;
 	int off;
@@ -199,7 +198,8 @@ kinst_trampoline_dealloc_locked(uint8_t *tramp)
 				    KINST_TRAMP_SIZE);
 				BIT_SET(KINST_TRAMPS_PER_CHUNK, off,
 				    &chunk->free);
-				if (BIT_ISFULLSET(KINST_TRAMPS_PER_CHUNK,
+				if (freechunks &&
+				    BIT_ISFULLSET(KINST_TRAMPS_PER_CHUNK,
 				    &chunk->free))
 					kinst_trampchunk_free(chunk);
 				return;
@@ -213,7 +213,7 @@ void
 kinst_trampoline_dealloc(uint8_t *tramp)
 {
 	sx_xlock(&kinst_tramp_sx);
-	kinst_trampoline_dealloc_locked(tramp);
+	kinst_trampoline_dealloc_locked(tramp, true);
 	sx_xunlock(&kinst_tramp_sx);
 }
 
@@ -228,10 +228,8 @@ kinst_thread_dtor(void *arg __unused, struct thread *td)
 {
 	void *tramp;
 
-	thread_lock(td);
 	tramp = td->td_kinst;
 	td->td_kinst = NULL;
-	thread_unlock(td);
 
 	/*
 	 * This assumes that the thread_dtor event permits sleeping, which
@@ -246,18 +244,16 @@ kinst_trampoline_init(void)
 	struct proc *p;
 	struct thread *td;
 	void *tramp;
+	int error;
 
 	kinst_vmobj = vm_pager_allocate(OBJT_PHYS, NULL, KINST_VMOBJ_SIZE,
 	    VM_PROT_ALL, 0, NULL);
-	if (kinst_vmobj == NULL) {
-		KINST_LOG("cannot allocate vm_object");
-		return (1);
-	}
 	kinst_thread_ctor_handler = EVENTHANDLER_REGISTER(thread_ctor,
 	    kinst_thread_ctor, NULL, EVENTHANDLER_PRI_ANY);
 	kinst_thread_dtor_handler = EVENTHANDLER_REGISTER(thread_dtor,
 	    kinst_thread_dtor, NULL, EVENTHANDLER_PRI_ANY);
 
+	error = 0;
 	tramp = NULL;
 
 	sx_slock(&allproc_lock);
@@ -274,24 +270,32 @@ retry:
 					PROC_UNLOCK(p);
 					tramp = kinst_trampoline_alloc_locked(
 					    M_WAITOK);
-					goto retry;
+					if (tramp == NULL) {
+						/*
+						 * Let the unload handler clean
+						 * up.
+						 */
+						error = ENOMEM;
+						goto out;
+					} else
+						goto retry;
 				}
 			}
-			thread_lock(td);
 			td->td_kinst = tramp;
-			thread_unlock(td);
 			tramp = NULL;
 		}
 		PROC_UNLOCK(p);
 	}
+out:
 	sx_xunlock(&kinst_tramp_sx);
 	sx_sunlock(&allproc_lock);
-	return (0);
+	return (error);
 }
 
 int
 kinst_trampoline_deinit(void)
 {
+	struct trampchunk *chunk, *tmp;
 	struct proc *p;
 	struct thread *td;
 
@@ -303,17 +307,17 @@ kinst_trampoline_deinit(void)
 	FOREACH_PROC_IN_SYSTEM(p) {
 		PROC_LOCK(p);
 		FOREACH_THREAD_IN_PROC(p, td) {
-			/* XXX-MJ LOR with vm_map */
-			kinst_trampoline_dealloc_locked(td->td_kinst);
+			kinst_trampoline_dealloc_locked(td->td_kinst, false);
 			td->td_kinst = NULL;
 		}
 		PROC_UNLOCK(p);
 	}
-	sx_xunlock(&kinst_tramp_sx);
 	sx_sunlock(&allproc_lock);
+	TAILQ_FOREACH_SAFE(chunk, &kinst_trampchunks, next, tmp)
+		kinst_trampchunk_free(chunk);
+	sx_xunlock(&kinst_tramp_sx);
 
-	KASSERT(TAILQ_EMPTY(&kinst_trampchunks),
-	    ("%s: leaked trampoline chunks", __func__));
 	vm_object_deallocate(kinst_vmobj);
+
 	return (0);
 }
