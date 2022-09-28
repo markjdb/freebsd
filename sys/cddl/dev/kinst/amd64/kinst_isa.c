@@ -493,7 +493,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	pd = opaque;
 	func = symval->name;
-	if (strcmp(func, pd->func) != 0 || strcmp(func, "trap_check") == 0)
+	if (strcmp(func, pd->kpd_func) != 0 || strcmp(func, "trap_check") == 0)
 		return (0);
 
 	instr = (uint8_t *)symval->value;
@@ -512,13 +512,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	n = 0;
 	while (instr < limit) {
 		off = (int)(instr - (uint8_t *)symval->value);
-		/*
-		 * In libdtrace we set pd->off to -1 in case the probe name is
-		 * a wildcard. To reduce overhead, we want to create probes for
-		 * all instructions at once, instead of going through the ioctl
-		 * for each new probe.
-		 */
-		if (pd->off != off && pd->off != -1) {
+		if (pd->kpd_off != -1 && off != pd->kpd_off) {
 			instr += dtrace_instr_size(instr);
 			continue;
 		}
@@ -536,7 +530,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			KINST_LOG("probe list full: %d entries", n);
 			return (ENOMEM);
 		}
-		kp = malloc(sizeof(struct kinst_probe), M_KINST, M_WAITOK | M_ZERO);
+		kp = malloc(sizeof(struct kinst_probe), M_KINST,
+		    M_WAITOK | M_ZERO);
 		kp->kp_func = func;
 		snprintf(kp->kp_name, sizeof(kp->kp_name), "%d", off);
 		kp->kp_savedval = *instr;

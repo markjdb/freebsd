@@ -95,7 +95,7 @@ kinst_linker_file_cb(linker_file_t lf, void *arg)
 	dtrace_kinst_probedesc_t *pd;
 
 	pd = arg;
-	if (pd->mod[0] != '\0' && strcmp(pd->mod, lf->filename) != 0)
+	if (pd->kpd_mod[0] != '\0' && strcmp(pd->kpd_mod, lf->filename) != 0)
 		return (0);
 
 	/*
@@ -115,8 +115,8 @@ kinst_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t addr,
 	switch (cmd) {
 	case KINSTIOC_MAKEPROBE:
 		pd = (dtrace_kinst_probedesc_t *)addr;
-		pd->func[sizeof(pd->func) - 1] = '\0';
-		pd->mod[sizeof(pd->mod) - 1] = '\0';
+		pd->kpd_func[sizeof(pd->kpd_func) - 1] = '\0';
+		pd->kpd_mod[sizeof(pd->kpd_mod) - 1] = '\0';
 
 		/* Loop over all functions in the kernel and loaded modules. */
 		error = linker_file_foreach(kinst_linker_file_cb, pd);

@@ -10,10 +10,11 @@
 #include <sys/dtrace.h>
 
 typedef struct {
-	char	func[DTRACE_FUNCNAMELEN];
-	char	mod[DTRACE_MODNAMELEN];
-	int	off;
+	char	kpd_func[DTRACE_FUNCNAMELEN];
+	char	kpd_mod[DTRACE_MODNAMELEN];
+	int	kpd_off;
 } dtrace_kinst_probedesc_t;
+
 #define KINSTIOC_MAKEPROBE	_IOW('k', 1, dtrace_kinst_probedesc_t)
 
 #ifdef _KERNEL
