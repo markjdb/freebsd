@@ -314,18 +314,6 @@ static int t4_rsrv_noflowq = 0;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, rsrv_noflowq, CTLFLAG_RDTUN, &t4_rsrv_noflowq,
     0, "Reserve TX queue 0 of each VI for non-flowid packets");
 
-static int t4_clocksync_fast = 1;
-SYSCTL_INT(_hw_cxgbe, OID_AUTO, csfast, CTLFLAG_RW | CTLFLAG_MPSAFE, &t4_clocksync_fast, 0,
-    "During initial clock sync how fast do we update in seconds");
-
-static int t4_clocksync_normal = 30;
-SYSCTL_INT(_hw_cxgbe, OID_AUTO, csnormal, CTLFLAG_RW | CTLFLAG_MPSAFE, &t4_clocksync_normal, 0,
-    "During normal clock sync how fast do we update in seconds");
-
-static int t4_fast_2_normal = 30;
-SYSCTL_INT(_hw_cxgbe, OID_AUTO, cscount, CTLFLAG_RW | CTLFLAG_MPSAFE, &t4_fast_2_normal, 0,
-    "How many clock syncs do we need to do to transition to slow");
-
 #if defined(TCP_OFFLOAD) || defined(RATELIMIT)
 #define NOFLDTXQ 8
 static int t4_nofldtxq = -NOFLDTXQ;
@@ -1121,59 +1109,50 @@ t4_ifnet_unit(struct adapter *sc, struct port_info *pi)
 	return (-1);
 }
 
-static inline uint64_t
-t4_get_ns_timestamp(struct timespec *ts)
-{
-	return ((ts->tv_sec * 1000000000) + ts->tv_nsec);
-}
-
 static void
 t4_calibration(void *arg)
 {
 	struct adapter *sc;
-	struct timespec ts;
 	struct clock_sync *cur, *nex;
+	uint64_t hw;
+	sbintime_t sbt;
 	int next_up;
 
 	sc = (struct adapter *)arg;
+
+	KASSERT((hw_off_limits(sc) == 0), ("hw_off_limits at t4_calibration"));
+	hw = t4_read_reg64(sc, A_SGE_TIMESTAMP_LO);
+	sbt = sbinuptime();
 
 	cur = &sc->cal_info[sc->cal_current];
 	next_up = (sc->cal_current + 1) % CNT_CAL_INFO;
        	nex = &sc->cal_info[next_up];
 	if (__predict_false(sc->cal_count == 0)) {
 		/* First time in, just get the values in */
-		cur->hw_cur = t4_read_reg64(sc, A_SGE_TIMESTAMP_LO);
-		nanouptime(&ts);
-		cur->rt_cur = t4_get_ns_timestamp(&ts);
+		cur->hw_cur = hw;
+		cur->sbt_cur = sbt;
 		sc->cal_count++;
 		goto done;
 	}
-	nex->hw_prev = cur->hw_cur;
-	nex->rt_prev = cur->rt_cur;
-	KASSERT((hw_off_limits(sc) == 0), ("hw_off_limits at t4_calibtration"));
-	nex->hw_cur = t4_read_reg64(sc, A_SGE_TIMESTAMP_LO);
-	nanouptime(&ts);	
-	nex->rt_cur = t4_get_ns_timestamp(&ts);
-	if ((nex->hw_cur - nex->hw_prev) == 0) {
+
+	if (cur->hw_cur == hw) {
 		/* The clock is not advancing? */
 		sc->cal_count = 0;
 		atomic_store_rel_int(&cur->gen, 0);
 		goto done;
 	}
-	atomic_store_rel_int(&cur->gen, 0);
+
+	seqc_write_begin(&nex->gen);
+	nex->hw_prev = cur->hw_cur;
+	nex->sbt_prev = cur->sbt_cur;
+	nex->hw_cur = hw;
+	nex->sbt_cur = sbt;
+	seqc_write_end(&nex->gen);
 	sc->cal_current = next_up;
-	sc->cal_gen++;
-	atomic_store_rel_int(&nex->gen, sc->cal_gen);
-	if (sc->cal_count < t4_fast_2_normal)
-		sc->cal_count++;
 done:
-	callout_reset_sbt_curcpu(&sc->cal_callout,
-				 ((sc->cal_count < t4_fast_2_normal)  ?
-				 t4_clocksync_fast : t4_clocksync_normal) * SBT_1S, 0,
-				 t4_calibration, sc, C_DIRECT_EXEC);
+	callout_reset_sbt_curcpu(&sc->cal_callout, SBT_1S, 0, t4_calibration,
+	    sc, C_DIRECT_EXEC);
 }
-
-
 
 static void
 t4_calibration_start(struct adapter *sc)

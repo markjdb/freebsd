@@ -41,6 +41,7 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/rwlock.h>
+#include <sys/seqc.h>
 #include <sys/sx.h>
 #include <sys/vmem.h>
 #include <vm/uma.h>
@@ -869,9 +870,9 @@ struct clip_entry;
 struct clock_sync {
 	uint64_t hw_cur;
 	uint64_t hw_prev;
-	uint64_t rt_cur;
-	uint64_t rt_prev;
-	uint32_t gen;
+	sbintime_t sbt_cur;
+	sbintime_t sbt_prev;
+	seqc_t gen;
 };
 
 struct adapter {

@@ -375,6 +375,7 @@ struct tcp_function_block {
 	void	(*tfb_tcp_mtu_chg)(struct tcpcb *);
 	int	(*tfb_pru_options)(struct tcpcb *, int);
 	void	(*tfb_hwtls_change)(struct tcpcb *, int);
+	int     (*tfb_compute_pipe)(struct tcpcb *tp);
 	volatile uint32_t tfb_refcnt;
 	uint32_t  tfb_flags;
 	uint8_t	tfb_id;
@@ -707,6 +708,7 @@ struct	tcpstat {
 	uint64_t tcps_keeptimeo;	/* keepalive timeouts */
 	uint64_t tcps_keepprobe;	/* keepalive probes sent */
 	uint64_t tcps_keepdrops;	/* connections dropped in keepalive */
+	uint64_t tcps_progdrops;	/* drops due to no progress */
 
 	uint64_t tcps_sndtotal;		/* total packets sent */
 	uint64_t tcps_sndpack;		/* data packets sent */
