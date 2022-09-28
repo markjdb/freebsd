@@ -21,8 +21,6 @@
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_object.h>
-#include <vm/vm_page.h>
-#include <vm/vm_pager.h>
 
 #include "kinst.h"
 #include "kinst_isa.h"
@@ -44,7 +42,6 @@ struct trampchunk {
 	BITSET_DEFINE(, KINST_TRAMPS_PER_CHUNK) free;
 };
 
-static vm_object_t		kinst_vmobj;
 static TAILQ_HEAD(, trampchunk)	kinst_trampchunks =
     TAILQ_HEAD_INITIALIZER(kinst_trampchunks);
 static struct sx		kinst_tramp_sx;
@@ -55,14 +52,11 @@ static eventhandler_tag		kinst_thread_dtor_handler;
 static struct trampchunk *
 kinst_trampchunk_alloc(void)
 {
-	static int objoff = 0;
 	struct trampchunk *chunk;
 	vm_offset_t trampaddr;
-	int error, off;
+	int error;
 
 	sx_assert(&kinst_tramp_sx, SX_XLOCKED);
-
-	vm_object_reference(kinst_vmobj);
 
 	/*
 	 * Allocate virtual memory for the trampoline chunk. The returned
@@ -72,25 +66,16 @@ kinst_trampchunk_alloc(void)
 	 * address above KERNBASE, so this satisfies both requirements.
 	 */
 	trampaddr = KERNBASE;
-	off = objoff;
-	objoff += KINST_TRAMPCHUNK_SIZE;
-	error = vm_map_find(kernel_map, kinst_vmobj, off, &trampaddr,
+	error = vm_map_find(kernel_map, NULL, 0, &trampaddr,
 	    KINST_TRAMPCHUNK_SIZE, 0, VMFS_ANY_SPACE, VM_PROT_ALL, VM_PROT_ALL,
 	    0);
 	if (error != KERN_SUCCESS) {
-		kinst_vmobj = NULL;
 		KINST_LOG("trampoline chunk allocation failed: %d", error);
 		return (NULL);
 	}
 
-	/*
-	 * We allocated a page of virtual memory, but that needs to be
-	 * backed by physical memory, or else any access will result in
-	 * a page fault.
-	 */
-	error = vm_map_wire(kernel_map, trampaddr,
-	    trampaddr + KINST_TRAMPCHUNK_SIZE,
-	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
+	error = kmem_back(kernel_object, trampaddr, KINST_TRAMPCHUNK_SIZE,
+	    M_WAITOK | M_EXEC);
 	if (error != KERN_SUCCESS) {
 		KINST_LOG("trampoline chunk wiring failed: %d", error);
 		(void)vm_map_remove(kernel_map, trampaddr,
@@ -116,6 +101,8 @@ kinst_trampchunk_free(struct trampchunk *chunk)
 	sx_assert(&kinst_tramp_sx, SX_XLOCKED);
 
 	TAILQ_REMOVE(&kinst_trampchunks, chunk, next);
+	kmem_unback(kernel_object, (vm_offset_t)chunk->addr,
+	    KINST_TRAMPCHUNK_SIZE);
 	(void)vm_map_remove(kernel_map, (vm_offset_t)chunk->addr,
 	    (vm_offset_t)(chunk->addr + KINST_TRAMPCHUNK_SIZE));
 	free(chunk, M_KINST);
@@ -230,8 +217,6 @@ kinst_trampoline_init(void)
 	void *tramp;
 	int error;
 
-	kinst_vmobj = vm_pager_allocate(OBJT_PHYS, NULL, KINST_VMOBJ_SIZE,
-	    VM_PROT_ALL, 0, NULL);
 	kinst_thread_ctor_handler = EVENTHANDLER_REGISTER(thread_ctor,
 	    kinst_thread_ctor, NULL, EVENTHANDLER_PRI_ANY);
 	kinst_thread_dtor_handler = EVENTHANDLER_REGISTER(thread_dtor,
@@ -300,8 +285,6 @@ kinst_trampoline_deinit(void)
 	TAILQ_FOREACH_SAFE(chunk, &kinst_trampchunks, next, tmp)
 		kinst_trampchunk_free(chunk);
 	sx_xunlock(&kinst_tramp_sx);
-
-	vm_object_deallocate(kinst_vmobj);
 
 	return (0);
 }

@@ -8,6 +8,8 @@
 #ifndef _KINST_ISA_H_
 #define _KINST_ISA_H_
 
+#include <sys/types.h>
+
 #define KINST_PATCHVAL		0xcc
 
 /*
