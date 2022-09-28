@@ -85,7 +85,7 @@ kinst_regval(struct trapframe *frame, int reg)
 static uint32_t
 kinst_riprel_disp(struct kinst_probe *kp, void *dst)
 {
-	return ((uint32_t)((intptr_t)kp->kp_patchpoint + kp->kp_disp -
+	return ((uint32_t)((intptr_t)kp->kp_patchpoint + kp->kp_md.disp -
 	    (intptr_t)dst));
 }
 
@@ -96,12 +96,12 @@ kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
 	uint32_t disp;
 	int ilen;
 
-	ilen = kp->kp_tinstlen;
+	ilen = kp->kp_md.tinstlen;
 
-	memcpy(tramp, kp->kp_template, ilen);
-	if ((kp->kp_flags & KINST_F_RIPREL) != 0) {
+	memcpy(tramp, kp->kp_md.template, ilen);
+	if ((kp->kp_md.flags & KINST_F_RIPREL) != 0) {
 		disp = kinst_riprel_disp(kp, tramp);
-		memcpy(&tramp[kp->kp_dispoff], &disp, sizeof(uint32_t));
+		memcpy(&tramp[kp->kp_md.dispoff], &disp, sizeof(uint32_t));
 	}
 
 	/*
@@ -116,7 +116,7 @@ kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
 	tramp[ilen + 3] = 0x00;
 	tramp[ilen + 4] = 0x00;
 	tramp[ilen + 5] = 0x00;
-	instr = kp->kp_patchpoint + kp->kp_instlen;
+	instr = kp->kp_patchpoint + kp->kp_md.instlen;
 	memcpy(&tramp[ilen + 6], &instr, sizeof(uintptr_t));
 }
 
@@ -126,77 +126,78 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	solaris_cpu_t *cpu;
 	uintptr_t *stack, retaddr;
 	struct kinst_probe *kp;
+	struct kinst_probe_md *kpmd;
 	uint8_t *tramp;
 
 	stack = (uintptr_t *)frame->tf_rsp;
 	cpu = &solaris_cpu[curcpu];
 
 	LIST_FOREACH(kp, KINST_GETPROBE(addr), kp_hashnext) {
-		if ((uintptr_t)kp->kp_patchpoint != addr)
-			return (0);
-
-		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		cpu->cpu_dtrace_caller = stack[0];
-		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
-		dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
-		cpu->cpu_dtrace_caller = 0;
-
-		if ((kp->kp_flags & KINST_F_CALL) != 0) {
-			/*
-			 * dtrace_invop_start() reserves space on the stack to
-			 * store the return address of the call instruction.
-			 */
-			retaddr =
-			    (uintptr_t)(kp->kp_patchpoint + kp->kp_instlen);
-			*(uintptr_t *)scratch = retaddr;
-
-			if ((kp->kp_flags & KINST_F_DIRECT_CALL) != 0) {
-				frame->tf_rip = (uintptr_t)(kp->kp_patchpoint +
-				    kp->kp_disp + kp->kp_instlen);
-			} else {
-				register_t rval;
-
-				if (kp->kp_reg1 == -1 && kp->kp_reg2 == -1) {
-					/* rip-relative */
-					rval = frame->tf_rip - 1 +
-					    kp->kp_instlen;
-				} else {
-					/* indirect */
-					rval =
-					    kinst_regval(frame, kp->kp_reg1) +
-					    (kinst_regval(frame, kp->kp_reg2) <<
-					    kp->kp_scale);
-				}
-
-				if ((kp->kp_flags & KINST_F_MOD_DIRECT) != 0) {
-					frame->tf_rip = rval + kp->kp_disp;
-				} else {
-					frame->tf_rip =
-					    *(uintptr_t *)(rval + kp->kp_disp);
-				}
-			}
-			return (DTRACE_INVOP_CALL);
-		} else {
-			tramp = curthread->td_kinst;
-			if (tramp == NULL) {
-				/*
-				 * A trampoline allocation failed, so this probe
-				 * is effectively disabled.  We can't safely
-				 * print anything here, but the trampoline
-				 * allocator should have left a breadcrumb in
-				 * the dmesg.
-				 */
-				kinst_patch_tracepoint(kp, kp->kp_savedval);
-				frame->tf_rip = (register_t)kp->kp_patchpoint;
-			} else {
-				kinst_trampoline_populate(kp, tramp);
-				frame->tf_rip = (register_t)tramp;
-			}
-			return (DTRACE_INVOP_NOP);
-		}
+		if ((uintptr_t)kp->kp_patchpoint == addr)
+			break;
 	}
+	if (kp == NULL)
+		return (0);
 
-	return (0);
+	DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+	cpu->cpu_dtrace_caller = stack[0];
+	DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT | CPU_DTRACE_BADADDR);
+	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
+	cpu->cpu_dtrace_caller = 0;
+
+	kpmd = &kp->kp_md;
+	if ((kpmd->flags & KINST_F_CALL) != 0) {
+		/*
+		 * dtrace_invop_start() reserves space on the stack to
+		 * store the return address of the call instruction.
+		 */
+		retaddr = (uintptr_t)(kp->kp_patchpoint + kpmd->instlen);
+		*(uintptr_t *)scratch = retaddr;
+
+		if ((kpmd->flags & KINST_F_DIRECT_CALL) != 0) {
+			frame->tf_rip = (uintptr_t)(kp->kp_patchpoint +
+			    kpmd->disp + kpmd->instlen);
+		} else {
+			register_t rval;
+
+			if (kpmd->reg1 == -1 && kpmd->reg2 == -1) {
+				/* rip-relative */
+				rval = frame->tf_rip - 1 + kpmd->instlen;
+			} else {
+				/* indirect */
+				rval = kinst_regval(frame, kpmd->reg1) +
+				    (kinst_regval(frame, kpmd->reg2) <<
+				    kpmd->scale);
+			}
+
+			if ((kpmd->flags & KINST_F_MOD_DIRECT) != 0) {
+				frame->tf_rip = rval + kpmd->disp;
+			} else {
+				frame->tf_rip =
+				    *(uintptr_t *)(rval + kpmd->disp);
+			}
+		}
+		return (DTRACE_INVOP_CALL);
+	} else {
+		tramp = curthread->td_kinst;
+		if (tramp == NULL) {
+			/*
+			 * A trampoline allocation failed, so this probe is
+			 * effectively disabled.  Restore the original
+			 * instruction.
+			 *
+			 * We can't safely print anything here, but the
+			 * trampoline allocator should have left a breadcrumb in
+			 * the dmesg.
+			 */
+			kinst_patch_tracepoint(kp, kp->kp_savedval);
+			frame->tf_rip = (register_t)kp->kp_patchpoint;
+		} else {
+			kinst_trampoline_populate(kp, tramp);
+			frame->tf_rip = (register_t)tramp;
+		}
+		return (DTRACE_INVOP_NOP);
+	}
 }
 
 void
@@ -215,7 +216,7 @@ kinst_patch_tracepoint(struct kinst_probe *kp, kinst_patchval_t val)
 static void
 kinst_set_disp8(struct kinst_probe *kp, uint8_t byte)
 {
-	kp->kp_disp = (int64_t)(int8_t)byte;
+	kp->kp_md.disp = (int64_t)(int8_t)byte;
 }
 
 static void
@@ -224,7 +225,7 @@ kinst_set_disp32(struct kinst_probe *kp, uint8_t *bytes)
 	int32_t disp32;
 
 	memcpy(&disp32, bytes, sizeof(disp32));
-	kp->kp_disp = (int64_t)disp32;
+	kp->kp_md.disp = (int64_t)disp32;
 }
 
 static int
@@ -242,10 +243,8 @@ kinst_dis_get_byte(void *p)
 /*
  * Set up all of the state needed to faithfully execute a probed instruction.
  *
- * XXX-MJ out of date now
- * In the simple case, we copy the instruction unmodified to a per-probe
+ * In the simple case, we copy the instruction unmodified to a per-thread
  * trampoline, wherein it is followed by a jump back to the original code.
- * There are some wrinkles to handle:
  * - Instructions can have %rip as an operand:
  *   - with %rip-relative addressing encoded in ModR/M, or
  *   - implicitly as a part of the instruction definition (jmp, call).
@@ -269,9 +268,12 @@ kinst_dis_get_byte(void *p)
 static int
 kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 {
+	struct kinst_probe_md *kpmd;
 	dis86_t d86;
 	uint8_t *bytes, modrm, rex;
 	int dispoff, i, ilen, opcidx;
+
+	kpmd = &kp->kp_md;
 
 	d86.d86_data = &instr;
 	d86.d86_get_byte = kinst_dis_get_byte;
@@ -281,13 +283,13 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		return (EINVAL);
 	}
 	bytes = d86.d86_bytes;
-	kp->kp_instlen = kp->kp_tinstlen = d86.d86_len;
+	kpmd->instlen = kpmd->tinstlen = d86.d86_len;
 
 	/*
 	 * Skip over prefixes, save REX.
 	 */
 	rex = 0;
-	for (i = 0; i < kp->kp_instlen; i++) {
+	for (i = 0; i < kpmd->instlen; i++) {
 		switch (bytes[i]) {
 		case 0xf0 ... 0xf3:
 			/* group 1 */
@@ -313,7 +315,7 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		}
 		break;
 	}
-	KASSERT(i < kp->kp_instlen,
+	KASSERT(i < kpmd->instlen,
 	    ("%s: failed to disassemble instruction at %p", __func__, bytes));
 	opcidx = i;
 
@@ -327,7 +329,7 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		switch (bytes[opcidx + 1]) {
 		case 0x80 ... 0x8f:
 			/* conditional jmp near */
-			kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
+			kpmd->flags |= KINST_F_JMP | KINST_F_RIPREL;
 			dispoff = opcidx + 2;
 			kinst_set_disp32(kp, &bytes[dispoff]);
 			break;
@@ -342,26 +344,26 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		return (EINVAL);
 	case 0x70 ... 0x7f:
 		/* conditional jmp short */
-		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
+		kpmd->flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp8(kp, bytes[dispoff]);
 		break;
 	case 0xe9:
 		/* unconditional jmp near */
-		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
+		kpmd->flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp32(kp, &bytes[dispoff]);
 		break;
 	case 0xeb:
 		/* unconditional jmp short */
-		kp->kp_flags |= KINST_F_JMP | KINST_F_RIPREL;
+		kpmd->flags |= KINST_F_JMP | KINST_F_RIPREL;
 		dispoff = opcidx + 1;
 		kinst_set_disp8(kp, bytes[dispoff]);
 		break;
 	case 0xe8:
 	case 0x9a:
 		/* direct call */
-		kp->kp_flags |= KINST_F_CALL | KINST_F_DIRECT_CALL;
+		kpmd->flags |= KINST_F_CALL | KINST_F_DIRECT_CALL;
 		dispoff = opcidx + 1;
 		kinst_set_disp32(kp, &bytes[dispoff]);
 		break;
@@ -371,12 +373,12 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 		case 0x02:
 		case 0x03:
 			/* indirect call */
-			kp->kp_flags |= KINST_F_CALL;
+			kpmd->flags |= KINST_F_CALL;
 			break;
 		case 0x04:
 		case 0x05:
 			/* indirect jump */
-			kp->kp_flags |= KINST_F_JMP;
+			kpmd->flags |= KINST_F_JMP;
 			break;
 		}
 	}
@@ -390,16 +392,16 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 	if (d86.d86_got_modrm) {
 		uint8_t mod, rm, sib;
 
-		kp->kp_reg1 = kp->kp_reg2 = -1;
+		kpmd->reg1 = kpmd->reg2 = -1;
 
 		modrm = bytes[d86.d86_rmindex];
 		mod = KINST_MODRM_MOD(modrm);
 		rm = KINST_MODRM_RM(modrm);
 		if (mod == 0 && rm == 5) {
-			kp->kp_flags |= KINST_F_RIPREL;
+			kpmd->flags |= KINST_F_RIPREL;
 			dispoff = d86.d86_rmindex + 1;
 			kinst_set_disp32(kp, &bytes[dispoff]);
-		} else if ((kp->kp_flags & KINST_F_CALL) != 0) {
+		} else if ((kpmd->flags & KINST_F_CALL) != 0) {
 			bool havesib;
 
 			havesib = (mod != 3 && rm == 4);
@@ -409,24 +411,28 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 			else if (mod == 2)
 				kinst_set_disp32(kp, &bytes[dispoff]);
 			else if (mod == 3)
-				kp->kp_flags |= KINST_F_MOD_DIRECT;
+				kpmd->flags |= KINST_F_MOD_DIRECT;
 
 			if (havesib) {
 				sib = bytes[d86.d86_rmindex + 1];
 				if (KINST_SIB_BASE(sib) != 5) {
-					kp->kp_reg1 = KINST_SIB_BASE(sib) |
+					kpmd->reg1 = KINST_SIB_BASE(sib) |
 					    (KINST_REX_B(rex) << 3);
 				}
-				kp->kp_scale = KINST_SIB_SCALE(sib);
-				kp->kp_reg2 = KINST_SIB_INDEX(sib) |
+				kpmd->scale = KINST_SIB_SCALE(sib);
+				kpmd->reg2 = KINST_SIB_INDEX(sib) |
 				    (KINST_REX_X(rex) << 3);
 			} else {
-				kp->kp_reg1 = rm | (KINST_REX_B(rex) << 3);
+				kpmd->reg1 = rm | (KINST_REX_B(rex) << 3);
 			}
 		}
 	}
 
-	if ((kp->kp_flags & KINST_F_CALL) != 0)
+	/*
+	 * Calls are emulated in software; once operands are decoded we have
+	 * nothing else to do.
+	 */
+	if ((kpmd->flags & KINST_F_CALL) != 0)
 		return (0);
 
 	/*
@@ -438,38 +444,38 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr)
 	 * 32-bit displacement, and the adjust displacement needs to be
 	 * computed.
 	 */
-	ilen = kp->kp_instlen;
-	if ((kp->kp_flags & KINST_F_RIPREL) != 0) {
-		if ((kp->kp_flags & KINST_F_JMP) == 0 ||
+	ilen = kpmd->instlen;
+	if ((kpmd->flags & KINST_F_RIPREL) != 0) {
+		if ((kpmd->flags & KINST_F_JMP) == 0 ||
 		    bytes[opcidx] == 0x0f ||
 		    bytes[opcidx] == 0xe9 ||
 		    bytes[opcidx] == 0xff) {
-			memcpy(kp->kp_template, bytes, dispoff);
-			memcpy(&kp->kp_template[dispoff + 4],
+			memcpy(kpmd->template, bytes, dispoff);
+			memcpy(&kpmd->template[dispoff + 4],
 			    &bytes[dispoff + 4], ilen - (dispoff + 4));
-			kp->kp_dispoff = dispoff;
+			kpmd->dispoff = dispoff;
 		} else if (bytes[opcidx] == 0xeb) {
-			memcpy(kp->kp_template, bytes, opcidx);
-			kp->kp_template[opcidx] = 0xe9;
-			kp->kp_dispoff = opcidx + 1;
+			memcpy(kpmd->template, bytes, opcidx);
+			kpmd->template[opcidx] = 0xe9;
+			kpmd->dispoff = opcidx + 1;
 
 			/* Instruction length changes from 2 to 5. */
-			kp->kp_tinstlen = 5;
-			kp->kp_disp -= 3;
+			kpmd->tinstlen = 5;
+			kpmd->disp -= 3;
 		} else if (bytes[opcidx] >= 0x70 && bytes[opcidx] <= 0x7f)  {
-			memcpy(kp->kp_template, bytes, opcidx);
-			kp->kp_template[opcidx] = 0x0f;
-			kp->kp_template[opcidx + 1] = bytes[opcidx] + 0x10;
-			kp->kp_dispoff = opcidx + 2;
+			memcpy(kpmd->template, bytes, opcidx);
+			kpmd->template[opcidx] = 0x0f;
+			kpmd->template[opcidx + 1] = bytes[opcidx] + 0x10;
+			kpmd->dispoff = opcidx + 2;
 
 			/* Instruction length changes from 2 to 6. */
-			kp->kp_tinstlen = 6;
-			kp->kp_disp -= 4;
+			kpmd->tinstlen = 6;
+			kpmd->disp -= 4;
 		} else {
 			panic("unhandled opcode %#x", bytes[opcidx]);
 		}
 	} else {
-		memcpy(kp->kp_template, bytes, ilen);
+		memcpy(kpmd->template, bytes, ilen);
 	}
 
 	return (0);
@@ -492,7 +498,6 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	instr = (uint8_t *)symval->value;
 	limit = (uint8_t *)symval->value + symval->size;
-
 	if (instr >= limit)
 		return (0);
 
@@ -512,18 +517,12 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		 * a wildcard. To reduce overhead, we want to create probes for
 		 * all instructions at once, instead of going through the ioctl
 		 * for each new probe.
-		 *
-		 * We also want to ignore the sti and popf instructions,
-		 * otherwise we cannot use dtrace_sync() to create barriers.
-		 * Those instructions can break the atomicity of the trampoline
-		 * mechanism in case a thread is interrupted while it's
-		 * executing the trampoline.
 		 */
-		if ((pd->off != off && pd->off != -1) ||
-		    *instr == KINST_STI || *instr == KINST_POPF) {
+		if (pd->off != off && pd->off != -1) {
 			instr += dtrace_instr_size(instr);
 			continue;
 		}
+
 		/*
 		 * Prevent separate dtrace(1) instances from creating copies of
 		 * the same probe.
@@ -547,7 +546,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		error = kinst_instr_dissect(kp, instr);
 		if (error != 0)
 			return (error);
-		instr += kp->kp_instlen;
+		instr += kp->kp_md.instlen;
 
 		kinst_probe_create(kp, lf);
 	}

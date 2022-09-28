@@ -28,15 +28,6 @@
 #include "kinst_isa.h"
 
 /*
- * Each trampoline is 32 bytes long and contains [instruction, jmp]. Since we
- * have 2 instructions stored in the trampoline, and each of them can take up
- * to 16 bytes, 32 bytes is enough to cover even the worst case scenario.
- *
- * XXX-MJ this is amd64-specific
- */
-#define KINST_TRAMP_SIZE	32
-#define KINST_TRAMPCHUNK_SIZE	PAGE_SIZE
-/*
  * We can have 4KB/32B = 128 trampolines per chunk.
  */
 #define KINST_TRAMPS_PER_CHUNK	(KINST_TRAMPCHUNK_SIZE / KINST_TRAMP_SIZE)
@@ -107,13 +98,7 @@ kinst_trampchunk_alloc(void)
 		return (NULL);
 	}
 
-	/*
-	 * Fill the trampolines with breakpoint instructions so that the kernel
-	 * will crash cleanly if things somehow go wrong.
-	 *
-	 * XXX-MJ assumes patchval is one byte, not true on !amd64
-	 */
-	memset((void *)trampaddr, KINST_PATCHVAL, KINST_TRAMPCHUNK_SIZE);
+	KINST_TRAMP_INIT((void *)trampaddr, KINST_TRAMPCHUNK_SIZE);
 
 	/* Allocate a tracker for this chunk. */
 	chunk = malloc(sizeof(*chunk), M_KINST, M_WAITOK);
@@ -194,8 +179,7 @@ kinst_trampoline_dealloc_locked(uint8_t *tramp, bool freechunks)
 	TAILQ_FOREACH(chunk, &kinst_trampchunks, next) {
 		for (off = 0; off < KINST_TRAMPS_PER_CHUNK; off++) {
 			if (chunk->addr + off * KINST_TRAMP_SIZE == tramp) {
-				memset((void *)tramp, KINST_PATCHVAL,
-				    KINST_TRAMP_SIZE);
+				KINST_TRAMP_INIT(tramp, KINST_TRAMP_SIZE);
 				BIT_SET(KINST_TRAMPS_PER_CHUNK, off,
 				    &chunk->free);
 				if (freechunks &&

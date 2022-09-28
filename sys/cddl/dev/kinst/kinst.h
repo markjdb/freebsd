@@ -31,20 +31,7 @@ struct kinst_probe {
 	kinst_patchval_t	kp_savedval;
 	kinst_patchval_t	*kp_patchpoint;
 
-	/* XXX-MJ make a md struct for this */
-#ifdef __amd64__
-	int			kp_flags;
-	int			kp_instlen;	/* original instr len */
-	int			kp_tinstlen;	/* trampoline instr len */
-	int			kp_dispoff;
-	uint8_t			kp_template[16];
-
-	/* operands to "call" instruction branch target */
-	int			kp_reg1;
-	int			kp_reg2;
-	int			kp_scale;
-	int64_t			kp_disp;
-#endif /* __amd64__ */
+	struct kinst_probe_md	kp_md;
 };
 
 LIST_HEAD(kinst_probe_list, kinst_probe);
