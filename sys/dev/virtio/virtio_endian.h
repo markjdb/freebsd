@@ -46,6 +46,7 @@ static inline bool
 virtio_swap_endian(bool modern)
 {
 #if _BYTE_ORDER == _LITTLE_ENDIAN
+	(void)modern;
 	return (false);
 #else
 	return (modern);
