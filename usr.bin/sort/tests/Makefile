@@ -1,6 +1,7 @@
 
 PACKAGE=	tests
 
+ATF_TESTS_SH=	sort_local_test
 NETBSD_ATF_TESTS_SH=	sort_test
 
 ${PACKAGE}FILES+=		d_any_char_dflag_out.txt
