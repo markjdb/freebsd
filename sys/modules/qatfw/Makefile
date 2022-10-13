@@ -3,6 +3,7 @@
 # $FreeBSD$
 SUBDIR=	qat_c62x \
 	qat_200xx \
+	qat_c2xxx \
 	qat_c3xxx \
 	qat_c4xxx \
 	qat_dh895xcc

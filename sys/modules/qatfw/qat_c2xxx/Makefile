@@ -1,6 +1,6 @@
 # $FreeBSD$
 
-.PATH: ${SRCTOP}/sys/contrib/dev/qat_c2xxx
+.PATH: ${SRCTOP}/sys/contrib/dev/qat
 
 KMOD=	qat_c2xxxfw
 IMG1=	mof_firmware_c2xxx
