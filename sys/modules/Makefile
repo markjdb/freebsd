@@ -308,7 +308,7 @@ SUBDIR=	\
 	pty  \
 	puc \
 	pwm \
-	${_qat_c2xxx} \
+	${_qat} \
 	${_qatfw} \
 	${_qlxge} \
 	${_qlxgb} \
@@ -681,7 +681,7 @@ _mgb=		mgb
 _nctgpio=	nctgpio
 _ntb=		ntb
 _ocs_fc=	ocs_fc
-_qat_c2xxx=	qat_c2xxx
+_qat=		qat
 _qatfw=		qatfw
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
 _rdma=		rdma
