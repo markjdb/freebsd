@@ -6,10 +6,7 @@
 
 #include "cpa.h"
 #include "icp_adf_init.h"
-#include "icp_adf_transport.h"
-#include "icp_adf_poll.h"
 #include "icp_adf_transport_dp.h"
-#include "icp_sal_poll.h"
 
 /*
  * adf_modulo
