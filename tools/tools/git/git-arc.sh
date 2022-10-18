@@ -324,11 +324,16 @@ prompt()
 
 show_and_prompt()
 {
-    local commit
+    local commit flags
 
     commit=$1
 
-    git show "$commit"
+    if [ "$VERBOSE" ]; then
+        flags=
+    else
+        flags=--no-patch
+    fi
+    git show $flags "$commit"
     prompt
 }
 
@@ -545,6 +550,10 @@ if [ "$(git config --bool --get arc.assume-yes 2>/dev/null || echo false)" != "f
 fi
 
 VERBOSE=
+if [ "$(git config --bool --get arc.verbose 2>/dev/null || echo false)" != "true" ]; then
+    VERBOSE=1
+fi
+
 while getopts vy o; do
     case "$o" in
     v)
