@@ -103,7 +103,7 @@ SYSCTL_PROC(_debug_kdb, OID_AUTO, current,
     "currently selected KDB backend");
 
 SYSCTL_PROC(_debug_kdb, OID_AUTO, enter,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_SECURE | CTLFLAG_MPSAFE, NULL, 0,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_KDB_SECURE | CTLFLAG_MPSAFE, NULL, 0,
     kdb_sysctl_enter, "I",
     "set to enter the debugger");
 
@@ -133,11 +133,11 @@ SYSCTL_PROC(_debug_kdb, OID_AUTO, stack_overflow,
     "set to cause a stack overflow");
 
 SYSCTL_INT(_debug_kdb, OID_AUTO, break_to_debugger,
-    CTLFLAG_RWTUN | CTLFLAG_SECURE,
+    CTLFLAG_RWTUN | CTLFLAG_KDB_SECURE,
     &kdb_break_to_debugger, 0, "Enable break to debugger");
 
 SYSCTL_INT(_debug_kdb, OID_AUTO, alt_break_to_debugger,
-    CTLFLAG_RWTUN | CTLFLAG_SECURE,
+    CTLFLAG_RWTUN | CTLFLAG_KDB_SECURE,
     &kdb_alt_break_to_debugger, 0, "Enable alternative break to debugger");
 
 /*

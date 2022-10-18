@@ -358,6 +358,21 @@ mac_ddb_check_backend(struct kdb_dbbe *be)
 	return (EACCES);
 }
 
+static int
+mac_ddb_check_sysctl(struct sysctl_oid *oid __diagused,
+    struct sysctl_req *req __unused)
+{
+
+	KASSERT((oid->oid_kind & CTLFLAG_KDB_SECURE) != 0,
+	    ("%s: unhandled OID %p", __func__, oid));
+
+	/*
+	 * It's ok to enable access to DDB since it cannot be used to modify the
+	 * system securelevel when this policy is loaded.
+	 */
+	return (0);
+}
+
 /*
  * Register functions with MAC Framework policy entry points.
  */
@@ -369,5 +384,6 @@ static struct mac_policy_ops mac_ddb_ops =
 	.mpo_ddb_command_exec = mac_ddb_command_exec,
 
 	.mpo_kdb_check_backend = mac_ddb_check_backend,
+	.mpo_kdb_check_sysctl = mac_ddb_check_sysctl,
 };
 MAC_POLICY_SET(&mac_ddb_ops, mac_ddb, "MAC/DDB", 0, NULL);

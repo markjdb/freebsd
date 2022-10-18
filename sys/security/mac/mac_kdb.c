@@ -32,6 +32,7 @@
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
+#include <sys/sysctl.h>
 
 #include <ddb/ddb.h>
 
@@ -45,6 +46,23 @@ mac_kdb_check_backend(struct kdb_dbbe *be)
 	int error = 0;
 
 	MAC_POLICY_CHECK_NOSLEEP(kdb_check_backend, be);
+	return (error);
+}
+
+int
+mac_kdb_check_sysctl(struct sysctl_oid *oid, struct sysctl_req *req)
+{
+	int error = 0;
+
+	if ((oid->oid_kind & CTLFLAG_KDB_SECURE) == 0)
+		/* We don't know what this is; be safe and block it. */
+		return (EPERM);
+
+	/*
+	 * Unlike other policies, this one must be explicitly granted by a
+	 * module in order to override the system securelevel setting.
+	 */
+	MAC_POLICY_GRANT_NOSLEEP(kdb_check_sysctl, oid, req);
 	return (error);
 }
 

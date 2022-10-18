@@ -503,6 +503,13 @@ stub_kdb_check_backend(struct kdb_dbbe *be)
 }
 
 static int
+stub_kdb_check_sysctl(struct sysctl_oid *oidp, struct sysctl_req *req)
+{
+
+	return (0);
+}
+
+static int
 stub_kenv_check_dump(struct ucred *cred)
 {
 
@@ -1756,6 +1763,7 @@ static struct mac_policy_ops stub_ops =
 	.mpo_ipq_reassemble = stub_ipq_reassemble,
 
 	.mpo_kdb_check_backend = stub_kdb_check_backend,
+	.mpo_kdb_check_sysctl = stub_kdb_check_sysctl,
 
 	.mpo_kenv_check_dump = stub_kenv_check_dump,
 	.mpo_kenv_check_get = stub_kenv_check_get,

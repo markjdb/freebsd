@@ -902,6 +902,16 @@ test_kdb_check_backend(struct kdb_dbbe *be)
 	return (0);
 }
 
+COUNTER_DECL(kdb_sysctl_check);
+static int
+test_kdb_check_sysctl(struct sysctl_oid *oid, struct sysctl_req *req)
+{
+
+	COUNTER_INC(kdb_sysctl_check);
+
+	return (0);
+}
+
 COUNTER_DECL(kenv_check_dump);
 static int
 test_kenv_check_dump(struct ucred *cred)
@@ -3116,6 +3126,7 @@ static struct mac_policy_ops test_ops =
 	.mpo_ipq_update = test_ipq_update,
 
 	.mpo_kdb_check_backend = test_kdb_check_backend,
+	.mpo_kdb_check_sysctl = test_kdb_check_sysctl,
 
 	.mpo_kenv_check_dump = test_kenv_check_dump,
 	.mpo_kenv_check_get = test_kenv_check_get,

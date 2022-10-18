@@ -260,6 +260,8 @@ typedef void	(*mpo_ipq_update_t)(struct mbuf *m, struct label *mlabel,
 		    struct ipq *q, struct label *qlabel);
 
 typedef int	(*mpo_kdb_check_backend_t)(struct kdb_dbbe *be);
+typedef int	(*mpo_kdb_check_sysctl_t)(struct sysctl_oid *oid,
+		    struct sysctl_req *req);
 
 typedef int	(*mpo_kenv_check_dump_t)(struct ucred *cred);
 typedef int	(*mpo_kenv_check_get_t)(struct ucred *cred, char *name);
@@ -777,6 +779,7 @@ struct mac_policy_ops {
 	mpo_ipq_update_t			mpo_ipq_update;
 
 	mpo_kdb_check_backend_t			mpo_kdb_check_backend;
+	mpo_kdb_check_sysctl_t			mpo_kdb_check_sysctl;
 
 	mpo_kenv_check_dump_t			mpo_kenv_check_dump;
 	mpo_kenv_check_get_t			mpo_kenv_check_get;

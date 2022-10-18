@@ -42,6 +42,7 @@ __FBSDID("$FreeBSD$");
 
 #include "opt_capsicum.h"
 #include "opt_ddb.h"
+#include "opt_kdb.h"
 #include "opt_ktrace.h"
 #include "opt_sysctl.h"
 
@@ -2247,11 +2248,24 @@ sysctl_root(SYSCTL_HANDLER_ARGS)
 #endif
 
 	/* Is this sysctl sensitive to securelevels? */
-	if (req->newptr && (oid->oid_kind & CTLFLAG_SECURE)) {
-		lvl = (oid->oid_kind & CTLMASK_SECURE) >> CTLSHIFT_SECURE;
-		error = securelevel_gt(req->td->td_ucred, lvl);
-		if (error)
-			goto out;
+	if (req->newptr) {
+		if (oid->oid_kind & CTLFLAG_SECURE) {
+			lvl = (oid->oid_kind & CTLMASK_SECURE) >>
+			    CTLSHIFT_SECURE;
+			error = securelevel_gt(req->td->td_ucred, lvl);
+			if (error)
+				goto out;
+		}
+
+		if ((oid->oid_kind & CTLFLAG_KDB_SECURE) != 0) {
+			error = securelevel_gt(req->td->td_ucred, 0);
+#ifdef MAC
+			if (error)
+				error = mac_kdb_check_sysctl(oid, req);
+#endif
+			if (error)
+				goto out;
+		}
 	}
 
 	/* Is this sysctl writable by only privileged users? */

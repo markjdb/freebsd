@@ -96,16 +96,23 @@
 #define	CTLFLAG_DYING	0x00010000	/* Oid is being removed */
 #define	CTLFLAG_CAPRD	0x00008000	/* Can be read in capability mode */
 #define	CTLFLAG_CAPWR	0x00004000	/* Can be written in capability mode */
+#define	CTLFLAG_CAPRW	(CTLFLAG_CAPRD|CTLFLAG_CAPWR)
 #define	CTLFLAG_STATS	0x00002000	/* Statistics, not a tuneable */
 #define	CTLFLAG_NOFETCH	0x00001000	/* Don't fetch tunable from getenv() */
-#define	CTLFLAG_CAPRW	(CTLFLAG_CAPRD|CTLFLAG_CAPWR)
 /*
  * This is transient flag to be used until all sysctl handlers are converted
  * to not lock Giant.
  * One, and only one of CTLFLAG_MPSAFE or CTLFLAG_NEEDGIANT is required
  * for SYSCTL_PROC and SYSCTL_NODE.
  */
-#define	CTLFLAG_NEEDGIANT 0x00000800	/* Handler require Giant */
+#define	CTLFLAG_NEEDGIANT	0x00000800 /* Handler require Giant */
+/*
+ * sysctls with KDB_SECURE set allow a privileged user to break into the kernel
+ * debugger.  Since KDB can be used to lower the system's securelevel, they are
+ * normally subject to the same restrictions as CTLFLAG_SECURE, except that
+ * MAC's KDB hooks may be used to override the securelevel check.
+ */
+#define	CTLFLAG_KDB_SECURE	0x00000400 /* Enables KDB access */
 
 /*
  * Secure level.   Note that CTLFLAG_SECURE == CTLFLAG_SECURE1.
