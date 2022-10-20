@@ -506,6 +506,13 @@ kasan_strcmp(const char *s1, const char *s2)
 }
 
 int
+kasan_copystr(const void *kfaddr, void *kdaddr, size_t len, size_t *done)
+{
+	kasan_shadow_check((unsigned long)kdaddr, len, true, __RET_ADDR);
+	return (copystr(kfaddr, kdaddr, len, done));
+}
+
+int
 kasan_copyin(const void *uaddr, void *kaddr, size_t len)
 {
 	kasan_shadow_check((unsigned long)kaddr, len, true, __RET_ADDR);
