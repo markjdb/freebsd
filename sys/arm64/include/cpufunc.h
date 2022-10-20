@@ -121,6 +121,17 @@ clrex(void)
 	__asm __volatile("clrex" : : : "memory");
 }
 
+static __inline void
+set_ttbr0(uint64_t ttbr0)
+{
+
+	__asm __volatile(
+	    "msr ttbr0_el1, %0 \n"
+	    "isb               \n"
+	    :
+	    : "r" (ttbr0));
+}
+
 extern int64_t dcache_line_size;
 extern int64_t icache_line_size;
 extern int64_t idcache_line_size;
