@@ -942,6 +942,12 @@ pmap_bootstrap_allocate_kasan_l2(vm_paddr_t start_pa, vm_paddr_t end_pa,
 		    L2_BLOCK);
 	}
 
+	if (pa < start_pa) {
+		va += L2_SIZE;
+		i--;
+		pa = start_pa;
+	}
+
 	bzero((void *)PHYS_TO_DMAP(pa), i * L2_SIZE);
 	physmem_exclude_region(pa, i * L2_SIZE, EXFLAG_NOALLOC);
 
@@ -1105,7 +1111,6 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 	 * happen in vm_mem_init(), the shadow map will be grown as well. This
 	 * is handled by pmap_san_enter().
 	 */
-	bzero((void *)(uintptr_t)start_va, va - start_va);
 }
 #endif
 
