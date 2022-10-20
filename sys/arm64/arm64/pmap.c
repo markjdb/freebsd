@@ -6125,8 +6125,8 @@ pmap_san_enter_alloc_l3(void)
 {
 	vm_page_t m;
 
-	m = vm_page_alloc_noobj(VM_ALLOC_INTERRUPT | VM_ALLOC_WIRED |
-	    VM_ALLOC_ZERO);
+	m = vm_page_alloc(NULL, 0, VM_ALLOC_INTERRUPT | VM_ALLOC_WIRED |
+	    VM_ALLOC_ZERO | VM_ALLOC_NOOBJ);
 	if (m == NULL)
 		panic("%s: no memory to grow shadow map", __func__);
 	return (m);
@@ -6135,8 +6135,8 @@ pmap_san_enter_alloc_l3(void)
 static vm_page_t
 pmap_san_enter_alloc_l2(void)
 {
-	return (vm_page_alloc_noobj_contig(VM_ALLOC_WIRED | VM_ALLOC_ZERO,
-	    Ln_ENTRIES, 0, ~0ul, L2_SIZE, 0, VM_MEMATTR_DEFAULT));
+	return (vm_page_alloc_contig(NULL, 0, VM_ALLOC_WIRED | VM_ALLOC_ZERO |
+	    VM_ALLOC_NOOBJ, Ln_ENTRIES, 0, ~0ul, L2_SIZE, 0, VM_MEMATTR_DEFAULT));
 }
 
 void __nosanitizeaddress
