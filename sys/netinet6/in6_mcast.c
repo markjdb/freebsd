@@ -2805,11 +2805,14 @@ sysctl_ip6_mcast_filters(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 	}
 
+	IN6_MULTI_LOCK();
+
 	ifindex = name[0];
 	NET_EPOCH_ENTER(et);
 	ifp = ifnet_byindex(ifindex);
 	if (ifp == NULL) {
 		NET_EPOCH_EXIT(et);
+		IN6_MULTI_UNLOCK();
 		CTR2(KTR_MLD, "%s: no ifp for ifindex %u",
 		    __func__, ifindex);
 		return (ENOENT);
@@ -2823,10 +2826,10 @@ sysctl_ip6_mcast_filters(SYSCTL_HANDLER_ARGS)
 	    sizeof(uint32_t) + (in6_mcast_maxgrpsrc * sizeof(struct in6_addr)));
 	if (retval) {
 		NET_EPOCH_EXIT(et);
+		IN6_MULTI_UNLOCK();
 		return (retval);
 	}
 
-	IN6_MULTI_LOCK();
 	IN6_MULTI_LIST_LOCK();
 	CK_STAILQ_FOREACH(ifma, &ifp->if_multiaddrs, ifma_link) {
 		inm = in6m_ifmultiaddr_get_inm(ifma);
@@ -2856,8 +2859,8 @@ sysctl_ip6_mcast_filters(SYSCTL_HANDLER_ARGS)
 		}
 	}
 	IN6_MULTI_LIST_UNLOCK();
-	IN6_MULTI_UNLOCK();
 	NET_EPOCH_EXIT(et);
+	IN6_MULTI_UNLOCK();
 
 	return (retval);
 }
