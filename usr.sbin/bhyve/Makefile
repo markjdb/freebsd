@@ -131,8 +131,6 @@ CFLAGS+= -DBHYVE_SNAPSHOT
 CFLAGS+=-DGDB_LOG
 .endif
 
-WARNS?=	2
-
 # Disable thread safety analysis since it only finds very simple bugs and
 # yields many false positives.
 NO_WTHREAD_SAFETY=
@@ -140,3 +138,5 @@ NO_WTHREAD_SAFETY=
 SUBDIR=	kbdlayout
 
 .include <bsd.prog.mk>
+
+CWARNFLAGS+= -Wno-cast-align
