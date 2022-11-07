@@ -6373,6 +6373,7 @@ pmap_san_enter(vm_offset_t va)
 			block = pmap_san_enter_bootstrap_alloc_l2();
 			pmap_store(&l2[slot], pmap_early_vtophys(block) |
 			    PMAP_SAN_PTE_BITS | L2_BLOCK);
+			dmb(ishst);
 		}
 
 		return;
@@ -6384,19 +6385,19 @@ pmap_san_enter(vm_offset_t va)
 	if ((pmap_load(l1) & ATTR_DESCR_VALID) == 0) {
 		m = pmap_san_enter_alloc_l3();
 		pmap_store(l1, (VM_PAGE_TO_PHYS(m) & ~Ln_TABLE_MASK) |
-		    PMAP_SAN_PTE_BITS | L1_TABLE);
+		    L1_TABLE);
 	}
 	l2 = pmap_l1_to_l2(l1, va);
 	if ((pmap_load(l2) & ATTR_DESCR_VALID) == 0) {
 		m = pmap_san_enter_alloc_l2();
 		if (m != NULL) {
-			pmap_store(l2, VM_PAGE_TO_PHYS(m) |
-			    PMAP_SAN_PTE_BITS | L2_BLOCK);
+			pmap_store(l2, VM_PAGE_TO_PHYS(m) | PMAP_SAN_PTE_BITS |
+			    L2_BLOCK);
 		} else {
 			m = pmap_san_enter_alloc_l3();
-			pmap_store(l2, VM_PAGE_TO_PHYS(m) |
-			    PMAP_SAN_PTE_BITS | L2_TABLE);
+			pmap_store(l2, VM_PAGE_TO_PHYS(m) | L2_TABLE);
 		}
+		dmb(ishst);
 	}
 	if ((pmap_load(l2) & ATTR_DESCR_MASK) == L2_BLOCK)
 		return;
@@ -6405,7 +6406,7 @@ pmap_san_enter(vm_offset_t va)
 		return;
 	m = pmap_san_enter_alloc_l3();
 	pmap_store(l3, VM_PAGE_TO_PHYS(m) | PMAP_SAN_PTE_BITS | L3_PAGE);
-
+	dmb(ishst);
 }
 #endif /* KASAN */
 
