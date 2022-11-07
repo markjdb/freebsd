@@ -6274,8 +6274,7 @@ pmap_san_bootstrap(struct arm64_bootparams *abp)
 {
 
 	pmap_san_early_kernstart = KERNBASE - abp->kern_delta;
-	kasan_init_early(abp->kern_stack - (KSTACK_PAGES * PAGE_SIZE),
-	    KSTACK_PAGES * PAGE_SIZE);
+	kasan_init_early(abp->kern_stack, KSTACK_PAGES * PAGE_SIZE);
 }
 
 #define	SAN_BOOTSTRAP_L2_SIZE	(1 * L2_SIZE)
