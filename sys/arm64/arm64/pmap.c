@@ -1051,19 +1051,17 @@ pmap_bootstrap(vm_offset_t l0pt, vm_offset_t l1pt, vm_paddr_t kernstart,
 }
 
 #if defined(KASAN)
+/*
+ * Finish constructing the initial shadow map:
+ * - Count how many pages from KERNBASE to virtual_avail (scaled for
+ *   shadow map)
+ * - Map that entire range using L2 superpages.
+ */
 void
 pmap_bootstrap_san(vm_paddr_t kernstart)
 {
-	/*
-	 * Finish constructing the initial shadow map:
-	 * - Count how many pages from KERNBASE to virtual_avail (scaled for
-	 *   shadow map)
-	 * - Map that entire range using L2 superpages, stealing free physical
-	 *   memory by increasing 'pa'
-	 */
-	vm_offset_t start_va, va;
-	int shadow_npages, nkasan_l2;
-	int i;
+	vm_offset_t va;
+	int i, shadow_npages, nkasan_l2;
 
 	/*
 	 * Rebuild physmap one more time, we may have excluded more regions from
@@ -1073,12 +1071,12 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 	physmap_idx = physmem_avail(physmap, nitems(physmap));
 	physmap_idx /= 2;
 
-	shadow_npages = howmany(virtual_avail - VM_MIN_KERNEL_ADDRESS, PAGE_SIZE);
-	shadow_npages /= KASAN_SHADOW_SCALE;
+	shadow_npages = (virtual_avail - VM_MIN_KERNEL_ADDRESS) / PAGE_SIZE;
+	shadow_npages = howmany(shadow_npages, KASAN_SHADOW_SCALE);
 	nkasan_l2 = howmany(shadow_npages, Ln_ENTRIES);
 
 	/* Map the valid KVA up to this point. */
-	start_va = va = KASAN_MIN_ADDRESS;
+	va = KASAN_MIN_ADDRESS;
 
 	/*
 	 * Find a slot in the physmap large enough for what we needed.  We try to put
@@ -1105,7 +1103,7 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 
 	/*
 	 * Done. We should now have a valid shadow address mapped for all KVA
-	 * that has been mapped so far, i.e. KERNBASE to virtual_avail. Thus,
+	 * that has been mapped so far, i.e., KERNBASE to virtual_avail. Thus,
 	 * shadow accesses by the kasan(9) runtime will succeed for this range.
 	 * When the kernel virtual address range is later expanded, as will
 	 * happen in vm_mem_init(), the shadow map will be grown as well. This
