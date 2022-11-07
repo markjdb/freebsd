@@ -190,9 +190,8 @@ __FBSDID("$FreeBSD$");
 #define	pmap_l1_pindex(v)	(NUL2E + ((v) >> L1_SHIFT))
 #define	pmap_l2_pindex(v)	((v) >> L2_SHIFT)
 
-/* TODO: verify PTE bits. */
-#define	PMAP_SAN_PTE_BITS	ATTR_DEFAULT | ATTR_S1_XN | \
-    ATTR_S1_IDX(VM_MEMATTR_WRITE_BACK) | ATTR_S1_AP(ATTR_S1_AP_RW)
+#define	PMAP_SAN_PTE_BITS	(ATTR_DEFAULT | ATTR_S1_XN |	\
+	ATTR_S1_IDX(VM_MEMATTR_WRITE_BACK) | ATTR_S1_AP(ATTR_S1_AP_RW))
 
 static struct md_page *
 pa_to_pvh(vm_paddr_t pa)
