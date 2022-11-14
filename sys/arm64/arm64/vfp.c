@@ -37,6 +37,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
+
+#include <vm/uma.h>
 
 #include <vm/uma.h>
 

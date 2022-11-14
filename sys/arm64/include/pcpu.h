@@ -50,6 +50,7 @@ struct debug_monitor_state;
 	/* Store as two u_int values to preserve KBI */			\
 	uint64_t pc_mpidr;						\
 	u_int	pc_bcast_tlbi_workaround;				\
+	void	*pc_vcpu;						\
 	char __pad[197]
 
 #ifdef _KERNEL
