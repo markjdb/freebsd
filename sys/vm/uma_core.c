@@ -700,11 +700,10 @@ zone_timeout(uma_zone_t zone)
 		}
 	}
 
+	KEG_UNLOCK(keg);
 update_wss:
 	for (int i = 0; i < vm_ndomains; i++)
 		zone_domain_update_wss(&zone->uz_domain[i]);
-
-	KEG_UNLOCK(keg);
 }
 
 /*
@@ -1894,7 +1893,7 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	zone->uz_bkt_max = ULONG_MAX;
 	timevalclear(&zone->uz_ratecheck);
 
-#ifdef INVARIANTS
+#if defined(INVARIANTS) && !defined(KASAN)
 	if (arg->uminit == trash_init && arg->fini == trash_fini)
 		zone->uz_flags |= UMA_ZFLAG_TRASH;
 #elif defined(KASAN)
@@ -2494,7 +2493,7 @@ item_ctor(uma_zone_t zone, void *udata, int flags, void *item)
 
 #ifdef INVARIANTS
 	skipdbg = uma_dbg_zskip(zone, item);
-	if (!skipdbg && (uz_flags & UMA_ZFLAG_TRASH) != 0 &&
+	if (!skipdbg && (zone->uz_flags & UMA_ZFLAG_TRASH) != 0 &&
 	    zone->uz_ctor != trash_ctor)
 		trash_ctor(item, zone->uz_size, udata, flags);
 #endif

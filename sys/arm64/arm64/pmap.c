@@ -865,7 +865,7 @@ pmap_bootstrap_dmap(vm_offset_t kern_l1, vm_paddr_t min_pa,
 
 		/* Create L2 mappings at the end of the region */
 		pmap_bootstrap_l2_block(&bs_state, i);
-		MPASS(state.pa <= physmap[i + 1]);
+		MPASS(bs_state.pa <= physmap[i + 1]);
 
 		/* Create L3 mappings at the end of the region */
 		pmap_bootstrap_l3_page(&bs_state, i);
@@ -3242,7 +3242,6 @@ pmap_protect(pmap_t pmap, vm_offset_t sva, vm_offset_t eva, vm_prot_t prot)
 {
 	pt_entry_t mask, nbits;
 
-	PMAP_ASSERT_STAGE1(pmap);
 	KASSERT((prot & ~VM_PROT_ALL) == 0, ("invalid prot %x", prot));
 	if (prot == VM_PROT_NONE) {
 		pmap_remove(pmap, sva, eva);
@@ -5650,7 +5649,7 @@ pmap_change_attr_locked(vm_offset_t va, vm_size_t size, int mode)
 			}
 		} else {
 			/* We can't demote/promote this entry */
-			MPASS((pmap_load(ptep) & ATTR_SW_NO_PROMOTE) == 0);
+			MPASS((pmap_load(pte) & ATTR_SW_NO_PROMOTE) == 0);
 
 			/*
 			 * Split the entry to an level 3 table, then

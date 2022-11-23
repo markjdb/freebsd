@@ -461,6 +461,7 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 #endif
 		frame->tf_elr += 4;
 		break;
+	case EXCP_WATCHPT_EL0:
 	case EXCP_WATCHPT_EL1:
 	case EXCP_SOFTSTP_EL1:
 #ifdef KDB
@@ -571,8 +572,7 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 		userret(td, frame);
 		break;
 	case EXCP_WATCHPT_EL0:
-		call_trapsignal(td, SIGTRAP, TRAP_TRACE, (void *)far,
-		    exception);
+		call_trapsignal(td, SIGTRAP, TRAP_TRACE, (void *)far);
 		userret(td, frame);
 		break;
 	case EXCP_MSR:
