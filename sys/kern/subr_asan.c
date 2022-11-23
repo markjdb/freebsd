@@ -269,9 +269,6 @@ kasan_mark(const void *addr, size_t size, size_t redzsize, uint8_t code)
 	    ("%s: invalid address %p", __func__, addr));
 	KASSERT((vm_offset_t)addr % KASAN_SHADOW_SCALE == 0,
 	    ("%s: invalid address %p", __func__, addr));
-	redz = redzsize - roundup(size, KASAN_SHADOW_SCALE);
-	KASSERT(redz % KASAN_SHADOW_SCALE == 0,
-	    ("%s: invalid size %zu", __func__, redz));
 	shad = (int8_t *)kasan_md_addr_to_shad((uintptr_t)addr);
 
 	/* Chunks of 8 bytes, valid. */
@@ -286,9 +283,15 @@ kasan_mark(const void *addr, size_t size, size_t redzsize, uint8_t code)
 	}
 
 	/* Chunks of 8 bytes, invalid. */
-	n = redz / KASAN_SHADOW_SCALE;
-	for (i = 0; i < n; i++) {
-		*shad++ = code;
+	if (redzsize > size && redzsize - size >= KASAN_SHADOW_SCALE) {
+		redz = redzsize - roundup(size, KASAN_SHADOW_SCALE);
+		KASSERT(redz % KASAN_SHADOW_SCALE == 0,
+		    ("%s: invalid size %zu", __func__, redz));
+
+		n = redz / KASAN_SHADOW_SCALE;
+		for (i = 0; i < n; i++) {
+			*shad++ = code;
+		}
 	}
 }
 
