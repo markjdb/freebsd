@@ -68,6 +68,11 @@ dtrace_invop(uintptr_t addr, struct trapframe *frame, void **scratch)
 	dtrace_invop_hdlr_t *hdlr;
 	int rval;
 
+	KASSERT((read_rflags() & PSL_I) == 0,
+	    ("%s: invop with interrupts enabled", __func__));
+	KASSERT(!TRAPF_USERMODE(frame),
+	    ("%s: invop from user mode", __func__));
+
 	td = curthread;
 	td->t_dtrace_trapframe = frame;
 	rval = 0;

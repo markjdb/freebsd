@@ -50,11 +50,7 @@
 	movq	TF_R13(%rsp),%r13;		\
 	movq	TF_R14(%rsp),%r14;		\
 	movq	TF_R15(%rsp),%r15;		\
-	testb	$SEL_RPL_MASK,TF_CS(%rsp);	\
-	jz	1f;				\
-	cli;					\
-	swapgs;					\
-1:	addq	$TF_RIP,%rsp;
+	addq	$TF_RIP,%rsp;
 
 .globl dtrace_invop_callsite
 .type dtrace_invop_callsite,@function
