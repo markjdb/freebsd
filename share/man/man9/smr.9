@@ -1,0 +1,111 @@
+.\" Copyright (c) 2022 The FreeBSD Foundation
+.\"
+.\" This documentation was written by Mark Johnston <markj@FreeBSD.org>
+.\" under sponsorship from the FreeBSD Foundation.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.\" $FreeBSD$
+.\"
+.Dd December 27, 2022
+.Dt smr 9
+.Os
+.Sh NAME
+.Nm smr
+.Nd safe memory reclamation for lock-free data structures
+.Sh SYNOPSIS
+.In sys/smr.h
+.Ft smr_seq_t
+.Fo smr_advance
+.Fa "smr_t smr"
+.Fc
+.Ft smr_t
+.Fo smr_create
+.Fa "const char *name"
+.Fc
+.Ft void
+.Fo smr_destroy
+.Fa "smr_t smr"
+.Fc
+.Ft void
+.Fo smr_enter
+.Fa "smr_t smr"
+.Fc
+.Ft void
+.Fo smr_exit
+.Fa "smr_t smr"
+.Fc
+.Ft bool
+.Fo smr_poll
+.Fa "smr_t smr"
+.Fa "smr_seq_t goal"
+.Fa "bool wait"
+.Fc
+.Ft void
+.Fo smr_synchronize
+.Fa "smr_t smr"
+.Fc
+.Ft bool
+.Fo smr_wait
+.Fa "smr_t smr"
+.Fa "smr_seq_t goal"
+.Fc
+.In sys/smr_types.h
+.Fn SMR_POINTER "TYPE"
+.Fn smr_entered_load "TYPE *p" "smr_t smr"
+.Fn smr_serialized_load "TYPE *p" "smr_t smr"
+.Fn smr_serialized_store "TYPE *p" "TYPE v" "EXPR"
+.Fn smr_serialized_swap "TYPE *p" "TYPE v" "EXPR"
+.Fn smr_unserialized_load "TYPE *p" "EXPR"
+.Fn smr_unserialized_store "TYPE *p" "TYPE v" "EXPR"
+.Sh DESCRIPTION
+SMR (safe memory reclamation) is a facility which enables the implementation of
+memory-safe lock-free data structures.
+.Sh NOTES
+Outside of
+.Fx
+the acronym SMR (safe memory reclamation) typically refers to a family of
+algorithms which enable memory-safe read-only access to a data structure
+concurrent with modifications to that data structure.
+Here, SMR refers to a particular algorithm belonging to this family, as well as
+its implementation in
+.Fx .
+See
+.Pa /usr/src/sys/sys/smr.h
+and
+.Pa /usr/src/sys/kern/subr_smr.c
+in the
+.Fx
+source tree for further details on the algorithm.
+.Pp
+The acronym SMR is also used to mean "shingled magnetic recording", a
+technology used to store data on hard disk drives which requires operating
+system support.
+These two uses of the acronym are unrelated..
+.Sh AUTHORS
+The SMR algorithm and its implementation were provided by
+.An Jeff Roberson Aq Mt jeff@FreeBSD.org .
+This manual page was written by
+.An Mark Johnston Aq Mt markj@FreeBSD.org .
+.Sh SEE ALSO
+.Xr locking 9 ,
+.Xr uma 9

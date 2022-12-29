@@ -320,6 +320,7 @@ MAN=	accept_filter.9 \
 	signal.9 \
 	sleep.9 \
 	sleepqueue.9 \
+	smr.9 \
 	socket.9 \
 	stack.9 \
 	store.9 \
