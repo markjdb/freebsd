@@ -1967,9 +1967,9 @@ dw_read(tdata_t *td, Elf *elf, char *filename __unused)
 		terminate("file contains too many types\n");
 
 	debug(1, "DWARF version: %d\n", vers);
-	if (vers < 2 || vers > 4) {
+	if (vers < 2 || vers > 5) {
 		terminate("file contains incompatible version %d DWARF code "
-		    "(version 2, 3 or 4 required)\n", vers);
+		    "(versions 2-5 required)\n", vers);
 	}
 
 	if (die_string(&dw, cu, DW_AT_producer, &prod, 0)) {
