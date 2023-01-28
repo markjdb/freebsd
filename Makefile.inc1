@@ -2276,7 +2276,8 @@ _bootstrap_tools_links+=m4 lex
 # r338478 fixed a crash in objcopy for mips64el objects
 # r339083 libelf: correct mips64el test to use ELF header
 # r348347 Add missing powerpc64 relocation support to libdwarf
-.if ${BOOTSTRAPPING} < 1300030
+# XXX-MJ  Add partial support for DWARF 5 to libdwarf, used by ctfconvert
+.if ${BOOTSTRAPPING} < 1400079
 _elftoolchain_libs= lib/libelf lib/libdwarf lib/libzstd
 ${_bt}-lib/libelf: ${_bt_m4_depend}
 ${_bt}-lib/libdwarf: ${_bt_m4_depend}
