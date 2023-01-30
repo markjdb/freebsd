@@ -336,6 +336,7 @@ enum {
 	DW_DLE_DEBUG_MACRO_INCONSISTENT,/* Invalid macinfo data. */
 	DW_DLE_ELF_SECT_ERR,		/* Application callback failed. */
 	DW_DLE_COMPRESSION,		/* Section decompression error. */
+	DW_DLE_UNKNOWN_CU_TYPE,		/* Unknown compilation unit type. */
 	DW_DLE_NUM			/* Max error number. */
 };
 
@@ -600,6 +601,7 @@ int		dwarf_get_MACINFO_name(unsigned, const char **);
 int		dwarf_get_OP_name(unsigned, const char **);
 int		dwarf_get_ORD_name(unsigned, const char **);
 int		dwarf_get_TAG_name(unsigned, const char **);
+int		dwarf_get_UT_name(unsigned, const char **);
 int		dwarf_get_VIRTUALITY_name(unsigned, const char **);
 int		dwarf_get_VIS_name(unsigned, const char **);
 int		dwarf_get_abbrev(Dwarf_Debug, Dwarf_Unsigned, Dwarf_Abbrev *,

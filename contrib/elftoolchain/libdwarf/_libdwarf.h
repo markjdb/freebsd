@@ -95,6 +95,7 @@ struct _Dwarf_AttrDef {
 	Dwarf_Half	ad_attrib;		/* DW_AT_XXX */
 	Dwarf_Half	ad_form;		/* DW_FORM_XXX */
 	uint64_t	ad_offset;		/* Offset in abbrev section. */
+	int64_t		ad_value;		/* XXX-MJ */
 	STAILQ_ENTRY(_Dwarf_AttrDef) ad_next;	/* Next attribute define. */
 };
 
@@ -330,6 +331,7 @@ struct _Dwarf_CU {
 	uint8_t		cu_pointer_size;/* Number of bytes in pointer. */
 	uint8_t		cu_dwarf_size;	/* CU section dwarf size. */
 	Dwarf_Sig8	cu_type_sig;	/* Type unit's signature. */
+	uint8_t		cu_unit_type;	/* CU type, see DW_UT_* constants. */
 	uint64_t	cu_type_offset; /* Type unit's type offset. */
 	Dwarf_Off	cu_next_offset; /* Offset to the next CU. */
 	uint64_t	cu_1st_offset;	/* First DIE offset. */
@@ -428,6 +430,8 @@ struct _Dwarf_Debug {
 	char		*dbg_strtab;	/* Dwarf string table. */
 	Dwarf_Unsigned	dbg_strtab_cap; /* Dwarf string table capacity. */
 	Dwarf_Unsigned	dbg_strtab_size; /* Dwarf string table size. */
+	char		*dbg_line_strtab; /* XXX-MJ */
+	Dwarf_Unsigned	dbg_line_strtab_size;
 	STAILQ_HEAD(, _Dwarf_MacroSet) dbg_mslist; /* List of macro set. */
 	STAILQ_HEAD(, _Dwarf_Rangelist) dbg_rllist; /* List of rangelist. */
 	uint64_t	(*read)(uint8_t *, uint64_t *, int);
@@ -507,7 +511,8 @@ int		_dwarf_attr_init(Dwarf_Debug, Dwarf_Section *, uint64_t *, int,
 		    Dwarf_CU, Dwarf_Die, Dwarf_AttrDef, uint64_t, int,
 		    Dwarf_Error *);
 int		_dwarf_attrdef_add(Dwarf_Debug, Dwarf_Abbrev, uint64_t,
-		    uint64_t, uint64_t, Dwarf_AttrDef *, Dwarf_Error *);
+		    uint64_t, uint64_t, int64_t, Dwarf_AttrDef *,
+		    Dwarf_Error *);
 uint64_t	_dwarf_decode_lsb(uint8_t **, int);
 uint64_t	_dwarf_decode_msb(uint8_t **, int);
 int64_t		_dwarf_decode_sleb128(uint8_t **);
@@ -640,6 +645,7 @@ int		_dwarf_strtab_add(Dwarf_Debug, char *, uint64_t *,
 void		_dwarf_strtab_cleanup(Dwarf_Debug);
 int		_dwarf_strtab_gen(Dwarf_P_Debug, Dwarf_Error *);
 char		*_dwarf_strtab_get_table(Dwarf_Debug);
+char		*_dwarf_strtab_get_line_str_table(Dwarf_Debug);
 int		_dwarf_strtab_init(Dwarf_Debug, Dwarf_Error *);
 void		_dwarf_type_unit_cleanup(Dwarf_Debug);
 void		_dwarf_write_block(void *, uint64_t *, uint8_t *, uint64_t);

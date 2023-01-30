@@ -342,7 +342,7 @@ _dwarf_die_gen_recursive(Dwarf_P_Debug dbg, Dwarf_CU cu, Dwarf_Rel_Section drs,
 			return (ret);
 		STAILQ_FOREACH(at, &die->die_attr, at_next) {
 			ret = _dwarf_attrdef_add(dbg, ab, at->at_attrib,
-			    at->at_form, 0, NULL, error);
+			    at->at_form, 0, 0, NULL, error);
 			if (ret != DW_DLE_NONE)
 				return (ret);
 		}

@@ -298,6 +298,9 @@ _dwarf_lineno_init(Dwarf_Die die, uint64_t offset, Dwarf_Error *error)
 		case DW_FORM_string:
 			compdir = at->u[0].s;
 			break;
+		case DW_FORM_line_strp:
+			compdir = at->u[1].s;
+			break;
 		default:
 			break;
 		}

@@ -201,14 +201,29 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 			dbg->dbg_types_off = next_offset;
 
 		/* Initialise the compilation unit. */
-		cu->cu_length		 = length;
-		cu->cu_length_size	 = (dwarf_size == 4 ? 4 : 12);
-		cu->cu_version		 = dbg->read(ds->ds_data, &offset, 2);
-		cu->cu_abbrev_offset	 = dbg->read(ds->ds_data, &offset,
-		    dwarf_size);
+		cu->cu_length = length;
+		cu->cu_length_size = (dwarf_size == 4 ? 4 : 12);
+		cu->cu_version = dbg->read(ds->ds_data, &offset, 2);
+		if (cu->cu_version == 5) {
+			cu->cu_unit_type = dbg->read(ds->ds_data, &offset, 1);
+			if (cu->cu_unit_type != DW_UT_compile) {
+				DWARF_SET_ERROR(dbg, error,
+				    DW_DLE_UNKNOWN_CU_TYPE);
+				ret = DW_DLE_UNKNOWN_CU_TYPE;
+				break;
+			}
+			cu->cu_pointer_size = dbg->read(ds->ds_data, &offset,
+			    1);
+			cu->cu_abbrev_offset = dbg->read(ds->ds_data, &offset,
+			    dwarf_size);
+		} else {
+			cu->cu_abbrev_offset = dbg->read(ds->ds_data, &offset,
+			    dwarf_size);
+			cu->cu_pointer_size = dbg->read(ds->ds_data, &offset,
+			    1);
+		}
 		cu->cu_abbrev_offset_cur = cu->cu_abbrev_offset;
-		cu->cu_pointer_size	 = dbg->read(ds->ds_data, &offset, 1);
-		cu->cu_next_offset	 = next_offset;
+		cu->cu_next_offset = next_offset;
 
 		/* .debug_types extra fields. */
 		if (!is_info) {
@@ -225,7 +240,7 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 		else
 			STAILQ_INSERT_TAIL(&dbg->dbg_tu, cu, cu_next);
 
-		if (cu->cu_version < 2 || cu->cu_version > 4) {
+		if (cu->cu_version < 2 || cu->cu_version > 5) {
 			DWARF_SET_ERROR(dbg, error, DW_DLE_VERSION_STAMP_ERROR);
 			ret = DW_DLE_VERSION_STAMP_ERROR;
 			break;

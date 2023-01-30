@@ -390,6 +390,10 @@ dwarf_formstring(Dwarf_Attribute at, char **return_string,
 		*return_string = (char *) at->u[1].s;
 		ret = DW_DLV_OK;
 		break;
+	case DW_FORM_line_strp:
+		*return_string = (char *) at->u[1].s;
+		ret = DW_DLV_OK;
+		break;
 	default:
 		DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
 		ret = DW_DLV_ERROR;
@@ -403,6 +407,7 @@ dwarf_get_form_class(Dwarf_Half dwversion, Dwarf_Half attr,
     Dwarf_Half offset_size, Dwarf_Half form)
 {
 
+	/* XXX-MJ need updates for other new forms */
 	switch (form) {
 	case DW_FORM_addr:
 		return (DW_FORM_CLASS_ADDRESS);
@@ -413,6 +418,7 @@ dwarf_get_form_class(Dwarf_Half dwversion, Dwarf_Half attr,
 		return (DW_FORM_CLASS_BLOCK);
 	case DW_FORM_string:
 	case DW_FORM_strp:
+	case DW_FORM_line_strp:
 		return (DW_FORM_CLASS_STRING);
 	case DW_FORM_flag:
 	case DW_FORM_flag_present:

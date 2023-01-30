@@ -206,6 +206,7 @@ dwarf_attrval_unsigned(Dwarf_Die die, Dwarf_Half attr, Dwarf_Unsigned *valp, Dwa
 	case DW_FORM_ref4:
 	case DW_FORM_ref8:
 	case DW_FORM_ref_udata:
+	case DW_FORM_implicit_const:
 		*valp = at->u[0].u64;
 		break;
 	default:

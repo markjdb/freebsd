@@ -40,6 +40,7 @@ static const char *debug_name[] = {
 	".eh_frame",
 	".debug_macinfo",
 	".debug_str",
+	".debug_line_str",
 	".debug_loc",
 	".debug_pubtypes",
 	".debug_ranges",

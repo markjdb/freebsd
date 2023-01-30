@@ -193,6 +193,14 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		/* This form has no value encoded in the DIE. */
 		atref.u[0].u64 = 1;
 		break;
+	case DW_FORM_line_strp:
+		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, dwarf_size);
+		atref.u[1].s = _dwarf_strtab_get_line_str_table(dbg) +
+		    atref.u[0].u64;
+		break;
+	case DW_FORM_implicit_const:
+		atref.u[0].s64 = ad->ad_value;
+		break;
 	default:
 		DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
 		ret = DW_DLE_ATTR_FORM_BAD;

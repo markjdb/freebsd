@@ -68,6 +68,13 @@ _dwarf_strtab_get_table(Dwarf_Debug dbg)
 	return (dbg->dbg_strtab);
 }
 
+char *
+_dwarf_strtab_get_line_str_table(Dwarf_Debug dbg)
+{
+
+	return (dbg->dbg_line_strtab);
+}
+
 int
 _dwarf_strtab_init(Dwarf_Debug dbg, Dwarf_Error *error)
 {
@@ -76,6 +83,15 @@ _dwarf_strtab_init(Dwarf_Debug dbg, Dwarf_Error *error)
 	assert(dbg != NULL);
 
 	if (dbg->dbg_mode == DW_DLC_READ || dbg->dbg_mode == DW_DLC_RDWR) {
+		ds = _dwarf_find_section(dbg, ".debug_line_str");
+		if (ds != NULL) {
+			dbg->dbg_line_strtab = ds->ds_data;
+			dbg->dbg_line_strtab_size = ds->ds_size;
+		} else {
+			dbg->dbg_line_strtab = NULL;
+			dbg->dbg_line_strtab_size = 0;
+		}
+
 		ds = _dwarf_find_section(dbg, ".debug_str");
 		if (ds == NULL) {
 			dbg->dbg_strtab = NULL;

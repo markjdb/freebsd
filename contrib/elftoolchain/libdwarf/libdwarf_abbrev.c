@@ -65,7 +65,8 @@ _dwarf_abbrev_add(Dwarf_CU cu, uint64_t entry, uint64_t tag, uint8_t children,
 
 int
 _dwarf_attrdef_add(Dwarf_Debug dbg, Dwarf_Abbrev ab, uint64_t attr,
-    uint64_t form, uint64_t adoff, Dwarf_AttrDef *adp, Dwarf_Error *error)
+    uint64_t form, uint64_t adoff, int64_t value, Dwarf_AttrDef *adp,
+    Dwarf_Error *error)
 {
 	Dwarf_AttrDef ad;
 
@@ -83,6 +84,7 @@ _dwarf_attrdef_add(Dwarf_Debug dbg, Dwarf_Abbrev ab, uint64_t attr,
 	ad->ad_attrib	= attr;
 	ad->ad_form	= form;
 	ad->ad_offset	= adoff;
+	ad->ad_value	= value;
 
 	/* Add the attribute definition to the list in the abbrev. */
 	STAILQ_INSERT_TAIL(&ab->ab_attrdef, ad, ad_next);
@@ -107,6 +109,7 @@ _dwarf_abbrev_parse(Dwarf_Debug dbg, Dwarf_CU cu, Dwarf_Unsigned *offset,
 	uint64_t aboff;
 	uint64_t adoff;
 	uint64_t tag;
+	int64_t value;
 	uint8_t children;
 	int ret;
 
@@ -140,9 +143,11 @@ _dwarf_abbrev_parse(Dwarf_Debug dbg, Dwarf_CU cu, Dwarf_Unsigned *offset,
 		adoff = *offset;
 		attr = _dwarf_read_uleb128(ds->ds_data, offset);
 		form = _dwarf_read_uleb128(ds->ds_data, offset);
+		value = form == DW_FORM_implicit_const ?
+		    _dwarf_read_sleb128(ds->ds_data, offset) : 0;
 		if (attr != 0)
 			if ((ret = _dwarf_attrdef_add(dbg, *abp, attr,
-			    form, adoff, NULL, error)) != DW_DLE_NONE)
+			    form, adoff, value, NULL, error)) != DW_DLE_NONE)
 				return (ret);
 	} while (attr != 0);
 
