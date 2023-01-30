@@ -5368,6 +5368,7 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 
 		case DW_FORM_string:
 		case DW_FORM_strp:
+		case DW_FORM_line_strp:
 			if (dwarf_formstring(attr_list[i], &v_str, &de) !=
 			    DW_DLV_OK) {
 				warnx("dwarf_formstring failed: %s",
