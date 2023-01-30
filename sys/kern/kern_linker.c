@@ -618,6 +618,9 @@ linker_make_file(const char *pathname, linker_class_t lc)
 	linker_file_t lf;
 	const char *filename;
 
+	if (strchr(pathname, ':') != NULL)
+		pathname = strchr(pathname, ':') + 1;
+
 	if (!cold)
 		sx_assert(&kld_sx, SA_XLOCKED);
 	filename = linker_basename(pathname);
