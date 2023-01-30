@@ -532,6 +532,7 @@ die_mem_offset(dwarf_t *dw, Dwarf_Die die, Dwarf_Half name,
 	case DW_FORM_data4:
 	case DW_FORM_data8:
 	case DW_FORM_udata:
+	case DW_FORM_implicit_const:
 		/*
 		 * Clang 3.4 generates DW_AT_data_member_location attribute
 		 * with DW_FORM_data* form (constant class). The attribute
@@ -1356,6 +1357,7 @@ typedef struct fp_size_map {
 } fp_size_map_t;
 
 static const fp_size_map_t fp_encodings[] = {
+	{ { 2, 2 }, { CTF_FP_HALF, 0, 0 } },
 	{ { 4, 4 }, { CTF_FP_SINGLE, CTF_FP_CPLX, CTF_FP_IMAGRY } },
 	{ { 8, 8 }, { CTF_FP_DOUBLE, CTF_FP_DCPLX, CTF_FP_DIMAGRY } },
 	{ { 12, 16 }, { CTF_FP_LDOUBLE, CTF_FP_LDCPLX, CTF_FP_LDIMAGRY } },
@@ -1380,7 +1382,8 @@ die_base_type2enc(dwarf_t *dw, Dwarf_Off off, Dwarf_Signed enc, size_t sz)
 		col = 2;
 
 	while (map->fsm_typesz[szidx] != 0) {
-		if (map->fsm_typesz[szidx] * mult == sz)
+		if (map->fsm_typesz[szidx] * mult == sz &&
+		    map->fsm_enc[col] != 0)
 			return (map->fsm_enc[col]);
 		map++;
 	}

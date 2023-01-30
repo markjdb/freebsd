@@ -249,6 +249,7 @@ typedef struct ctf_enum {
 #define  CTF_FP_IMAGRY		10
 #define  CTF_FP_DIMAGRY		11
 #define  CTF_FP_LDIMAGRY	12
+#define  CTF_FP_HALF		13
 #define CTF_FP_OFFSET(e)	_CTF_OFFSET(e)
 #define CTF_FP_BITS(e)		_CTF_BITS(e)
 #define CTF_FP_DATA(e, o, b)	_CTF_DATA(e, o, b)
