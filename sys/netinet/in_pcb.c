@@ -714,7 +714,7 @@ in_pcb_lport_dest(struct inpcb *inp, struct sockaddr *lsa, u_short *lportp,
 	 * the pcbinfo isn't required.
 	 */
 	INP_LOCK_ASSERT(inp);
-	INP_HASH_LOCK_ASSERT(pcbinfo);
+	INP_HASH_WLOCK_ASSERT(pcbinfo);
 
 	if (inp->inp_flags & INP_HIGHPORT) {
 		first = V_ipport_hifirstauto;	/* sysctl */
@@ -891,7 +891,7 @@ in_pcbbind_setup(struct inpcb *inp, struct sockaddr_in *sin, in_addr_t *laddrp,
 	 * No state changes, so read locks are sufficient here.
 	 */
 	INP_LOCK_ASSERT(inp);
-	INP_HASH_LOCK_ASSERT(pcbinfo);
+	INP_HASH_WLOCK_ASSERT(pcbinfo);
 
 	laddr.s_addr = *laddrp;
 	if (sin != NULL && laddr.s_addr != INADDR_ANY)
@@ -1296,7 +1296,7 @@ in_pcbconnect_setup(struct inpcb *inp, struct sockaddr_in *sin,
 	 */
 	NET_EPOCH_ASSERT();
 	INP_LOCK_ASSERT(inp);
-	INP_HASH_LOCK_ASSERT(inp->inp_pcbinfo);
+	INP_HASH_WLOCK_ASSERT(inp->inp_pcbinfo);
 
 	if (sin->sin_port == 0)
 		return (EADDRNOTAVAIL);
@@ -1986,7 +1986,7 @@ in_pcblookup_local(struct inpcbinfo *pcbinfo, struct in_addr laddr,
 
 	KASSERT((lookupflags & ~(INPLOOKUP_WILDCARD)) == 0,
 	    ("%s: invalid lookup flags %d", __func__, lookupflags));
-	INP_HASH_LOCK_ASSERT(pcbinfo);
+	INP_HASH_WLOCK_ASSERT(pcbinfo);
 
 	if ((lookupflags & INPLOOKUP_WILDCARD) == 0) {
 		struct inpcbhead *head;
