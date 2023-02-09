@@ -345,6 +345,9 @@ MD_ROOT_SIZE_CONFIGURED!=	grep MD_ROOT_SIZE opt_md.h || true ; echo
 SYSTEM_OBJS+= embedfs_${MFS_IMAGE:T:R}.o
 .endif
 .endif
+.if ${RESCUE_EMBED:Uno} != "no"
+SYSTEM_OBJS+= rescue.o
+.endif
 SYSTEM_LD_BASECMD= \
 	${LD} -m ${LD_EMULATION} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} \
 	--no-warn-mismatch --warn-common --export-dynamic \

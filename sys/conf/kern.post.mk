@@ -475,4 +475,11 @@ embedfs_${MFS_IMAGE:T:R}.o: ${MFS_IMAGE} $S/dev/md/embedfs.S
 .endif
 .endif
 
+.if ${RESCUE_EMBED:Uno} != "no"
+rescue.o:	${RESCUE_EMBED} $S/dev/md/embedfs.S
+	${CC} ${CFLAGS} ${ACFLAGS} -DMFS_IMAGE=\""${RESCUE_EMBED}"\" \
+	    -DSYM=rescue_start -DSYM_END=rescue_end -c \
+	    $S/dev/md/embedfs.S -o ${.TARGET}
+.endif
+
 .include "kern.mk"

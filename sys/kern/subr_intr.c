@@ -147,6 +147,13 @@ u_int intr_nirq = NIRQ;
 SYSCTL_UINT(_machdep, OID_AUTO, nirq, CTLFLAG_RDTUN, &intr_nirq, 0,
     "Number of IRQs");
 
+#ifdef RESCUE_SUPPORT
+DPCPU_DEFINE_STATIC(struct intr_irqsrc *, isrc_active);
+#define	ISRC_ACTIVE_SET(ptr)	DPCPU_SET(isrc_active, (ptr))
+#else
+#define	ISRC_ACTIVE_SET(ptr)
+#endif
+
 /* Data for MI statistics reporting. */
 u_long *intrcnt;
 char *intrnames;
@@ -407,8 +414,11 @@ intr_isrc_dispatch(struct intr_irqsrc *isrc, struct trapframe *tf)
 	} else
 #endif
 	if (isrc->isrc_event != NULL) {
-		if (intr_event_handle(isrc->isrc_event, tf) == 0)
+		ISRC_ACTIVE_SET(isrc);
+		if (intr_event_handle(isrc->isrc_event, tf) == 0) {
+			ISRC_ACTIVE_SET(NULL);
 			return (0);
+		}
 	}
 
 	isrc_increment_straycount(isrc);
@@ -537,6 +547,24 @@ intr_isrc_deregister(struct intr_irqsrc *isrc)
 	mtx_unlock(&isrc_table_lock);
 	return (error);
 }
+
+#ifdef RESCUE_SUPPORT
+/*
+ * Make sure that active interrupts are acknowledged before executing the rescue
+ * kernel.  Otherwise it will not be possible to reconfigure the PIC.
+ */
+void
+intr_isrc_reset(void)
+{
+	struct intr_irqsrc *isrc;
+
+	MPASS(KERNEL_PANICKED());
+
+	isrc = DPCPU_GET(isrc_active);
+	if (isrc != NULL)
+		PIC_POST_FILTER(isrc->isrc_dev, isrc);
+}
+#endif
 
 #ifdef SMP
 /*

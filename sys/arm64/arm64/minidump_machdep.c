@@ -53,6 +53,9 @@
 #include <machine/md_var.h>
 #include <machine/pte.h>
 #include <machine/minidump.h>
+#ifdef RESCUE_SUPPORT
+#include <machine/rescue.h>
+#endif
 
 CTASSERT(sizeof(struct kerneldumpheader) == 512);
 
@@ -222,6 +225,14 @@ cpu_minidumpsys(struct dumperinfo *di, const struct minidumpstate *state)
 			vm_page_dump_drop(state->dump_bitset, pa);
 	}
 	dumpsize += PAGE_SIZE;
+
+#ifdef RESCUE_SUPPORT
+	if (do_rescue_minidump) {
+		rescue_kernel_exec();
+		/* Shouldn't return here unless something goes very wrong. */
+		return (ENXIO);
+	}
+#endif
 
 	dumpsys_pb_init(dumpsize);
 

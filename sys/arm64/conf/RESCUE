@@ -1,0 +1,19 @@
+include "./GENERIC"
+
+ident		RESCUE
+
+nooptions	RESCUE_SUPPORT
+nomakeoptions	RESCUE_EMBED
+makeoptions	RESCUE_EMBED="no"
+
+makeoptions	NO_MODULES=
+
+#makeoptions	MFS_IMAGE=/root/rescue.img
+
+# Try to keep the rescue kernel small.  Ideally we could use a MINIMAL config,
+# but none exists for arm64.
+options 	NO_SYSCTL_DESCR
+nooptions	WITNESS
+nooptions	SMP
+
+options 	RESCUE

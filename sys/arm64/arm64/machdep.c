@@ -87,6 +87,10 @@
 #include <machine/undefined.h>
 #include <machine/vmparam.h>
 
+#ifdef RESCUE
+#include <machine/rescue.h>
+#endif
+
 #ifdef VFP
 #include <machine/vfp.h>
 #endif
@@ -713,6 +717,175 @@ exclude_efi_memreserve(vm_offset_t efi_systbl_phys)
 
 }
 
+#ifdef RESCUE
+static vm_offset_t
+preload_add_data(vm_offset_t dst, const void *src, uint32_t type, uint32_t size)
+{
+	uint32_t *data;
+
+	data = (uint32_t *)dst;
+	*data++ = type;
+	*data++ = size;
+	memcpy_early(data, src, size);
+	return ((vm_offset_t)data + roundup2(size, sizeof(void *)));
+}
+
+static vm_offset_t
+preload_add_string(vm_offset_t dst, uint32_t type, const char *s)
+{
+	return (preload_add_data(dst, s, type, strlen(s) + 1));
+}
+
+static vm_offset_t
+preload_add_u64(vm_offset_t dst, uint32_t type, uint64_t val)
+{
+	return (preload_add_data(dst, &val, type, sizeof(val)));
+}
+
+static vm_offset_t
+preload_add_efimap(vm_offset_t dst, struct efi_map_header *efihdr)
+{
+	uint32_t size;
+
+	size = roundup2(sizeof(struct efi_map_header), 16) +
+	    efihdr->memory_size;
+	return (preload_add_data(dst, efihdr,
+	    MODINFO_METADATA | MODINFOMD_EFI_MAP, size));
+}
+
+static vm_offset_t
+preload_add_efifb(vm_offset_t dst, struct efi_fb *efifb)
+{
+	return (preload_add_data(dst, efifb,
+	    MODINFO_METADATA | MODINFOMD_EFI_FB, sizeof(struct efi_fb)));
+}
+
+static vm_offset_t
+preload_add_terminator(vm_offset_t dst)
+{
+	memset_early((void *)dst, 0, sizeof(uint32_t) * 2);
+	return (dst + sizeof(uint32_t) * 2);
+}
+
+/*
+ * Fake some preloaded metadata for the rescue kernel using parameters passed by
+ * the panicked kernel.
+ */
+static void
+rescue_preload_init(struct arm64_bootparams *abp)
+{
+	extern u_long _end;
+	static pd_entry_t l1[Ln_ENTRIES] __aligned(PAGE_SIZE);
+	static pd_entry_t l2[Ln_ENTRIES] __aligned(PAGE_SIZE);
+	pd_entry_t pde, *l1p, *l2p;
+	struct rescue_kernel_params *params;
+	pd_entry_t *l0;
+	void *efimap, *efifb;
+	uint64_t ttbr0;
+	vm_offset_t dtb, env, kernend, md, mdstart, off, paramsva;
+
+	/*
+	 * Fetch the boot parameters and DTB/EFI map from the 2MB region
+	 * physically preceding the kernel.  We cannot assume that this region
+	 * is mapped, so we determine its physical address and then map it via
+	 * TTBR0 using a single L2 block entry.  Then the DTB and environment
+	 * are copied to a region following the kernel, so this mapping can be
+	 * transient, though currently we don't tear it down.
+	 *
+	 * Take care to avoid clobbering the existing identity map, in case
+	 * initarm() intends to use it.
+	 */
+	_Static_assert(KERNBASE == VM_MIN_KERNEL_ADDRESS,
+	    "kernel does not start at TTBR1 base");
+	paramsva = KERNBASE - abp->kern_delta - RESCUE_RESERV_KERNEL_OFFSET;
+
+	ttbr0 = READ_SPECIALREG(ttbr0_el1) & TTBR_BADDR;
+	l0 = (pd_entry_t *)(uintptr_t)(ttbr0 + abp->kern_delta);
+	pde = l0[pmap_l0_index(paramsva)];
+	if (pde == 0) {
+		l0[pmap_l0_index(paramsva)] = L0_TABLE |
+		    ((uintptr_t)l1 - abp->kern_delta);
+		l1p = l1;
+	} else {
+		l1p = (pd_entry_t *)((pde & ~ATTR_MASK) + abp->kern_delta);
+	}
+	pde = l1p[pmap_l1_index(paramsva)];
+	if (pde == 0) {
+		l1p[pmap_l1_index(paramsva)] = L1_TABLE |
+		    ((uintptr_t)l2 - abp->kern_delta);
+		l2p = l2;
+	} else {
+		/* Currently locore does not create L1_BLOCK entries. */
+		KASSERT((pde & ATTR_DESCR_MASK) == L1_TABLE,
+		    ("invalid L1 entry %#lx", pde));
+		l2p = (pd_entry_t *)((pde & ~ATTR_MASK) + abp->kern_delta);
+	}
+	KASSERT(l2p[pmap_l2_index(paramsva)] == 0,
+	    ("L2 entry already exists for %#lx", paramsva));
+	l2p[pmap_l2_index(paramsva)] =
+	    L2_BLOCK | ATTR_DEFAULT | ATTR_S1_IDX(VM_MEMATTR_DEFAULT) |
+	    ATTR_S1_nG | paramsva;
+	dsb(ishst);
+	cpu_tlb_flushID();
+
+	/*
+	 * Okay, we can access our parameters now.  Copy the DTB/EFI map and
+	 * environment strings to memory following the kernel.  This ensures
+	 * that they remain mapped after the pmap is bootstrapped.  This relies
+	 * on locore providing some extra space in region following the kernel
+	 * mapped by TTBR1.
+	 */
+	params = (struct rescue_kernel_params *)paramsva;
+	off = round_page((uintptr_t)&_end);
+	if (params->kp_dtbstart != 0) {
+		dtb = off;
+		memcpy_early((void *)dtb, (void *)params->kp_dtbstart,
+		    params->kp_dtblen);
+		off += round_page(params->kp_dtblen);
+	} else if (params->kp_efimapstart != 0) {
+		efimap = (void *)off;
+		memcpy_early(efimap, (void *)params->kp_efimapstart,
+		    params->kp_efimaplen);
+		off += round_page(params->kp_efimaplen);
+	}
+	if (params->kp_efifbaddr != 0) {
+		efifb = (void *)off;
+		memcpy_early(efifb, (void *)params->kp_efifbaddr,
+		    sizeof(struct efi_fb));
+		off += round_page(sizeof(struct efi_fb));
+	}
+
+	env = off;
+	memcpy_early((void *)env, (void *)params->kp_kenvstart,
+	    params->kp_kenvlen);
+	off += round_page(params->kp_kenvlen);
+
+	md = mdstart = off;
+	kernend = mdstart + PAGE_SIZE;
+
+	md = preload_add_string(md, MODINFO_NAME, "kernel");
+	md = preload_add_string(md, MODINFO_TYPE, "elf kernel");
+	md = preload_add_u64(md, MODINFO_ADDR, VM_MIN_KERNEL_ADDRESS);
+	md = preload_add_u64(md, MODINFO_SIZE, (uintptr_t)&_end - KERNBASE);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_KERNEND, kernend);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_HOWTO,
+	    params->kp_boothowto);
+	if (params->kp_dtbstart != 0)
+		md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_DTBP,
+		    dtb);
+	else if (params->kp_efimapstart != 0)
+		md = preload_add_efimap(md, efimap);
+	if (params->kp_efifbaddr != 0)
+		md = preload_add_efifb(md, efifb);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_ENVP, env);
+	preload_add_terminator(md);
+
+	rescue_dumper_init(&params->kp_dumpparams);
+
+	abp->modulep = mdstart;
+}
+#endif /* RESCUE */
+
 #ifdef FDT
 static void
 try_load_dtb(caddr_t kmdp)
@@ -883,6 +1056,16 @@ initarm(struct arm64_bootparams *abp)
 	vm_offset_t lastaddr;
 	caddr_t kmdp;
 	bool valid;
+
+#ifdef RESCUE
+	/*
+	 * The rescue kernel runs without any module metadata.  The panicked
+	 * kernel could provide it, but some variables, like the size of the
+	 * loaded rescue kernel, can't easily be determined there.  So, fake it
+	 * here.
+	 */
+	rescue_preload_init(abp);
+#endif
 
 	TSRAW(&thread0, TS_ENTER, __func__, NULL);
 

@@ -50,6 +50,9 @@
 #include <machine/elf.h>
 #include <machine/md_var.h>
 #include <machine/minidump.h>
+#ifdef RESCUE_SUPPORT
+#include <machine/rescue.h>
+#endif
 #include <machine/vmparam.h>
 
 CTASSERT(sizeof(struct kerneldumpheader) == 512);
@@ -268,6 +271,14 @@ cpu_minidumpsys(struct dumperinfo *di, const struct minidumpstate *state)
 		}
 	}
 	dumpsize += PAGE_SIZE;
+
+#ifdef RESCUE_SUPPORT
+	if (do_rescue_minidump) {
+		rescue_kernel_exec();
+		/* Shouldn't return here unless something goes very wrong. */
+		return (ENXIO);
+	}
+#endif
 
 	wdog_next = progress = dumpsize;
 	dumpsys_pb_init(dumpsize);

@@ -155,6 +155,20 @@ struct efi_prop_table {
 };
 
 #ifdef _KERNEL
+/*
+ * Can a memory range of this type be included in phys_avail[]?
+ */
+static inline bool
+efi_physmem_type(uint32_t type)
+{
+	if (type == EFI_MD_TYPE_CODE ||
+	    type == EFI_MD_TYPE_DATA ||
+	    type == EFI_MD_TYPE_BS_CODE ||
+	    type == EFI_MD_TYPE_BS_DATA ||
+	    type == EFI_MD_TYPE_FREE)
+		return (true);
+	return (false);
+}
 
 #ifdef EFIABI_ATTR
 struct efi_rt {

@@ -68,6 +68,8 @@ arm64/arm64/ptrauth.c				standard \
 	compile-with	"${NORMAL_C:N-mbranch-protection*}"
 arm64/arm64/pmap.c				standard
 arm64/arm64/ptrace_machdep.c			standard
+arm64/arm64/rescue_dumper.c			optional rescue
+arm64/arm64/rescue_machdep.c			optional rescue_support
 arm64/arm64/sigtramp.S				standard
 arm64/arm64/stack_machdep.c			optional ddb | stack
 arm64/arm64/strcmp.S				standard

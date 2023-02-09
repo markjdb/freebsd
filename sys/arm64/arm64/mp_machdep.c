@@ -36,6 +36,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/conf.h>
 #include <sys/cpu.h>
 #include <sys/csan.h>
 #include <sys/domainset.h>
@@ -59,6 +60,9 @@
 #include <machine/cpu.h>
 #include <machine/debug_monitor.h>
 #include <machine/intr.h>
+#ifdef RESCUE_SUPPORT
+#include <machine/rescue.h>
+#endif
 #include <machine/smp.h>
 #ifdef VFP
 #include <machine/vfp.h>
@@ -430,6 +434,13 @@ ipi_stop(void *dummy __unused)
 
 #ifdef DDB
 	dbg_register_sync(NULL);
+#endif
+
+#ifdef RESCUE_SUPPORT
+	if (dumping) {
+		/* Never returns. */
+		rescue_kernel_exec();
+	}
 #endif
 
 	CPU_CLR_ATOMIC(cpu, &started_cpus);

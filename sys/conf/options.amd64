@@ -68,3 +68,17 @@ MPTABLE_LINUX_BUG_COMPAT
 
 # x86 specific uart options
 UART_NS8250_EARLY_PORT	opt_uart.h
+
+#
+# Compile the kernel to be run as a rescue kernel after a panic
+# and enable dumping the host kernel's memory.
+#
+RESCUE			opt_global.h
+
+#
+# Enable recovery of a memory dump by a rescue kernel.  The rescue kernel must
+# be compiled with the RESCUE option configured, and the rescue kernel image
+# must be embedded by setting the RESCUE_EMBED make option to the path of a
+# rescue kernel.  The RESCUE and RESCUE_SUPPORT options are mutually exclusive.
+#
+RESCUE_SUPPORT		opt_global.h

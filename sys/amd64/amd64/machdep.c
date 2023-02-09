@@ -130,6 +130,9 @@
 #include <machine/proc.h>
 #include <machine/sigframe.h>
 #include <machine/specialreg.h>
+#ifdef RESCUE
+#include <machine/rescue.h>
+#endif
 #include <machine/trap.h>
 #include <machine/tss.h>
 #include <x86/ucode.h>
@@ -794,21 +797,8 @@ add_efi_map_entries(struct efi_map_header *efihdr, vm_paddr_t *physmap,
 			printf("\n");
 		}
 
-		switch (p->md_type) {
-		case EFI_MD_TYPE_CODE:
-		case EFI_MD_TYPE_DATA:
-		case EFI_MD_TYPE_BS_CODE:
-		case EFI_MD_TYPE_BS_DATA:
-		case EFI_MD_TYPE_FREE:
-			/*
-			 * We're allowed to use any entry with these types.
-			 */
-			break;
-		default:
-			continue;
-		}
-
-		if (!add_physmap_entry(p->md_phys, p->md_pages * EFI_PAGE_SIZE,
+		if (efi_physmem_type(p->md_type) &&
+		    !add_physmap_entry(p->md_phys, p->md_pages * EFI_PAGE_SIZE,
 		    physmap, physmap_idx))
 			break;
 	}
@@ -1284,6 +1274,105 @@ amd64_loadaddr(void)
 	return (*pde & PG_FRAME);
 }
 
+#ifdef RESCUE
+static vm_offset_t
+preload_add_data(vm_offset_t dst, const void *src, uint32_t type, uint32_t size)
+{
+	uint32_t *data;
+
+	data = (uint32_t *)dst;
+	*data++ = type;
+	*data++ = size;
+	memcpy_early(data, src, size);
+	return ((vm_offset_t)data + roundup2(size, sizeof(void *)));
+}
+
+static vm_offset_t
+preload_add_string(vm_offset_t dst, uint32_t type, const char *s)
+{
+	return (preload_add_data(dst, s, type, strlen(s) + 1));
+}
+
+static vm_offset_t
+preload_add_u64(vm_offset_t dst, uint32_t type, uint64_t val)
+{
+	return (preload_add_data(dst, &val, type, sizeof(val)));
+}
+
+static vm_offset_t
+preload_add_smap(vm_offset_t dst, struct bios_smap *src, uint32_t size)
+{
+	return (preload_add_data(dst, (void *)src,
+	    MODINFO_METADATA | MODINFOMD_SMAP, size));
+}
+
+static vm_offset_t
+preload_add_efimap(vm_offset_t dst, struct efi_map_header *efihdr)
+{
+	uint32_t size;
+
+	size = roundup2(sizeof(struct efi_map_header), 16) +
+	    efihdr->memory_size;
+	return (preload_add_data(dst, efihdr,
+	    MODINFO_METADATA | MODINFOMD_EFI_MAP, size));
+}
+
+static vm_offset_t
+preload_add_efifb(vm_offset_t dst, struct efi_fb *efifb)
+{
+	return (preload_add_data(dst, efifb,
+	    MODINFO_METADATA | MODINFOMD_EFI_FB, sizeof(struct efi_fb)));
+}
+
+static vm_offset_t
+preload_add_terminator(vm_offset_t dst)
+{
+	memset_early((void *)dst, 0, sizeof(uint32_t) * 2);
+	return (dst + sizeof(uint32_t) * 2);
+}
+
+static void
+rescue_preload_init(uint64_t *modulepp, uint64_t *physfreep)
+{
+	struct rescue_kernel_params *params;
+	vm_offset_t env, kernend, md, mdstart, off;
+
+	params = (struct rescue_kernel_params *)KERNBASE;
+
+	off = round_page((uintptr_t)&_end - KERNSTART) + kernphys;
+
+	env = off;
+	memcpy_early((void *)env, (void *)params->kp_kenvstart,
+	    params->kp_kenvlen);
+	off += round_page(params->kp_kenvlen);
+
+	md = mdstart = off;
+	md = preload_add_string(md, MODINFO_NAME, "kernel");
+	md = preload_add_string(md, MODINFO_TYPE, "elf kernel");
+	md = preload_add_u64(md, MODINFO_ADDR, KERNSTART);
+	md = preload_add_u64(md, MODINFO_SIZE, (uintptr_t)&_end - KERNBASE);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_ENVP,
+	    env - (kernphys - KERNLOAD));
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_HOWTO,
+	    params->kp_boothowto);
+	if (params->kp_efimapstart != 0)
+		md = preload_add_efimap(md, (void *)params->kp_efimapstart);
+	else
+		md = preload_add_smap(md, (void *)params->kp_smapstart,
+		    params->kp_smaplen);
+	if (params->kp_efifbaddr != 0)
+		md = preload_add_efifb(md, (void *)params->kp_efifbaddr);
+	kernend = md - mdstart + 3 * sizeof(uint64_t);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_KERNEND, kernend);
+	md = preload_add_terminator(md);
+
+	rescue_dumper_init(&params->kp_dumpparams);
+
+	*modulepp = (uintptr_t)mdstart - (kernphys - KERNLOAD);
+	*physfreep = round_page(md);
+}
+#endif
+
 u_int64_t
 hammer_time(u_int64_t modulep, u_int64_t physfree)
 {
@@ -1301,6 +1390,16 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	kernphys = amd64_loadaddr();
 
 	physfree += kernphys;
+
+#ifdef RESCUE
+	/*
+	 * The rescue kernel runs without any module metadata.  The panicked
+	 * kernel could provide it, but some variables, like the size of the
+	 * loaded rescue kernel, can't easily be determined there.  So, fake it
+	 * here.
+	 */
+	rescue_preload_init(&modulep, &physfree);
+#endif
 
 	kmdp = init_ops.parse_preload_data(modulep);
 

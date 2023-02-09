@@ -370,10 +370,10 @@ LEND(get_load_phys_addr)
  * This builds the page tables containing the identity map, and the kernel
  * virtual map.
  *
- * It relys on:
- *  We were loaded to an address that is on a 2MiB boundary
- *  All the memory must not cross a 1GiB boundaty
- *  x28 contains the physical address we were loaded from
+ * It assumes:
+ * - We were loaded to an address that is on a 2MiB boundary
+ * - All the memory must not cross a 1GiB boundary
+ * - x28 contains the physical address we were loaded from
  *
  * TODO: This is out of date.
  *  There are at least 5 pages before that address for the page tables

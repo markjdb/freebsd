@@ -98,6 +98,9 @@ options 	ZSTDIO			# zstd-compressed kernel and user dumps
 options 	DEBUGNET		# debugnet networking
 options 	NETDUMP			# netdump(4) client support
 
+options 	RESCUE_SUPPORT
+#makeoptions 	RESCUE_EMBED=/path/to/rescue/kernel
+
 # Make an SMP-capable kernel by default
 options 	SMP			# Symmetric MultiProcessor Kernel
 

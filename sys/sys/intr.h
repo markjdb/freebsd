@@ -100,6 +100,9 @@ struct intr_irqsrc {
 int intr_isrc_deregister(struct intr_irqsrc *);
 int intr_isrc_register(struct intr_irqsrc *, device_t, u_int, const char *, ...)
     __printflike(4, 5);
+#ifdef RESCUE_SUPPORT
+void intr_isrc_reset(void);
+#endif
 
 #ifdef SMP
 bool intr_isrc_init_on_cpu(struct intr_irqsrc *isrc, u_int cpu);

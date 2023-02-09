@@ -1,0 +1,138 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2023 Juniper Networks, Inc.
+.\"
+.Dd August 1, 2023
+.Dt RESCUE 4
+.Os
+.Sh NAME
+.Nm rescue
+.Nd Boot a rescue kernel after a kernel panic
+.Sh SYNOPSIS
+To compile a rescue kernel into the kernel, place the following lines in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "options RESCUE_SUPPORT"
+.Cd "makeoptions RESCUE_EMBED=/path/to/rescue/kernel"
+.Ed
+.Pp
+The rescue kernel must be compiled with the following options:
+.Bd -ragged -offset indent
+.Cd "options RESCUE"
+.Ed
+.Pp
+.Sh DESCRIPTION
+The
+.Nm
+mechanism provides a flexible mechanism to save a kernel core dump following a
+panic.
+Traditionally, the approach used by
+.Fx
+has been to designate a "dump device," typically the system's swap partition, to
+which the kernel dumps memory after panicking and before rebooting.
+Following a reboot, the
+.Xr savecore 8
+program recovers the saved memory dump and stores it in the filesystem.
+This approach has the downside of requiring a dedicated dump device,
+complicating system provisioning.
+.Pp
+Rescue kernels take a different approach: when the kernel panics, it automatically
+boots a
+.Ql rescue
+kernel which runs out of a reserved region in RAM; the rescue kernel can repair
+and mount local filesystems, and can subsequently dump the contents of RAM
+directly to a file.
+In particular, rescue kernels implement
+.Pa /dev/dumper ,
+from which a minidump can be read.
+This approach is more flexible: the rescue kernel can be configured to perform
+arbitrary system actions, and can even boot an interactive system.
+Furthermore, it does not require any reservation of disk space.
+The main downside is integration complexity: the rescue kernel must be compiled
+directly into the main kernel, and its actions must be configured.
+.Pp
+One
+.Nm
+configuration is to embed a root filesystem into the rescue kernel image,
+for example using the MD_ROOT kernel option implemented by
+.Xr md 4 .
+The root filesystem could be configured to mount a host filesystem and dump
+system memory to a file before rebooting, for example with
+.Bd -literal -offset indent
+# fsck_ffs -fy /dev/gpt/rootfs
+# mount /dev/gpt/rootfs /mnt
+# dd if=/dev/dumper of=/mnt/var/crash/vmcore bs=1M
+# umount /mnt
+.Ed
+.Pp
+To configure a kernel to boot a rescue kernel upon a panic, build the kernel
+with the
+.Dv RESCUE_SUPPORT
+option, and specify a rescue kernel to embed using the
+.Dv RESCUE_EMBED
+option.
+The
+.Va debug.rescue_minidump
+.Xr loader 8
+tunable must be set to a non-zero value to boot the rescue kernel upon a kernel
+panic.
+.Sh IMPLEMENTATION NOTES
+.Nm
+is currently implemented only for the amd64 and arm64 platforms.
+.Pp
+When a kernel is configured to boot a rescue kernel upon a panic, it reserves
+physically contiguous memory during boot.
+This reservation is solely for use by the rescue kernel, preventing it from
+overwriting memory used by the host kernel.
+.Pp
+Tunables set in the host kernel are inherited by the rescue kernel, with a
+couple of special cases.
+First, the rescue kernel always has
+.Va kern.smp.disabled=1
+set.
+Second, tunables in the host kernel prefixed by
+.Va debug.rescue
+are inherited directly by the rescue kernel.
+For example, setting
+.Va debug.rescue.vm.numa.disabled=1
+in the main kernel will cause
+.Va vm.numa.disabled=1
+to be set in the rescue kernel.
+.Pp
+Use of a rescue kernel requires reserving a region of host memory.
+Typically, 64-96MB of memory is sufficient.
+The default amount reserved can be changed by setting the
+.Va debug.rescue_memsize
+tunable to the desired amount of memory, in bytes.
+For example, setting
+.Va debug.rescue_memsize=256M
+will reserve 256MB of memory for the rescue kernel.
+.Pp
+When the rescue kernel is embedded using the
+.Dv RESCUE_EMBED
+option, the host kernel must copy the rescue kernel to a suitably aligned
+portion of the rescue kernel's memory reservation.
+Thus, system memory will contain two copies of the rescue kernel.
+To avoid wasting memory, on amd64 the original copy of the rescue kernel will
+be freed once the rescue kernel's memory reservation has been initialized.
+This behavior can be disabled by setting
+.Va debug.rescue_free_kernel=0 .
+.Pp
+Currently the
+.Nm
+mechanism assumes that the host and rescue kernels are built from the same
+sources.
+That is, there is no compatibility guarantee if the two kernels are built from
+different revisions of the
+.Fx
+source code, even if doing so appears to work in practice.
+.Sh SEE ALSO
+.Xr md 4 ,
+.Xr arch 7 ,
+.Xr build 7 ,
+.Xr savecore 8 ,
+.Xr panic 9
+.Sh BUGS
+amd64 systems using the LA57 extension, i.e., five-level page tables, are not
+yet supported.

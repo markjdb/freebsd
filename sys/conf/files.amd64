@@ -86,6 +86,8 @@ amd64/amd64/mp_machdep.c	optional	smp
 amd64/amd64/mpboot.S		optional	smp
 amd64/amd64/pmap.c		standard
 amd64/amd64/ptrace_machdep.c	standard
+amd64/amd64/rescue_dumper.c	optional	rescue
+amd64/amd64/rescue_machdep.c	optional	rescue_support
 amd64/amd64/support.S		standard
 amd64/amd64/sys_machdep.c	standard
 amd64/amd64/trap.c		standard

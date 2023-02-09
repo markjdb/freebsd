@@ -61,7 +61,6 @@
  * We are already in long mode, on a 64 bit %cs and running at KERNBASE.
  */
 ENTRY(btext)
-
 	/* Don't trust what the loader gives for rflags. */
 	pushq	$PSL_KERNEL
 	popfq
@@ -88,6 +87,28 @@ ENTRY(btext)
 	call	mi_startup		/* autoconfiguration, mountroot etc */
 0:	hlt
 	jmp	0b
+
+#ifdef RESCUE_SUPPORT
+/*
+ * void rescue_tramp(uint64_t ncr3, uintptr_t startaddr, uintptr_t itramp);
+ *
+ * Set ourselves up to jump to amd64's btext:
+ * - Start executing from the identity map instead of the kernel map.
+ * - Install the bootstrap page tables for the rescue kernel, emulating the
+ *   loader's behaviour of mapping the kernel at KERNBASE and establishing an
+ *   identity map.
+ * - Jump to "startaddr", the rescue kernel's entry point above KERNBASE.
+ */
+	.globl rescue_itramp
+	.p2align 6	/* avoid straddling a page */
+ENTRY(rescue_tramp)
+	jmp	*%rdx	/* jump to rescue_itramp in the identity map */
+rescue_itramp:
+	movq	%rdi, %cr3
+	jmp	*%rsi
+	int3
+END(rescue_tramp)
+#endif /* RESCUE_SUPPORT */
 
 /* la57_trampoline(%rdi pml5) */
 ENTRY(la57_trampoline)

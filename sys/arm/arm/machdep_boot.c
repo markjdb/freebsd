@@ -468,19 +468,8 @@ arm_add_efi_map_entries(struct efi_map_header *efihdr, struct mem_region *mr,
 			printf("\n");
 		}
 
-		switch (p->md_type) {
-		case EFI_MD_TYPE_CODE:
-		case EFI_MD_TYPE_DATA:
-		case EFI_MD_TYPE_BS_CODE:
-		case EFI_MD_TYPE_BS_DATA:
-		case EFI_MD_TYPE_FREE:
-			/*
-			 * We're allowed to use any entry with these types.
-			 */
-			break;
-		default:
+		if (!efi_physmem_type(p->md_type))
 			continue;
-		}
 
 		j++;
 		if (j >= FDT_MEM_REGIONS)

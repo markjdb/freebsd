@@ -245,6 +245,24 @@ intr_register_source(struct intsrc *isrc)
 	return (0);
 }
 
+#ifdef RESCUE_SUPPORT
+void
+intr_rescue_exec(void)
+{
+	for (int v = 0; v < num_io_irqs; v++) {
+		struct intsrc *is;
+
+		is = interrupt_sources[v];
+		if (is == NULL)
+			continue;
+		if (is->is_pic->pic_disable_intr != NULL) {
+			is->is_pic->pic_disable_source(is, PIC_EOI);
+			is->is_pic->pic_disable_intr(is);
+		}
+	}
+}
+#endif
+
 struct intsrc *
 intr_lookup_source(int vector)
 {

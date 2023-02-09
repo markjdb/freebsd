@@ -1654,7 +1654,7 @@ apic_free_vector(u_int apic_id, u_int vector, u_int irq)
 	 * we don't lose an interrupt delivery race.
 	 */
 	td = curthread;
-	if (!rebooting) {
+	if (!rebooting && panicstr == NULL) {
 		thread_lock(td);
 		if (sched_is_bound(td))
 			panic("apic_free_vector: Thread already bound.\n");

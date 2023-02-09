@@ -1,0 +1,21 @@
+# MINIMAL would be good here, but it strips out disk drivers.
+include "./GENERIC"
+
+ident		RESCUE
+
+nooptions	RESCUE_SUPPORT
+nomakeoptions	RESCUE_EMBED
+makeoptions	RESCUE_EMBED="no"
+
+makeoptions	NO_MODULES=
+
+# Try to slim down the kernel itself.
+options 	NO_SYSCTL_DESCR
+nooptions	WITNESS
+
+#options 	MD_ROOT
+#options 	MD_ROOT_READONLY
+#makeoptions 	MFS_IMAGE=/root/rescue-amd64.fs
+
+options 	RESCUE
+#options 	ZFS
