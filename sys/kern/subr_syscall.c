@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/ktrace.h>
 #endif
 #include <security/audit/audit.h>
+#include <sys/kutrace.h>
 
 static inline void
 syscallenter(struct thread *td)
@@ -81,6 +82,7 @@ syscallenter(struct thread *td)
 	}
 	error = (p->p_sysent->sv_fetch_syscall_args)(td);
 	se = sa->callp;
+
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_SYSCALL))
 		ktrsyscall(sa->code, se->sy_narg, sa->args);
@@ -88,6 +90,8 @@ syscallenter(struct thread *td)
 	KTR_START4(KTR_SYSC, "syscall", syscallname(p, sa->code),
 	    (uintptr_t)td, "pid:%d", td->td_proc->p_pid, "arg0:%p", sa->args[0],
 	    "arg1:%p", sa->args[1], "arg2:%p", sa->args[2]);
+	kutrace1(KUTRACE_SYSCALL64 + kutrace_map_nr(sa->code),
+	    sa->args[0] & 0xffffUL);
 
 	if (__predict_false(error != 0)) {
 		td->td_errno = error;
@@ -206,6 +210,9 @@ syscallenter(struct thread *td)
 		PROC_UNLOCK(p);
 	}
 	(p->p_sysent->sv_set_syscall_retval)(td, error);
+
+	kutrace1(KUTRACE_SYSRET64 + kutrace_map_nr(sa->code),
+	    td->td_retval[0] & 0xffffUL);
 }
 
 static inline void
@@ -290,4 +297,10 @@ syscallret(struct thread *td)
 		    TDB_BOUNDARY);
 		PROC_UNLOCK(p);
 	}
+
+#if 0
+	/* Can we cover more of the syscall code? */
+	kutrace1(KUTRACE_SYSRET64 + kutrace_map_nr(sa->code),
+		td->td_retval[0] & 0xffffUL);
+#endif
 }

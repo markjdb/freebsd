@@ -56,6 +56,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/rtprio.h>
 #include <sys/umtxvar.h>
 #include <sys/limits.h>
+
+#include <sys/kutrace.h>
+
 #ifdef	HWPMC_HOOKS
 #include <sys/pmckern.h>
 #endif
@@ -252,6 +255,8 @@ thread_create(struct thread *td, struct rtprio *rtp,
 	p->p_flag |= P_HADTHREADS;
 	thread_link(newtd, p);
 	bcopy(p->p_comm, newtd->td_name, sizeof(newtd->td_name));
+	/* Record the new name for this thread */
+	kutrace_pidrename(newtd);
 	thread_lock(td);
 	/* let the scheduler know about these things. */
 	sched_fork_thread(td, newtd);

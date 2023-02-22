@@ -103,6 +103,8 @@ __FBSDID("$FreeBSD$");
 
 #include <contrib/dev/acpica/include/acpi.h>
 
+#include <sys/kutrace.h>
+
 #define	STATE_RUNNING	0x0
 #define	STATE_MWAIT	0x1
 #define	STATE_SLEEPING	0x2
@@ -285,8 +287,11 @@ acpi_cpu_idle_mwait(uint32_t mwait_hint)
 		v = 0;
 	}
 	cpu_monitor(state, 0, 0);
+	kutrace1(KUTRACE_MWAIT, mwait_hint);
 	if (atomic_load_int(state) == STATE_MWAIT)
 		cpu_mwait(MWAIT_INTRBREAK, mwait_hint);
+	/* Equivalent to IRQ_IPI_RESCHED, waking up blocked thread */
+	kutrace1(KUTRACE_MONITOREXIT, 1);
 
 	/*
 	 * SSB cannot be disabled while we sleep, or rather, if it was
@@ -616,9 +621,11 @@ cpu_idle_mwait(sbintime_t sbt)
 	state = &PCPU_PTR(monitorbuf)->idle_state;
 	if (cpu_idle_enter(state, STATE_MWAIT)) {
 		cpu_monitor(state, 0, 0);
-		if (atomic_load_int(state) == STATE_MWAIT)
+		if (atomic_load_int(state) == STATE_MWAIT) {
+			kutrace1(KUTRACE_MWAIT, MWAIT_C1);
 			__asm __volatile("sti; mwait" : : "a" (MWAIT_C1), "c" (0));
-		else
+			kutrace1(KUTRACE_MONITOREXIT, MWAIT_C1);
+		} else
 			enable_intr();
 		cpu_idle_exit(state);
 	}
@@ -706,6 +713,10 @@ cpu_idle_wakeup(int cpu)
 	case STATE_SLEEPING:
 		return (0);
 	case STATE_MWAIT:
+		/* This stores into a monitored address, */
+		/*   pulling another CPU out if its idle loop. */
+		/* Equivalent to sending IPI_REQCHEDULE */
+		kutrace1(KUTRACE_MONITORSTORE, 0);
 		atomic_store_int(state, STATE_RUNNING);
 		return (cpu_idle_apl31_workaround ? 0 : 1);
 	case STATE_RUNNING:

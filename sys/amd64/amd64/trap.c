@@ -102,6 +102,8 @@ PMC_SOFT_DEFINE( , , page_fault, write);
 #include <sys/dtrace_bsd.h>
 #endif
 
+#include <sys/kutrace.h>
+
 extern inthand_t IDTVEC(bpt), IDTVEC(bpt_pti), IDTVEC(dbg),
     IDTVEC(fast_syscall), IDTVEC(fast_syscall_pti), IDTVEC(fast_syscall32),
     IDTVEC(int0x80_syscall_pti), IDTVEC(int0x80_syscall);
@@ -382,8 +384,9 @@ trap(struct trapframe *frame)
 			if (*p->p_sysent->sv_trap != NULL &&
 			    (*p->p_sysent->sv_trap)(td) == 0)
 				return;
-
+			kutrace1(KUTRACE_TRAP + KUTRACE_PAGEFAULT, 0);
 			pf = trap_pfault(frame, true, &signo, &ucode);
+			kutrace1(KUTRACE_TRAPRET + KUTRACE_PAGEFAULT, 0);
 			if (pf == -1)
 				return;
 			if (pf == 0)
@@ -414,7 +417,9 @@ trap(struct trapframe *frame)
 			/* transparent fault (due to context switch "late") */
 			KASSERT(PCB_USER_FPU(td->td_pcb),
 			    ("kernel FPU ctx has leaked"));
+			kutrace1(KUTRACE_TRAP + KUTRACE_DNA, 0);
 			fpudna();
+			kutrace1(KUTRACE_TRAPRET + KUTRACE_DNA, 0);
 			return;
 
 		case T_FPOPFLT:		/* FPU operand fetch fault */
@@ -441,13 +446,17 @@ trap(struct trapframe *frame)
 		    ("kernel trap doesn't have ucred"));
 		switch (type) {
 		case T_PAGEFLT:			/* page fault */
+			kutrace1(KUTRACE_TRAP + KUTRACE_PAGEFAULT, 0);
 			(void)trap_pfault(frame, false, NULL, NULL);
+			kutrace1(KUTRACE_TRAPRET + KUTRACE_PAGEFAULT, 0);
 			return;
 
 		case T_DNA:
 			if (PCB_USER_FPU(td->td_pcb))
 				panic("Unregistered use of FPU in kernel");
+			kutrace1(KUTRACE_TRAP + KUTRACE_DNA, 0);
 			fpudna();
+			kutrace1(KUTRACE_TRAPRET + KUTRACE_DNA, 0);
 			return;
 
 		case T_ARITHTRAP:	/* arithmetic trap */

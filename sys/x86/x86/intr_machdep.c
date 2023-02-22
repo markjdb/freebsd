@@ -63,6 +63,7 @@
 #ifdef DDB
 #include <ddb/ddb.h>
 #endif
+#include <sys/kutrace.h>
 
 #ifndef DEV_ATPIC
 #include <machine/segments.h>
@@ -350,6 +351,7 @@ intr_execute_handlers(struct intsrc *isrc, struct trapframe *frame)
 	if (vector == 0)
 		clkintr_pending = 1;
 
+	kutrace1(KUTRACE_IRQ + (vector & 0xFF), 0);
 	/*
 	 * For stray interrupts, mask and EOI the source, bump the
 	 * stray count, and log the condition.
@@ -364,6 +366,7 @@ intr_execute_handlers(struct intsrc *isrc, struct trapframe *frame)
 			    "too many stray irq %d's: not logging anymore\n",
 			    vector);
 	}
+	kutrace1(KUTRACE_IRQRET + (vector & 0xFF), 0);
 }
 
 void

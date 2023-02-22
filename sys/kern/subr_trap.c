@@ -78,6 +78,13 @@ __FBSDID("$FreeBSD$");
 #include <sys/epoch.h>
 #endif
 
+#ifdef KUTRACE
+#include <sys/kutrace.h>
+struct kutrace_ops kutrace_global_ops;
+bool kutrace_tracing;
+uint64_t *kutrace_pid_filter;
+#endif
+
 /*
  * Define the code needed before returning to user mode, for trap and
  * syscall.
@@ -341,6 +348,8 @@ ast_handler(struct thread *td, struct trapframe *framep, bool dtor)
 	KASSERT(framep == NULL || TRAPF_USERMODE(framep),
 	    ("ast in kernel mode"));
 
+	kutrace1(KUTRACE_IRQ + KUTRACE_BOTTOM_HALF, AST_SOFTIRQ);
+
 	for (a = 0; a < nitems(ast_entries); a++) {
 		ae = &ast_entries[a];
 		f = ae->ae_f;
@@ -372,6 +381,8 @@ ast(struct trapframe *framep)
 	td = curthread;
 	ast_handler(td, framep, false);
 	userret(td, framep);
+
+	kutrace1(KUTRACE_IRQRET + KUTRACE_BOTTOM_HALF, AST_SOFTIRQ);
 }
 
 void

@@ -80,6 +80,8 @@ __FBSDID("$FreeBSD$");
 #include <ddb/ddb.h>
 #endif
 
+#include <sys/kutrace.h>
+
 #ifdef __amd64__
 #define	SDT_APIC	SDT_SYSIGT
 #define	GSEL_APIC	0
@@ -1337,6 +1339,7 @@ lapic_handle_timer(struct trapframe *frame)
 	la = &lapics[PCPU_GET(apic_id)];
 	(*la->la_timer_count)++;
 	critical_enter();
+	kutrace1(KUTRACE_IRQ + KUTRACE_LOCAL_TIMER_VECTOR, 0);
 	if (lapic_et.et_active) {
 		td = curthread;
 		td->td_intr_nesting_level++;
@@ -1346,6 +1349,12 @@ lapic_handle_timer(struct trapframe *frame)
 		td->td_intr_frame = oldframe;
 		td->td_intr_nesting_level--;
 	}
+	kutrace1(KUTRACE_IRQRET + KUTRACE_LOCAL_TIMER_VECTOR, 0);
+
+	/* dsites 2021.09.19 Trace return address -- we are also a profiler now */
+	/*  This call will insert the current CPU frequency if available */
+	kutrace_pc(frame->tf_rip)
+
 	critical_exit();
 }
 

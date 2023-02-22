@@ -85,6 +85,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
 
+#include <sys/kutrace.h>
+
 #ifdef KDTRACE_HOOKS
 #include <sys/dtrace_bsd.h>
 dtrace_fork_func_t	dtrace_fasttrap_fork;
@@ -469,6 +471,8 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	    __rangeof(struct thread, td_startcopy, td_endcopy));
 
 	bcopy(&p2->p_comm, &td2->td_name, sizeof(td2->td_name));
+	/* Record the new name for this thread */
+	kutrace_pidrename(td2);
 	td2->td_sigstk = td->td_sigstk;
 	td2->td_flags = TDF_INMEM;
 	td2->td_lend_user_pri = PRI_MAX;

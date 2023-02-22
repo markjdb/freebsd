@@ -86,6 +86,8 @@ __FBSDID("$FreeBSD$");
 #include <dev/acpica/acpivar.h>
 #endif
 
+#include <sys/kutrace.h>
+
 static MALLOC_DEFINE(M_CPUS, "cpus", "CPU items");
 
 int	mp_naps;		/* # of Applications processors */
@@ -1299,6 +1301,7 @@ ipi_send_cpu(int cpu, u_int ipi)
 	KASSERT((u_int)cpu < MAXCPU && cpu_apic_ids[cpu] != -1,
 	    ("IPI to non-existent CPU %d", cpu));
 
+	kutrace1(KUTRACE_IPI, cpu);
 	if (IPI_IS_BITMAPED(ipi)) {
 		if (ipi_bitmap_set(cpu, ipi))
 			return;
@@ -1317,6 +1320,7 @@ ipi_bitmap_handler(struct trapframe frame)
 
 	kasan_mark(&frame, sizeof(frame), sizeof(frame), 0);
 
+	kutrace1(KUTRACE_IRQ + IPI_BITMAP_VECTOR, 0);
 	td = curthread;
 	ipi_bitmap = atomic_readandclear_int(&cpuid_to_pcpu[cpu]->
 	    pc_ipi_bitmap);
@@ -1360,6 +1364,7 @@ ipi_bitmap_handler(struct trapframe frame)
 	td->td_intr_nesting_level--;
 	if (ipi_bitmap & (1 << IPI_HARDCLOCK))
 		critical_exit();
+	kutrace1(KUTRACE_IRQRET + IPI_BITMAP_VECTOR, 0);
 }
 
 /*
@@ -1505,6 +1510,7 @@ cpustop_handler(void)
 	u_int cpu;
 	bool use_mwait;
 
+	kutrace1(KUTRACE_IRQ + IPI_STOP, 0);
 	cpu = PCPU_GET(cpuid);
 
 	savectx(&stoppcbs[cpu]);
@@ -1542,6 +1548,7 @@ cpustop_handler(void)
 	}
 
 	cpustop_handler_post(cpu);
+	kutrace1(KUTRACE_IRQRET + IPI_STOP, 0);
 }
 
 static void

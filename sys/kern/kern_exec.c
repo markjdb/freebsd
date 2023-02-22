@@ -88,6 +88,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_object.h>
 #include <vm/vm_pager.h>
 
+#include <sys/kutrace.h>
+
 #ifdef	HWPMC_HOOKS
 #include <sys/pmckern.h>
 #endif
@@ -805,6 +807,8 @@ interpret:
 	else if (vn_commname(newtextvp, p->p_comm, sizeof(p->p_comm)) != 0)
 		bcopy(fexecv_proc_title, p->p_comm, sizeof(fexecv_proc_title));
 	bcopy(p->p_comm, td->td_name, sizeof(td->td_name));
+	/* Record the new name for this thread */
+	kutrace_pidrename(td);
 #ifdef KTR
 	sched_clear_tdname(td);
 #endif

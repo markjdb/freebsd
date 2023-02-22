@@ -65,6 +65,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vmmeter.h>
 #include <sys/cpuset.h>
 #include <sys/sbuf.h>
+#include <sys/kutrace.h>
 
 #ifdef HWPMC_HOOKS
 #include <sys/pmckern.h>
@@ -2198,6 +2199,7 @@ sched_switch(struct thread *td, int flags)
 
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
 
+	kutrace1(KUTRACE_SYSCALL64 + KUTRACE_SCHEDSYSCALL, 0);
 	cpuid = PCPU_GET(cpuid);
 	tdq = TDQ_SELF();
 	ts = td_get_sched(td);
@@ -2294,6 +2296,8 @@ sched_switch(struct thread *td, int flags)
 		if (dtrace_vtime_active)
 			(*dtrace_vtime_switch_func)(newtd);
 #endif
+		kutrace_pidname(newtd);
+		kutrace1(KUTRACE_USERPID, newtd->td_tid - (PID_MAX + 1));
 		td->td_oncpu = NOCPU;
 		cpu_switch(td, newtd, mtx);
 		cpuid = td->td_oncpu = PCPU_GET(cpuid);
@@ -2312,6 +2316,7 @@ sched_switch(struct thread *td, int flags)
 
 	KTR_STATE1(KTR_SCHED, "thread", sched_tdname(td), "running",
 	    "prio:%d", td->td_priority);
+	kutrace1(KUTRACE_SYSRET64 + KUTRACE_SCHEDSYSCALL, 0);
 }
 
 /*
@@ -2780,6 +2785,8 @@ sched_add(struct thread *td, int flags)
 	    KTR_ATTR_LINKED, sched_tdname(td));
 	SDT_PROBE4(sched, , , enqueue, td, td->td_proc, NULL, 
 	    flags & SRQ_PREEMPTED);
+	if (TD_CAN_RUN(td))
+		kutrace1(KUTRACE_RUNNABLE, td->td_tid - (PID_MAX + 1));
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
 	/*
 	 * Recalculate the priority before we select the target cpu or
@@ -3136,6 +3143,9 @@ sched_throw(struct thread *td)
 	struct thread *newtd;
 	struct tdq *tdq;
 
+	kutrace1(KUTRACE_SYSCALL64 + KUTRACE_SCHEDSYSCALL, 0);
+	/* Matching return will be synthesized by KUtrace postprocessing if needed */
+
 	tdq = TDQ_SELF();
 
 	MPASS(td != NULL);
@@ -3148,6 +3158,8 @@ sched_throw(struct thread *td)
 	thread_lock_block(td);
 
 	newtd = sched_throw_grab(tdq);
+	kutrace_pidname(newtd);
+	kutrace1(KUTRACE_USERPID, newtd->td_tid - (PID_MAX + 1));
 
 	/* doesn't return */
 	cpu_switch(td, newtd, TDQ_LOCKPTR(tdq));
