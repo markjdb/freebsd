@@ -57,6 +57,8 @@
 #include <dt_impl.h>
 
 /* kinst-related */
+#include <dis_tables.h>
+
 #include <dwarf.h>
 #include <err.h>
 #include <fcntl.h>
@@ -85,10 +87,13 @@ struct elf_info {
 		uint64_t	sz;
 		uint64_t	entsize;
 		uint64_t	type;
+		uint64_t	addr;
 		uint32_t	link;
 		uint32_t	info;
+		const char	*name;
 	}			*sl;
 	size_t			shnum;
+	int			fd;
 };
 
 struct entry {
@@ -106,7 +111,8 @@ enum {
 	F_INLINE_COPY,
 };
 
-static struct elf_info		ei;
+static struct elf_info		ei_kern;
+static struct elf_info		ei_dbg;
 static dtrace_probedesc_t	*desc;
 static Dwarf_Off		g_dieoff;
 static int			f_inline = 0;
@@ -250,6 +256,82 @@ emalloc(size_t nb)
 	return (p);
 }
 
+static void
+dt_sugar_elf_init(struct elf_info *ei, const char *file)
+{
+	Elf_Scn *scn;
+	GElf_Shdr sh;
+	struct section *s;
+	const char *name;
+	size_t shstrndx, ndx;
+
+	if (elf_version(EV_CURRENT) == EV_NONE)
+		errx(1, "elf_version(): %s", elf_errmsg(-1));
+	if ((ei->fd = open(file, O_RDONLY)) < 0)
+		err(1, "open(%s)", file);
+	if ((ei->elf = elf_begin(ei->fd, ELF_C_READ, NULL)) == NULL)
+		errx(1, "elf_begin(): %s", elf_errmsg(-1));
+	if (elf_kind(ei->elf) == ELF_K_NONE)
+		errx(1, "not an ELF file: %s", file);
+
+	/* Load ELF sections */
+	if (!elf_getshnum(ei->elf, &ei->shnum))
+		errx(1, "elf_getshnum(): %s", elf_errmsg(-1));
+	if ((ei->sl = calloc(ei->shnum, sizeof(struct section))) == NULL)
+		err(1, "calloc");
+	if (!elf_getshstrndx(ei->elf, &shstrndx))
+		errx(1, "elf_getshstrndx(): %s", elf_errmsg(-1));
+	if ((scn = elf_getscn(ei->elf, 0)) == NULL)
+		err(1, "elf_getscn(): %s", elf_errmsg(-1));
+	(void)elf_errno();
+
+	do {
+		if (gelf_getshdr(scn, &sh) == NULL) {
+			warnx("gelf_getshdr(): %s", elf_errmsg(-1));
+			(void)elf_errno();
+			continue;
+		}
+		if ((name = elf_strptr(ei->elf, shstrndx, sh.sh_name)) == NULL)
+			(void)elf_errno();
+		if ((ndx = elf_ndxscn(scn)) == SHN_UNDEF && elf_errno() != 0) {
+			warnx("elf_ndxscn(): %s", elf_errmsg(-1));
+			continue;
+		}
+		if (ndx >= ei->shnum)
+			continue;
+		s = &ei->sl[ndx];
+		s->name = name;
+		s->scn = scn;
+		s->sz = sh.sh_size;
+		s->entsize = sh.sh_entsize;
+		s->type = sh.sh_type;
+		s->addr = sh.sh_addr;
+		s->link = sh.sh_link;
+	} while ((scn = elf_nextscn(ei->elf, scn)) != NULL);
+	if (elf_errno() != 0)
+		warnx("elf_nextscn(): %s", elf_errmsg(-1));
+}
+
+static void
+dt_sugar_elf_deinit(struct elf_info *ei)
+{
+	free(ei->sl);
+	close(ei->fd);
+	elf_end(ei->elf);
+}
+
+static int
+dt_sugar_dis_get_byte(void *p)
+{
+	int ret;
+	uint8_t **instr = p;
+
+	ret = **instr;
+	(*instr)++;
+
+	return (ret);
+}
+
 /*
  * Find the caller function of an inline copy. Since we know the inline copy's
  * boundaries (`addr_lo` and `addr_hi` arguments), the caller function is going
@@ -262,15 +344,19 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 	Elf_Data *d;
 	GElf_Sym sym;
 	struct section *s;
-	uint64_t lo, hi;
+	dis86_t d86;
+	uint8_t *buf;
+	uint64_t addr, lo, hi;
 	uint32_t stab;
 	int len, i, j;
 
-	for (i = 0; i < ei.shnum; i++) {
-		s = &ei.sl[i];
+	/* Find the caller function's boundaries and name. */
+	off->func = NULL;
+	for (i = 1; i < ei_kern.shnum; i++) {
+		s = &ei_kern.sl[i];
 		if (s->type != SHT_SYMTAB && s->type != SHT_DYNSYM)
 			continue;
-		if (s->link >= ei.shnum)
+		if (s->link >= ei_kern.shnum)
 			continue;
 		stab = s->link;
 		(void)elf_errno();
@@ -295,19 +381,56 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 			hi = sym.st_value + sym.st_size;
 			if (addr_lo < lo || addr_hi > hi)
 				continue;
-			if (strcmp(desc->dtpd_name, "entry") == 0) {
-				off->val = addr_lo - lo;
-			} else if (strcmp(desc->dtpd_name, "return") == 0) {
-				off->val = addr_hi - lo;
-				/* FIXME find last instruction's size */
-			}
-			if ((off->func = elf_strptr(ei.elf, stab, sym.st_name))
+			if ((off->func = elf_strptr(ei_kern.elf, stab, sym.st_name))
 			    != NULL)
-				return;
+				break;
 		}
 	}
-	/* NOTREACHED */
-	off->func = NULL;
+
+	if (strcmp(desc->dtpd_name, "entry") == 0) {
+		off->val = addr_lo - lo;
+		return;
+	} else if (strcmp(desc->dtpd_name, "return") == 0)
+		;	/* nothing */
+
+	/* Find inline copy's return offset. */
+	for (i = 1; i < ei_kern.shnum; i++) {
+		s = &ei_kern.sl[i];
+		if (strcmp(s->name, ".text") != 0 || s->type != SHT_PROGBITS)
+			continue;
+		(void)elf_errno();
+		if ((d = elf_getdata(s->scn, NULL)) == NULL) {
+			if (elf_errno() != 0)
+				warnx("elf_getdata(): %s", elf_errmsg(-1));
+			continue;
+		}
+		if (d->d_size <= 0 || d->d_buf == NULL)
+			continue;
+
+		buf = d->d_buf;
+		addr = s->addr;
+
+		d86.d86_data = &buf;
+		d86.d86_get_byte = dt_sugar_dis_get_byte;
+		d86.d86_check_func = NULL;
+
+		/* Get to the inline copy's end. */
+		while (addr != addr_hi) {
+			if (dtrace_disx86(&d86, SIZE64) != 0) {
+				warnx("dtrace_disx86() failed");
+				return;
+			}
+			addr += d86.d86_len;
+		}
+		/*
+		 * DWARF considers addr_hi to be the instruction
+		 * *after* the inline copy's end, so we want to go back
+		 * one instruction.
+		 */
+		addr -= d86.d86_len;
+		off->val = addr - lo;
+		return;
+	}
 }
 
 /*
@@ -648,12 +771,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 	Dwarf_Debug dbg;
 	Dwarf_Die die;
 	Dwarf_Error error;
-	Elf_Scn *scn;
-	GElf_Shdr sh;
-	struct section *s;
-	const char *file = "/usr/lib/debug/boot/kernel/kernel.debug";
-	size_t shstrndx, ndx;
-	int fd, res = DW_DLV_OK;
+	int res = DW_DLV_OK;
 
 	/* We only make entry and return probes for inline functions. */
 	if (strcmp(desc->dtpd_name, "entry") != 0 &&
@@ -662,50 +780,12 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 
 	f_entry_or_return = 1;
 
-	if (elf_version(EV_CURRENT) == EV_NONE)
-		errx(1, "elf_version(): %s", elf_errmsg(-1));
-	if ((fd = open(file, O_RDONLY)) < 0)
-		err(1, "open(%s)", file);
-	if ((ei.elf = elf_begin(fd, ELF_C_READ, NULL)) == NULL)
-		errx(1, "elf_begin(): %s", elf_errmsg(-1));
-	if (elf_kind(ei.elf) == ELF_K_NONE)
-		errx(1, "not an ELF file: %s", file);
-	if (dwarf_elf_init(ei.elf, DW_DLC_READ, NULL, NULL, &dbg, &error) !=
+	dt_sugar_elf_init(&ei_kern, "/boot/kernel/kernel");
+	dt_sugar_elf_init(&ei_dbg, "/usr/lib/debug/boot/kernel/kernel.debug");
+
+	if (dwarf_elf_init(ei_dbg.elf, DW_DLC_READ, NULL, NULL, &dbg, &error) !=
 	    DW_DLV_OK)
 		errx(1, "dwarf_elf_init(): %s", dwarf_errmsg(error));
-
-	/* Load ELF sections */
-	if (!elf_getshnum(ei.elf, &ei.shnum))
-		errx(1, "elf_getshnum(): %s", elf_errmsg(-1));
-	if ((ei.sl = calloc(ei.shnum, sizeof(struct section))) == NULL)
-		err(1, "calloc");
-	if (!elf_getshstrndx(ei.elf, &shstrndx))
-		errx(1, "elf_getshstrndx(): %s", elf_errmsg(-1));
-	if ((scn = elf_getscn(ei.elf, 0)) == NULL)
-		err(1, "elf_getscn(): %s", elf_errmsg(-1));
-	(void)elf_errno();
-
-	do {
-		if (gelf_getshdr(scn, &sh) == NULL) {
-			warnx("gelf_getshdr(): %s", elf_errmsg(-1));
-			(void)elf_errno();
-			continue;
-		}
-		if ((ndx = elf_ndxscn(scn)) == SHN_UNDEF && elf_errno() != 0) {
-			warnx("elf_ndxscn(): %s", elf_errmsg(-1));
-			continue;
-		}
-		if (ndx >= ei.shnum)
-			continue;
-		s = &ei.sl[ndx];
-		s->scn = scn;
-		s->sz = sh.sh_size;
-		s->entsize = sh.sh_entsize;
-		s->type = sh.sh_type;
-		s->link = sh.sh_link;
-	} while ((scn = elf_nextscn(ei.elf, scn)) != NULL);
-	if (elf_errno() != 0)
-		warnx("elf_nextscn(): %s", elf_errmsg(-1));
 
 	TAILQ_INIT(&head);
 	/*
@@ -727,10 +807,9 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 			warnx("%s", dwarf_errmsg(error));
 	} while (dwarf_next_types_section(dbg, &error) == DW_DLV_OK);
 
-	free(ei.sl);
-	elf_end(ei.elf);
+	dt_sugar_elf_deinit(&ei_kern);
+	dt_sugar_elf_deinit(&ei_dbg);
 	dwarf_finish(dbg, &error);
-	close(fd);
 }
 
 /*
