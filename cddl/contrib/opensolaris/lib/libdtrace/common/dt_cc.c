@@ -2492,8 +2492,17 @@ dt_compile(dtrace_hdl_t *dtp, int context, dtrace_probespec_t pspec, void *arg,
 			next_dnp = dnp->dn_list;
 			dnp->dn_list = NULL;
 
-			if (dnp->dn_kind == DT_NODE_CLAUSE)
+			if (dnp->dn_kind == DT_NODE_CLAUSE) {
 				dnp = dt_compile_sugar(dtp, dnp);
+				if (cflags & DTRACE_C_SUGAR) {
+					dt_node_t *p;
+
+					dt_printd(dnp, stdout, 0);
+					for (p = dnp->dn_list; p != NULL;
+					    p = p->dn_list)
+						dt_printd(p, stdout, 0);
+				}
+			}
 			/* append node to the new list */
 			new_list = dt_node_link(new_list, dnp);
 		}
