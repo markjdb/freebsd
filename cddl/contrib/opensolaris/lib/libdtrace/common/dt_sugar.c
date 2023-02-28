@@ -333,9 +333,10 @@ dt_sugar_dis_get_byte(void *p)
 }
 
 /*
- * Find the caller function of an inline copy. Since we know the inline copy's
- * boundaries (`addr_lo` and `addr_hi` arguments), the caller function is going
- * to be the ELF symbol that the inline copy's boundaries are inside of.
+ * Find the caller function and offset of an inline copy. Since we know the
+ * inline copy's boundaries (`addr_lo` and `addr_hi` arguments), the caller
+ * function is going to be the ELF symbol that the inline copy's boundaries are
+ * inside of.
  */
 static void
 dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
@@ -429,7 +430,7 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 		 */
 		addr -= d86.d86_len;
 		off->val = addr - lo;
-		return;
+		break;
 	}
 }
 
@@ -481,13 +482,8 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 		}
 		if (!v_flag)
 			goto cont;
-		res = dwarf_attr(die, DW_AT_name, &attp, &error);
+		res = dwarf_diename(die, &v_str, &error);
 		if (res != DW_DLV_OK) {
-			if (res == DW_DLV_ERROR)
-				warnx("%s", dwarf_errmsg(error));
-			goto cont;
-		}
-		if (dwarf_formstring(attp, &v_str, &error) != DW_DLV_OK) {
 			warnx("%s", dwarf_errmsg(error));
 			goto cont;
 		}
@@ -539,15 +535,8 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 				goto cont;
 			}
 
-			res = dwarf_attr(die_root, DW_AT_low_pc, &attp,
-			    &error);
+			res = dwarf_lowpc(die_root, &v_addr, &error);
 			if (res != DW_DLV_OK) {
-				if (res == DW_DLV_ERROR)
-					warnx("%s", dwarf_errmsg(error));
-				goto cont;
-			}
-			if (dwarf_formaddr(attp, &v_addr, &error) !=
-			    DW_DLV_OK) {
 				warnx("%s", dwarf_errmsg(error));
 				goto cont;
 			}
@@ -580,24 +569,13 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 			dwarf_ranges_dealloc(dbg, ranges, nranges);
 		} else {
 			/* DIE has high/low PC boundaries */
-			res = dwarf_attr(die, DW_AT_low_pc, &attp, &error);
+			res = dwarf_lowpc(die_root, &v_addr, &error);
 			if (res != DW_DLV_OK) {
-				if (res == DW_DLV_ERROR)
-					warnx("%s", dwarf_errmsg(error));
-				goto cont;
-			}
-			if (dwarf_formaddr(attp, &v_addr, &error) != DW_DLV_OK) {
 				warnx("%s", dwarf_errmsg(error));
 				goto cont;
 			}
-			res = dwarf_attr(die, DW_AT_high_pc, &attp, &error);
+			res = dwarf_highpc(die_root, &v_udata, &error);
 			if (res != DW_DLV_OK) {
-				if (res == DW_DLV_ERROR)
-					warnx("%s", dwarf_errmsg(error));
-				goto cont;
-			}
-			if (dwarf_formudata(attp, &v_udata, &error) !=
-			    DW_DLV_OK) {
 				warnx("%s", dwarf_errmsg(error));
 				goto cont;
 			}
