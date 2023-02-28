@@ -81,12 +81,7 @@ struct elf_info {
 	Elf			*elf;
 	struct section	{
 		Elf_Scn		*scn;
-		uint64_t	sz;
-		uint64_t	entsize;
-		uint64_t	type;
-		uint64_t	addr;
-		uint32_t	link;
-		uint32_t	info;
+		GElf_Shdr	sh;
 		const char	*name;
 	}			*sl;
 	size_t			shnum;
@@ -242,17 +237,6 @@ dt_sugar_new_condition(dt_sugar_parse_t *dp, dt_node_t *pred, int condid)
 /*
  * kinst-related
  */
-static void *
-emalloc(size_t nb)
-{
-	void *p;
-
-	if ((p = malloc(nb)) == NULL)
-		err(1, "dt_sugar: malloc");
-
-	return (p);
-}
-
 static void
 dt_sugar_elf_init(struct elf_info *ei, const char *file)
 {
@@ -297,13 +281,9 @@ dt_sugar_elf_init(struct elf_info *ei, const char *file)
 		if (ndx >= ei->shnum)
 			continue;
 		s = &ei->sl[ndx];
-		s->name = name;
 		s->scn = scn;
-		s->sz = sh.sh_size;
-		s->entsize = sh.sh_entsize;
-		s->type = sh.sh_type;
-		s->addr = sh.sh_addr;
-		s->link = sh.sh_link;
+		s->sh = sh;
+		s->name = name;
 	} while ((scn = elf_nextscn(ei->elf, scn)) != NULL);
 	if (elf_errno() != 0)
 		warnx("dt_sugar: elf_nextscn(): %s", elf_errmsg(-1));
@@ -352,11 +332,11 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 	off->func = NULL;
 	for (i = 1; i < ei_kern.shnum; i++) {
 		s = &ei_kern.sl[i];
-		if (s->type != SHT_SYMTAB && s->type != SHT_DYNSYM)
+		if (s->sh.sh_type != SHT_SYMTAB && s->sh.sh_type != SHT_DYNSYM)
 			continue;
-		if (s->link >= ei_kern.shnum)
+		if (s->sh.sh_link >= ei_kern.shnum)
 			continue;
-		stab = s->link;
+		stab = s->sh.sh_link;
 		(void)elf_errno();
 		if ((d = elf_getdata(s->scn, NULL)) == NULL) {
 			if (elf_errno() != 0)
@@ -366,11 +346,11 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 		}
 		if (d->d_size <= 0)
 			continue;
-		if (s->entsize == 0)
+		if (s->sh.sh_entsize == 0)
 			continue;
-		else if (s->sz / s->entsize > INT_MAX)
+		else if (s->sh.sh_size / s->sh.sh_entsize > INT_MAX)
 			continue;
-		len = (int)(s->sz / s->entsize);
+		len = (int)(s->sh.sh_size / s->sh.sh_entsize);
 		for (j = 0; j < len; j++) {
 			if (gelf_getsym(d, j, &sym) != &sym) {
 				warnx("dt_sugar: gelf_getsym(): %s",
@@ -396,7 +376,8 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 	/* Find inline copy's return offset. */
 	for (i = 1; i < ei_kern.shnum; i++) {
 		s = &ei_kern.sl[i];
-		if (strcmp(s->name, ".text") != 0 || s->type != SHT_PROGBITS)
+		if (strcmp(s->name, ".text") != 0 ||
+		    s->sh.sh_type != SHT_PROGBITS)
 			continue;
 		(void)elf_errno();
 		if ((d = elf_getdata(s->scn, NULL)) == NULL) {
@@ -409,7 +390,7 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 			continue;
 
 		buf = d->d_buf;
-		addr = s->addr;
+		addr = s->sh.sh_addr;
 
 		d86.d86_data = &buf;
 		d86.d86_get_byte = dt_sugar_dis_get_byte;
@@ -443,13 +424,14 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
  * to inline copies of the probe function.
  */
 static void
-dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
+dt_sugar_kinst_parse_die(dtrace_hdl_t *dtp, Dwarf_Debug dbg, Dwarf_Die die,
+    int level, int flag)
 {
 	static Dwarf_Die die_root;
 	Dwarf_Die die_next;
 	Dwarf_Ranges *ranges, *rp;
 	Dwarf_Attribute attp;
-	Dwarf_Addr base0, v_addr;
+	Dwarf_Addr base0, lowpc, highpc;
 	Dwarf_Off dieoff, cuoff, culen, v_off;
 	Dwarf_Unsigned nbytes, v_udata;
 	Dwarf_Signed nranges;
@@ -540,12 +522,12 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 				goto cont;
 			}
 
-			res = dwarf_lowpc(die_root, &v_addr, &error);
+			res = dwarf_lowpc(die_root, &lowpc, &error);
 			if (res != DW_DLV_OK) {
 				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
-			base0 = v_addr;
+			base0 = lowpc;
 
 			if (strcmp(desc->dtpd_name, "entry") == 0) {
 				/*
@@ -562,7 +544,7 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 				 */
 				noff = nranges - 1;
 			}
-			off = emalloc(noff * sizeof(struct off));
+			off = dt_alloc(dtp, noff * sizeof(struct off));
 			for (i = 0; i < noff; i++) {
 				rp = &ranges[i];
 				if (rp->dwr_type == DW_RANGES_ADDRESS_SELECTION)
@@ -574,25 +556,25 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 			dwarf_ranges_dealloc(dbg, ranges, nranges);
 		} else {
 			/* DIE has high/low PC boundaries */
-			res = dwarf_lowpc(die_root, &v_addr, &error);
+			res = dwarf_lowpc(die, &lowpc, &error);
 			if (res != DW_DLV_OK) {
 				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
-			res = dwarf_highpc(die_root, &v_udata, &error);
+			res = dwarf_highpc(die, &highpc, &error);
 			if (res != DW_DLV_OK) {
 				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
 			noff = 1;
-			off = emalloc(noff * sizeof(struct off));
-			dt_sugar_kinst_find_caller_func(off, v_addr,
-			    v_addr + v_udata);
+			off = dt_alloc(dtp, noff * sizeof(struct off));
+			dt_sugar_kinst_find_caller_func(off, lowpc,
+			    lowpc + highpc);
 		}
 	} else
 		goto cont;
 
-	e = emalloc(sizeof(struct entry));
+	e = dt_alloc(dtp, sizeof(struct entry));
 	e->noff = noff;
 	e->off = off;
 	TAILQ_INSERT_TAIL(&head, e, next);
@@ -630,13 +612,13 @@ cont:
 	if (res == DW_DLV_ERROR)
 		warnx("dt_sugar: %s", dwarf_errmsg(error));
 	else if (res == DW_DLV_OK)
-		dt_sugar_kinst_parse_die(dbg, die_next, level + 1, flag);
+		dt_sugar_kinst_parse_die(dtp, dbg, die_next, level + 1, flag);
 
 	res = dwarf_siblingof(dbg, die, &die_next, &error);
 	if (res == DW_DLV_ERROR)
 		warnx("dt_sugar: %s", dwarf_errmsg(error));
 	else if (res == DW_DLV_OK)
-		dt_sugar_kinst_parse_die(dbg, die_next, level, flag);
+		dt_sugar_kinst_parse_die(dtp, dbg, die_next, level, flag);
 
 	/*
 	 * Deallocating on level 0 will attempt to double-free, since die_root
@@ -781,8 +763,8 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 			die = NULL;
 			while (dwarf_siblingof(dbg, die, &die, &error) ==
 			    DW_DLV_OK) {
-				dt_sugar_kinst_parse_die(dbg, die, 0,
-				    F_SUBPROGRAM);
+				dt_sugar_kinst_parse_die(dp->dtsp_dtp, dbg,
+				    die, 0, F_SUBPROGRAM);
 			}
 			dwarf_dealloc(dbg, die, DW_DLA_DIE);
 		}
