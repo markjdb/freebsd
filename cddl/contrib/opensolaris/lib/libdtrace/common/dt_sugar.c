@@ -42,10 +42,19 @@
 #include <sys/queue.h>
 
 #include <assert.h>
-#include <strings.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <ctype.h>
+#include <dwarf.h>
+#include <err.h>
+#include <fcntl.h>
+#include <gelf.h>
+#include <libdwarf.h>
+#include <libelf.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <unistd.h>
+
 #include <dt_module.h>
 #include <dt_program.h>
 #include <dt_provider.h>
@@ -56,19 +65,7 @@
 #include <dt_string.h>
 #include <dt_impl.h>
 
-/* kinst-related */
 #include <dis_tables.h>
-
-#include <dwarf.h>
-#include <err.h>
-#include <fcntl.h>
-#include <gelf.h>
-#include <libdwarf.h>
-#include <libelf.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 
 typedef struct dt_sugar_parse {
 	dtrace_hdl_t *dtsp_dtp;		/* dtrace handle */
@@ -251,7 +248,7 @@ emalloc(size_t nb)
 	void *p;
 
 	if ((p = malloc(nb)) == NULL)
-		err(1, "malloc");
+		err(1, "dt_sugar: malloc");
 
 	return (p);
 }
@@ -266,35 +263,35 @@ dt_sugar_elf_init(struct elf_info *ei, const char *file)
 	size_t shstrndx, ndx;
 
 	if (elf_version(EV_CURRENT) == EV_NONE)
-		errx(1, "elf_version(): %s", elf_errmsg(-1));
+		errx(1, "dt_sugar: elf_version(): %s", elf_errmsg(-1));
 	if ((ei->fd = open(file, O_RDONLY)) < 0)
-		err(1, "open(%s)", file);
+		err(1, "dt_sugar: open(%s)", file);
 	if ((ei->elf = elf_begin(ei->fd, ELF_C_READ, NULL)) == NULL)
-		errx(1, "elf_begin(): %s", elf_errmsg(-1));
+		errx(1, "dt_sugar: elf_begin(): %s", elf_errmsg(-1));
 	if (elf_kind(ei->elf) == ELF_K_NONE)
-		errx(1, "not an ELF file: %s", file);
+		errx(1, "dt_sugar: not an ELF file: %s", file);
 
 	/* Load ELF sections */
 	if (!elf_getshnum(ei->elf, &ei->shnum))
-		errx(1, "elf_getshnum(): %s", elf_errmsg(-1));
+		errx(1, "dt_sugar: elf_getshnum(): %s", elf_errmsg(-1));
 	if ((ei->sl = calloc(ei->shnum, sizeof(struct section))) == NULL)
-		err(1, "calloc");
+		err(1, "dt_sugar: calloc");
 	if (!elf_getshstrndx(ei->elf, &shstrndx))
-		errx(1, "elf_getshstrndx(): %s", elf_errmsg(-1));
+		errx(1, "dt_sugar: elf_getshstrndx(): %s", elf_errmsg(-1));
 	if ((scn = elf_getscn(ei->elf, 0)) == NULL)
-		err(1, "elf_getscn(): %s", elf_errmsg(-1));
+		err(1, "dt_sugar: elf_getscn(): %s", elf_errmsg(-1));
 	(void)elf_errno();
 
 	do {
 		if (gelf_getshdr(scn, &sh) == NULL) {
-			warnx("gelf_getshdr(): %s", elf_errmsg(-1));
+			warnx("dt_sugar: gelf_getshdr(): %s", elf_errmsg(-1));
 			(void)elf_errno();
 			continue;
 		}
 		if ((name = elf_strptr(ei->elf, shstrndx, sh.sh_name)) == NULL)
 			(void)elf_errno();
 		if ((ndx = elf_ndxscn(scn)) == SHN_UNDEF && elf_errno() != 0) {
-			warnx("elf_ndxscn(): %s", elf_errmsg(-1));
+			warnx("dt_sugar: elf_ndxscn(): %s", elf_errmsg(-1));
 			continue;
 		}
 		if (ndx >= ei->shnum)
@@ -309,7 +306,7 @@ dt_sugar_elf_init(struct elf_info *ei, const char *file)
 		s->link = sh.sh_link;
 	} while ((scn = elf_nextscn(ei->elf, scn)) != NULL);
 	if (elf_errno() != 0)
-		warnx("elf_nextscn(): %s", elf_errmsg(-1));
+		warnx("dt_sugar: elf_nextscn(): %s", elf_errmsg(-1));
 }
 
 static void
@@ -363,7 +360,8 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 		(void)elf_errno();
 		if ((d = elf_getdata(s->scn, NULL)) == NULL) {
 			if (elf_errno() != 0)
-				warnx("elf_getdata(): %s", elf_errmsg(-1));
+				warnx("dt_sugar: elf_getdata(): %s",
+				    elf_errmsg(-1));
 			continue;
 		}
 		if (d->d_size <= 0)
@@ -375,7 +373,8 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 		len = (int)(s->sz / s->entsize);
 		for (j = 0; j < len; j++) {
 			if (gelf_getsym(d, j, &sym) != &sym) {
-				warnx("gelf_getsym(): %s", elf_errmsg(-1));
+				warnx("dt_sugar: gelf_getsym(): %s",
+				    elf_errmsg(-1));
 				continue;
 			}
 			lo = sym.st_value;
@@ -402,7 +401,8 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 		(void)elf_errno();
 		if ((d = elf_getdata(s->scn, NULL)) == NULL) {
 			if (elf_errno() != 0)
-				warnx("elf_getdata(): %s", elf_errmsg(-1));
+				warnx("dt_sugar: elf_getdata(): %s",
+				    elf_errmsg(-1));
 			continue;
 		}
 		if (d->d_size <= 0 || d->d_buf == NULL)
@@ -417,8 +417,12 @@ dt_sugar_kinst_find_caller_func(struct off *off, uint64_t addr_lo,
 
 		/* Get to the inline copy's end. */
 		while (addr != addr_hi) {
+			/*
+			 * XXX We might have to add #ifdefs when we port kinst
+			 * to other architectures.
+			 */
 			if (dtrace_disx86(&d86, SIZE64) != 0) {
-				warnx("dtrace_disx86() failed");
+				warnx("dt_sugar: dtrace_disx86() failed");
 				return;
 			}
 			addr += d86.d86_len;
@@ -461,15 +465,15 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 		die_root = die;
 
 	if (dwarf_dieoffset(die, &dieoff, &error) != DW_DLV_OK) {
-		warnx("%s", dwarf_errmsg(error));
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
 		goto cont;
 	}
 	if (dwarf_die_CU_offset_range(die, &cuoff, &culen, &error) != DW_DLV_OK) {
-		warnx("%s", dwarf_errmsg(error));
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
 		cuoff = 0;
 	}
 	if (dwarf_tag(die, &tag, &error) != DW_DLV_OK) {
-		warnx("%s", dwarf_errmsg(error));
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
 		goto cont;
 	}
 	if (tag != DW_TAG_subprogram && tag != DW_TAG_inlined_subroutine)
@@ -477,14 +481,14 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 	if (flag == F_SUBPROGRAM && tag == DW_TAG_subprogram) {
 		if (dwarf_hasattr(die, DW_AT_inline, &v_flag, &error) !=
 		    DW_DLV_OK) {
-			warnx("%s", dwarf_errmsg(error));
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
 		if (!v_flag)
 			goto cont;
 		res = dwarf_diename(die, &v_str, &error);
 		if (res != DW_DLV_OK) {
-			warnx("%s", dwarf_errmsg(error));
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
 		if (strcmp(v_str, desc->dtpd_func) != 0)
@@ -499,11 +503,11 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 		res = dwarf_attr(die, DW_AT_abstract_origin, &attp, &error);
 		if (res != DW_DLV_OK) {
 			if (res == DW_DLV_ERROR)
-				warnx("%s", dwarf_errmsg(error));
+				warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
 		if (dwarf_formref(attp, &v_off, &error) != DW_DLV_OK) {
-			warnx("%s", dwarf_errmsg(error));
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
 		v_off += cuoff;
@@ -513,7 +517,7 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 
 		if (dwarf_hasattr(die, DW_AT_ranges, &v_flag, &error) !=
 		    DW_DLV_OK) {
-			warnx("%s", dwarf_errmsg(error));
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
 		if (v_flag) {
@@ -521,23 +525,24 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 			res = dwarf_attr(die, DW_AT_ranges, &attp, &error);
 			if (res != DW_DLV_OK) {
 				if (res == DW_DLV_ERROR)
-					warnx("%s", dwarf_errmsg(error));
+					warnx("dt_sugar: %s",
+					    dwarf_errmsg(error));
 				goto cont;
 			}
 			if (dwarf_global_formref(attp, &v_off, &error) !=
 			    DW_DLV_OK) {
-				warnx("%s", dwarf_errmsg(error));
+				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
 			if (dwarf_get_ranges(dbg, v_off, &ranges, &nranges,
 			    &nbytes, &error) != DW_DLV_OK) {
-				warnx("%s", dwarf_errmsg(error));
+				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
 
 			res = dwarf_lowpc(die_root, &v_addr, &error);
 			if (res != DW_DLV_OK) {
-				warnx("%s", dwarf_errmsg(error));
+				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
 			base0 = v_addr;
@@ -571,12 +576,12 @@ dt_sugar_kinst_parse_die(Dwarf_Debug dbg, Dwarf_Die die, int level, int flag)
 			/* DIE has high/low PC boundaries */
 			res = dwarf_lowpc(die_root, &v_addr, &error);
 			if (res != DW_DLV_OK) {
-				warnx("%s", dwarf_errmsg(error));
+				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
 			res = dwarf_highpc(die_root, &v_udata, &error);
 			if (res != DW_DLV_OK) {
-				warnx("%s", dwarf_errmsg(error));
+				warnx("dt_sugar: %s", dwarf_errmsg(error));
 				goto cont;
 			}
 			noff = 1;
@@ -623,13 +628,13 @@ cont:
 
 	res = dwarf_child(die, &die_next, &error);
 	if (res == DW_DLV_ERROR)
-		warnx("%s", dwarf_errmsg(error));
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
 	else if (res == DW_DLV_OK)
 		dt_sugar_kinst_parse_die(dbg, die_next, level + 1, flag);
 
 	res = dwarf_siblingof(dbg, die, &die_next, &error);
 	if (res == DW_DLV_ERROR)
-		warnx("%s", dwarf_errmsg(error));
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
 	else if (res == DW_DLV_OK)
 		dt_sugar_kinst_parse_die(dbg, die_next, level, flag);
 
@@ -763,7 +768,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 
 	if (dwarf_elf_init(ei_dbg.elf, DW_DLC_READ, NULL, NULL, &dbg, &error) !=
 	    DW_DLV_OK)
-		errx(1, "dwarf_elf_init(): %s", dwarf_errmsg(error));
+		errx(1, "dt_sugar: dwarf_elf_init(): %s", dwarf_errmsg(error));
 
 	TAILQ_INIT(&head);
 	/*
@@ -782,7 +787,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 			dwarf_dealloc(dbg, die, DW_DLA_DIE);
 		}
 		if (res == DW_DLV_ERROR)
-			warnx("%s", dwarf_errmsg(error));
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
 	} while (dwarf_next_types_section(dbg, &error) == DW_DLV_OK);
 
 	dt_sugar_elf_deinit(&ei_kern);
