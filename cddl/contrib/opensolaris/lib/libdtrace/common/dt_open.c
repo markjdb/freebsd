@@ -1311,19 +1311,18 @@ alloc:
 	 */
 #ifndef illumos
 	{
-	char bootfile[MAXPATHLEN];
 	char *p;
 	int i;
-	size_t len = sizeof(bootfile);
+	size_t len = sizeof(dtp->bootfile);
 
 	/* This call shouldn't fail, but use a default just in case. */
-	if (sysctlbyname("kern.bootfile", bootfile, &len, NULL, 0) != 0)
-		strlcpy(bootfile, "kernel", sizeof(bootfile));
+	if (sysctlbyname("kern.bootfile", dtp->bootfile, &len, NULL, 0) != 0)
+		strlcpy(dtp->bootfile, "/boot/kernel/kernel", sizeof(dtp->bootfile));
 
-	if ((p = strrchr(bootfile, '/')) != NULL)
+	if ((p = strrchr(dtp->bootfile, '/')) != NULL)
 		p++;
 	else
-		p = bootfile;
+		p = dtp->bootfile;
 
 	/*
 	 * Format the global variables based on the kernel module name.
