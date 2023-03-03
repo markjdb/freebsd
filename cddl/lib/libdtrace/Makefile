@@ -128,7 +128,7 @@ DSRCS+=		regs_x86.d
 
 YFLAGS+=-d
 
-LIBADD=	ctf elf proc pthread rtld_db dwarf elf
+LIBADD=	ctf dwarf elf proc pthread rtld_db
 
 CLEANFILES=	dt_errtags.c dt_names.c
 
