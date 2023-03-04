@@ -780,20 +780,15 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
 	 * Parse DWARF info for kernel.debug and create entries for the inline
 	 * copies we'll create probes for.
 	 */
-	do {
-		while ((res = dwarf_next_cu_header(dbg, NULL, NULL, NULL, NULL,
-		    NULL, &error)) == DW_DLV_OK) {
-			die = NULL;
-			while (dwarf_siblingof(dbg, die, &die, &error) ==
-			    DW_DLV_OK) {
-				dt_sugar_kinst_parse_die(dp, dbg, die, 0,
-				    F_SUBPROGRAM);
-			}
-			dwarf_dealloc(dbg, die, DW_DLA_DIE);
-		}
-		if (res == DW_DLV_ERROR)
-			warnx("dt_sugar: %s", dwarf_errmsg(error));
-	} while (dwarf_next_types_section(dbg, &error) == DW_DLV_OK);
+	while ((res = dwarf_next_cu_header(dbg, NULL, NULL, NULL, NULL, NULL,
+	    &error)) == DW_DLV_OK) {
+		die = NULL;
+		while (dwarf_siblingof(dbg, die, &die, &error) == DW_DLV_OK)
+			dt_sugar_kinst_parse_die(dp, dbg, die, 0, F_SUBPROGRAM);
+		dwarf_dealloc(dbg, die, DW_DLA_DIE);
+	}
+	if (res == DW_DLV_ERROR)
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
 
 	dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_kern);
 	dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);

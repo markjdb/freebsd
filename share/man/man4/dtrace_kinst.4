@@ -36,9 +36,22 @@ kinst::<function>:<instruction>
 The DTrace
 .Nm kinst
 provider allows the user to trace any instruction in a given kernel function.
-<function> corresponds to the function to be traced, and <instruction> is the
-offset to the specific instruction, and can be obtained from the function's
-disassembly using kgdb from the gdb package.
+.Cm <function>
+corresponds to the function to be traced, and
+.Cm <instruction>
+is the offset to the specific instruction, and can be obtained from the
+function's disassembly using kgdb from the gdb package.
+.Pp
+.Nm kinst
+can also trace inline functions by requesting a probe of the form
+.Cm kinst::<inline_func>:<entry/return> .
+If the probe is
+.Cm entry
+or
+.Cm return
+but the function is not an inline one, the probe will be delegated to FBT,
+otherwise DTrace will find all call sites of the inline function and create
+individual probes for each one of them.
 .Pp
 .Nm kinst
 creates probes on-demand, meaning it searches for and parses the function's
@@ -57,7 +70,7 @@ The provider is currently implemented only for amd64.
 .Sh EXAMPLES
 Find the offset corresponding to the third instruction in
 .Fn vm_fault
-and trace it:
+and trace it, printing the contents of the RSI register:
 .Bd -literal -offset indent
 # kgdb
 (kgdb) disas /r vm_fault
@@ -66,19 +79,45 @@ Dump of assembler code for function vm_fault:
    0xffffffff80876df1 <+1>:     48 89 e5        mov    %rsp,%rbp
    0xffffffff80876df4 <+4>:     41 57   push   %r15
 
-# dtrace -n 'kinst::vm_fault:4'
-  2  81500                       vm_fault:4
-  2  81500                       vm_fault:4
-  2  81500                       vm_fault:4
-  2  81500                       vm_fault:4
-  0  81500                       vm_fault:4
-  ...
+# dtrace -n 'kinst::vm_fault:4 {printf("%#x", regs[R_RSI]);}'
+  2  81500                       vm_fault:4 0x827c56000
+  2  81500                       vm_fault:4 0x827878000
+  2  81500                       vm_fault:4 0x1fab9bef0000
+  2  81500                       vm_fault:4 0xe16cf749000
+  0  81500                       vm_fault:4 0x13587c366000
+  ^C
 .Ed
 .Pp
 Trace all instructions in
 .Fn amd64_syscall :
 .Bd -literal -offset indent
 # dtrace -n 'kinst::amd64_syscall:'
+dtrace: description 'kinst::amd64_syscall:' matched 458 probes
+CPU     ID                    FUNCTION:NAME
+  2  80676                amd64_syscall:323
+  2  80677                amd64_syscall:326
+  2  80678                amd64_syscall:334
+  2  80679                amd64_syscall:339
+  2  80680                amd64_syscall:345
+  2  80681                amd64_syscall:353
+  ^C
+.Ed
+.Pp
+Trace the return point of
+.Fn vm_page_mvqueue ,
+which is an inline function:
+.Bd -literal -offset indent
+# dtrace -n 'kinst::vm_page_mvqueue:return'
+dtrace: description 'kinst::vm_page_mvqueue:return' matched 15 probes
+CPU     ID                    FUNCTION:NAME
+  2  80627               vm_page_advise:421
+  2  80627               vm_page_advise:421
+  2  80627               vm_page_advise:421
+  2  80618            vm_page_deactivate:85
+  1  80618            vm_page_deactivate:85
+  2  80618            vm_page_deactivate:85
+  1  80618            vm_page_deactivate:85
+  ^C
 .Ed
 .Sh SEE ALSO
 .Xr dtrace 1
