@@ -1,7 +1,7 @@
 .\" $FreeBSD$
 .\" Based on PR#2411
 .\"
-.Dd January 13, 2020
+.Dd March 10, 2023
 .Dt TAP 4
 .Os
 .Sh NAME
@@ -313,7 +313,16 @@ calls, there is an additional one for the VMware port.
 VMware
 .Dv SIOCSIFFLAGS .
 .El
+.Ss NETMAP
+.Xr netmap 4
+applications may open
+.Nm
+interfaces.
+Packets written to the interface are placed unmodified on the RX ring, and
+packets written to the host TX ring are handled exactly as if they had
+been written to the interface directly.
 .Sh SEE ALSO
 .Xr inet 4 ,
 .Xr intro 4 ,
+.Xr netmap 4 ,
 .Xr tun 4

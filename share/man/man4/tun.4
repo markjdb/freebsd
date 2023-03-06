@@ -2,7 +2,7 @@
 .\" $FreeBSD$
 .\" Based on PR#2411
 .\"
-.Dd March 17, 2020
+.Dd March 10, 2023
 .Dt TUN 4
 .Os
 .Sh NAME
@@ -328,6 +328,31 @@ All queued packets are thrown away.
 If the interface is up when the data device is not open
 output packets are always thrown away rather than letting
 them pile up.
+.Sh NETMAP
+.Nm
+interfaces can be opened by
+.Xr netmap 4
+applications.
+In this configuration,
+.Nm
+will insert fake Ethernet headers into received packets before they are
+handed to
+.Xr netmap 4 .
+The ethertype will be one of
+.Dv ETHERTYPE_IP
+or
+.Dv ETHERTYPE_IPV6
+depending on the type of packet written to the interface.
+The source MAC address will be
+.Dq 02:02:02:02:02:02
+and the destination MAC address will be
+.Dq 06:06:06:06:06:06 .
+.Pp
+When a
+.Xr netmap 4
+application submits a packet to the host ring, the ethertype is used to
+determine whether the packet is to be treated as an IPv4 or IPv6 packet,
+and the Ethernet header is stripped before any further processing is done.
 .Sh SEE ALSO
 .Xr ioctl 2 ,
 .Xr read 2 ,
@@ -336,6 +361,7 @@ them pile up.
 .Xr devname 3 ,
 .Xr inet 4 ,
 .Xr intro 4 ,
+.Xr netmap 4 ,
 .Xr pty 4 ,
 .Xr tap 4 ,
 .Xr ifconfig 8

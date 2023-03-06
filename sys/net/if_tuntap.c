@@ -226,6 +226,7 @@ static void	tundtor(void *data);
 static void	tunrename(void *arg, struct ifnet *ifp);
 static int	tunifioctl(struct ifnet *, u_long, caddr_t);
 static void	tuninit(struct ifnet *);
+static void	tuninput(if_t ifp, struct mbuf *m);
 static void	tunifinit(void *xtp);
 static int	tuntapmodevent(module_t, int, void *);
 static int	tunoutput(struct ifnet *, struct mbuf *,
@@ -978,6 +979,7 @@ tuncreate(struct cdev *dev)
 		ifp->if_mtu = TUNMTU;
 		ifp->if_start = tunstart;
 		ifp->if_output = tunoutput;
+		ifp->if_input = tuninput;
 
 		ifp->if_snd.ifq_drv_maxlen = 0;
 		IFQ_SET_READY(&ifp->if_snd);
@@ -1367,6 +1369,48 @@ tunifioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 bad:
 	sx_xunlock(&tun_ioctl_sx);
 	return (error);
+}
+
+static void
+tuninput(if_t ifp, struct mbuf *m)
+{
+	struct ether_header *eh;
+	u_int proto;
+
+	KASSERT(if_getcapenable(ifp) & IFCAP_NETMAP,
+	    ("%s: ifnet %s not in netmap mode", __func__, if_name(ifp)));
+	M_ASSERTPKTHDR(m);
+
+	if (__predict_false(m->m_len < ETHER_HDR_LEN)) {
+		m = m_pullup(m, ETHER_HDR_LEN);
+		if (m == NULL) {
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			return;
+		}
+	}
+
+	eh = mtod(m, struct ether_header *);
+	switch (ntohs(eh->ether_type)) {
+	case ETHERTYPE_IP:
+		proto = NETISR_IP;
+		break;
+	case ETHERTYPE_IPV6:
+		proto = NETISR_IPV6;
+		break;
+	default:
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+		m_freem(m);
+		return;
+	}
+
+	m_adj(m, ETHER_HDR_LEN);
+	if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
+	if_inc_counter(ifp, IFCOUNTER_IBYTES, m->m_pkthdr.len);
+
+	M_SETFIB(m, ifp->if_fib);
+	CURVNET_SET(ifp->if_vnet);
+	netisr_dispatch(proto, m);
+	CURVNET_RESTORE();
 }
 
 /*
@@ -1791,12 +1835,38 @@ tunwrite_l2(struct tuntap_softc *tp, struct mbuf *m,
 	return (0);
 }
 
+#ifdef DEV_NETMAP
+/*
+ * Pass L3 packets to netmap.  Create a dummy ethernet header for this purpose,
+ * with hard-coded source and destination addresses.
+ */
+static int
+tunwrite_netmap(if_t ifp, struct mbuf *m, int isr)
+{
+	struct ether_header *eh;
+
+	KASSERT(isr == NETISR_IP || isr == NETISR_IPV6,
+	    ("%s: unexpected isr %d", __func__, isr));
+
+	M_PREPEND(m, ETHER_HDR_LEN, M_NOWAIT);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	eh = mtod(m, struct ether_header *);
+	eh->ether_type = htons(isr == NETISR_IP ? ETHERTYPE_IP : ETHERTYPE_IPV6);
+	memcpy(eh->ether_shost, "\x02\x02\x02\x02\x02\x02", ETHER_ADDR_LEN);
+	memcpy(eh->ether_dhost, "\x06\x06\x06\x06\x06\x06", ETHER_ADDR_LEN);
+	if_input(ifp, m);
+	return (0);
+}
+#endif
+
 static int
 tunwrite_l3(struct tuntap_softc *tp, struct mbuf *m)
 {
 	struct epoch_tracker et;
 	struct ifnet *ifp;
-	int family, isr;
+	int error, family, isr;
 
 	ifp = TUN2IFP(tp);
 	/* Could be unlocked read? */
@@ -1835,11 +1905,18 @@ tunwrite_l3(struct tuntap_softc *tp, struct mbuf *m)
 	if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
 	CURVNET_SET(ifp->if_vnet);
 	M_SETFIB(m, ifp->if_fib);
+
+	error = 0;
 	NET_EPOCH_ENTER(et);
-	netisr_dispatch(isr, m);
+#ifdef DEV_NETMAP
+	if ((if_getcapenable(ifp) & IFCAP_NETMAP) != 0)
+		error = tunwrite_netmap(ifp, m, isr);
+	else
+#endif
+		netisr_dispatch(isr, m);
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-	return (0);
+	return (error);
 }
 
 /*
