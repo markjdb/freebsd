@@ -674,6 +674,7 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 	p = dp->dtsp_clause_list;
 	dcopy = NULL;
 	if (p != NULL) {
+		/* XXX: when do we dt_node_free? */
 		dcopy = dt_node_xalloc(dp->dtsp_dtp, p->dn_kind);
 		if (dcopy == NULL)
 			err(1, "dt_sugar: dt_node_xalloc()");
@@ -719,8 +720,10 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 				 * the very first inline copy's information.
 				 */
 				snprintf(buf, sizeof(buf), "%lu", e->off[i].val);
-				strcpy(dp->dtsp_desc->dtpd_func, e->off[i].func);
-				strcpy(dp->dtsp_desc->dtpd_name, buf);
+				strlcpy(dp->dtsp_desc->dtpd_func, e->off[i].func,
+				    sizeof(dp->dtsp_desc->dtpd_func));
+				strlcpy(dp->dtsp_desc->dtpd_name, buf,
+				    sizeof(dp->dtsp_desc->dtpd_name));
 			} else {
 				/*
 				 * Create new clauses for each inline copy with
