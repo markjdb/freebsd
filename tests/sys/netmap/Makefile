@@ -12,4 +12,6 @@ CFLAGS+=	-I${SRCTOP}/tests
 LIBADD+= 	pthread
 LIBADD+= 	netmap
 
+TESTS_SUBDIRS+=	ifnet
+
 .include <bsd.test.mk>
