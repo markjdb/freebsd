@@ -1,0 +1,253 @@
+# Evaluating Network Performance
+
+Performance evaluation is a difficult task, designing experiments to measure
+how well a system works in a fair way requires a deep understanding of the
+systems involved and the possible sources of error. 
+
+This document will provide an outline of how to build an environment where
+accurate measurements can be taken and will demonstrate one methodology for
+looking at Network Forwarding performance. We expect this methodology to be
+applied to looking at base system performance as well as discovering changes in
+performance during development of applications, netmap modifications and
+device drivers.
+
+With the goal of evaluating changes in performance due to software development
+there are 3 steps we must take to be able to say that our measurements
+accurately describe performance improvement or performance regression in the
+system.
+
+- Build a reproducible testbed
+- Establish system baseline measurements
+- Establish application baseline measurements
+
+Once these three steps have been taken we are able to measure test applications
+and report with confidence on how the system performs.
+
+## Building a Reproducible Testbed
+
+Testbed design is an important factor in performing performance analysis. The
+testbed needs to be able to evaluate the criteria that are important to and
+relevant for any measurement, the testbeds limitations need realistic to the
+real world workload of the application.
+
+Virtual machines are an important component of many systems, but the emulation
+of hardware that any virtualisation system puts in place makes it difficult to
+perform accurate and more importantly repeatable measurements. For this reason
+all the tests discussed in this document focus on real hardware. This is not to
+say that performance evaluation on virtual machines is not possible, but that
+the results from such measurements are more difficult to compare to those made
+on other systems and even those made on other virtual machine hosts.
+
+Virtual machine tests can be added in the same manner as the physical device
+tests that will be described below, but comparisons will only be fair to
+between virtual machine tests. Hardware vs. virtual machine comparisons are
+likely to contain a lot of noise.
+
+It is important that the machines for a performance evaluation testbed have
+only this role. Any performance evaluation needs to be performed in isolation
+to get a true understanding of the baseline throughput available from the
+system.
+
+## FreeBSD Utilities for Network Throughput Measurements
+
+Network throughput can be measured with two metrics, bits per second and
+packets per second. Which metric to use when evaluating a network component is
+entirely dependant on the component and its purpose. Generally, forwarding
+performance is evaluated by measuring packets per second and application
+performance is measured using bits per second.
+
+For measuring application performance and single-flow throughput we recommend
+iperf3. This tool has ability to measure TCP, UDP and SCTP out of the box and
+offers json logging interfaces that allow it to be easily integrated into
+automated testing pipelines.
+
+The iperf3 executable runs as both the client and the server. In most cases the
+default TCP parameters will provide a good baseline measurement for the
+performance of a network. UDP measurements need to have a rate added (the
+default rate is 1 Mbit/s, which is well below the capabilities of modern
+hardware).
+
+For measuring PPS, the Netmap pkt-gen utility in `tools/tools/netmap/pkt-gen.c`
+is handy. It can be configured to act as a traffic generator or a traffic sink.
+It sports a variety of parameters that can be used to configure transmitted
+packets, such as packet size, source and destination IP addresses, and the
+source and destination MAC address. It always transmits UDP packets and thus
+is mostly useful for testing Ethernet- and IP-layer networking functions.
+
+To run pkt-gen as a packet generator:
+
+	# pkt-gen -i netmap:${iface} -f tx
+
+To run pkt-gen as a packet sink:
+
+	# pkt-gen -i netmap:${iface} -f rx
+
+## Evaluating Netmap Application Performance
+
+The Netmap utility `tools/tools/bridge.c` (referred to as nmbridge in this
+document to avoid confusion with if_bridge or a hardware bridge device) example
+application that ships with the Netmap distribution is an example of a simple
+packet forwarder. This bridge tool can connect two network interfaces, or one
+interface and the host network stack, and simply passes packets from one end to
+the other.
+
+nmbridge does not inspect or modify packets passing across it and as it only
+has two members it doesn't need to perform any discovery or routing. This
+simple case makes nmbridge a good proxy for a Netmap application when we want
+to measure the effect of changes to the kernel. In particular, when nmbridge is
+bridging an interface and the host network stack, the system should behave the
+same as it would if nmbridge was not used at all. Thus, nmbridge is in some
+sense a "trivial" Netmap application and is a useful tool for benchmarking.
+
+To bridge a pair of interfaces, run:
+
+	# nmbridge -i netmap:${iface1} -i netmap:${iface2}
+
+To bridge an interface and the host network stack, run:
+
+	# nmbridge -i netmap${iface} -i netmap:${iface}^
+
+Once nmbridge has started, throughput measurements can be used to establish
+baseline numbers for Netmap application overhead.
+
+Note that, depending on the workload and network interface type(s) in use,
+Netmap/nmbridge itself may help or hinder throughput relative to an equivalent
+test without Netmap/nmbridge in the picture. In general, nmbridge incurs
+significant overhead since packet processing is performed in user mode.
+However, in workloads that are bottlenecked by a single thread, nmbridge can
+actually increase throughput by providing a "hand-off" point which allows
+additional CPUs to be put in service of the workload. A baseline measurement
+should also record throughput without Netmap in use if possible.
+
+## Evaluating if_bridge Performance
+
+if_bridge is a virtual network device which implements two distinct functions.
+First, it implements an Ethernet-layer switch which allows packets to be
+forwarded among two or more member interfaces. In particular, if_bridge
+performs MAC address learning and will broadcast packets to all member
+interfaces as appropriate.
+
+Second, an if_bridge interface can be used to receive packets locally.
+if_bridge interfaces have a MAC address and can be assigned an IP address.
+All packets received by member interfaces are examined by the bridge to
+determine whether the packet should be forwarded to a different interface,
+or whether they are destined for one of the other member interfaces or for
+the bridge itself. If the packet is not to be forwarded, it will be
+processed locally by L3 protocol layers.
+
+A generic evaluation of if_bridge performance should seek to independently
+evaluate both of the functions described above. That is, both the L2
+forwarding and local processing cases should be tested. Additional test
+variables to consider are:
+
+1. The number of member interfaces. Ideally if_bridge throughput would be
+   invariant over the number of member interfaces, but this is not necessarily
+   the case.
+2. The number of MAC addresses visible to the bridge. When sending or
+   receiving a packet, if_bridge must update and/or consult its learning
+   tables, and the larger the table, the more costly these operations can be.
+   This is true even when if_bridge is being used in Netmap mode. Note that
+   there is currently no support way to dump the learning table of a bridge.
+
+if_bridge interfaces can be opened in Netmap mode. In this case, all packets
+received by all member interfaces appear in the interface RX ring. When a
+Netmap application transmits a packet by writing it to the interface TX ring,
+if_bridge uses the destination MAC address to determine the appropriate
+destination interface and transmits the packet via that interface. If the
+learning table does not contain this MAC address, a copy of the packet is
+broadcast out of all member interfaces.
+
+When the netmap:bridge0^ interface, i.e., the host interface, is opened,
+packets written to the TX ring are treated as though they were received by one
+of the member interfaces. The source MAC address of the packet is used to
+determine the member interface; if no matching interface is found, the packet
+is discarded.
+
+The performance considerations described above apply whether or not if_bridge
+is opened by a Netmap application.
+
+## An Example Netmap Benchmark
+
+The Development Testbed consists of two machines, a fast packet generator
+(pktgen) host for performing measurements and a device under test (dut).
+
+The `pktgen` host here is a Ryzen 3800X based system with 32GB of RAM, a 2 port
+intel 10Gbit interface (ix0, ix1), an intel 1 Gbit interface (igb0) and two
+intel 2.5Gbit interfaces (igc0, igc1). ix0 is used for control traffic.
+
+The `dut` host is fanless single board computer built around an Intel Celeron
+N5105 @ 2.00GHz with 16GB of RAM and 4 built in intel 2.5Gbit interfaces (igc0,
+igc1, igc2, igc3). igc0 is used for control traffic.
+
+The configuration on the pktgen host is mostly static. The 1Gbit and 1 of the
+2.5Gbit interfaces are moved into VNET jails to allow isolation in the test
+runs. The jails are named for the interfaces for clarity.
+
+Test measurements are performed from the pktgen host towards the jails on the
+host. The network isolation created by the jails ensures that traffic must go
+via `dut` to move between the host and the jails.
+
+pktgen:
+
+	# # place test interfaces into VNET jails for isolation
+	# jail -c name=igc1 persist vnet vnet.interface=igc1
+	# jexec igc1 ifconfig igc1 inet 10.4.1.13/24 up
+	# jail -c name=igb0 persist vnet vnet.interface=igb0
+	# jexec igb0 ifconfig igb0 inet 10.4.1.14/24 up
+
+	# ifconfig igc0 inet 10.4.1.12/24 up
+
+	# # start iperf3 servers in each jail for testing
+	# jexec igc1 iperf3 -s &
+	# jexec igb0 iperf3 -s &
+
+The dut is minimally configured. The interfaces are set up so they can be used
+by nmbridge, and an if_bridge interface is created for use in verification
+of functionality.
+
+dut:
+
+	0. configure test interfaces
+	# ifconfig igc1 promisc up
+	# ifconfig igc2 promisc up
+	# ifconfig igc3 promisc up
+	# ifconfig bridge0 create
+
+	1. baseline measurement, netmap bridging igc1->igc2
+	dut    # nmbridge -i netmap:igc1 -i netmap:igc2
+	pktgen # ping 10.4.1.13
+	pktgen # iperf3 -c 10.4.1.13
+
+	2. simple if_bridge measurement
+	dut # ifconfig bridge0 addm igc2 up
+	dut # nmbridge -i netmap:igc1 -i netmap:bridge0
+
+	pktgen # ping 10.4.1.13
+	pktgen # iperf3 -c 10.4.1.13
+
+	3. multi interface bridge measurement
+	# ifconfig bridge0 addm igc3
+	# nmbridge -i netmap:igc1 -i netmap:bridge0
+
+	pktgen # ping 10.4.1.13
+	pktgen # ping 10.4.1.14
+	pktgen # jexec igc1 ping 10.4.1.14
+	pktgen # jexec igb0 ping igb0 10.4.1.13
+	pktgen # iperf3 -c 10.4.1.13 & iperf3 -c 10.4.1.14
+
+From the above example command the following functionality is tested.
+
+1. bridge continues to function with two interfaces
+2. bridge can be used with if_bridge containing a single interface
+3. bridge can be used with if_bridge containing multiple interface members
+	- they can communicate over the bridge
+	- they cannot communicate on the if_bridge (cross talk)
+
+	I am not sure what this was meant to be about
+	2. **bridge can be used with if_bridge without any interface members**
+
+		2. if_bridge can be used with Netmap and the host stack
+		# ifconfig bridge0 inet 10.4.1.10/24 promisc up
+		# nmbridge -i netmap:bridge0
+		# ifconfig bridge0 delete 10.4.1.10 
+	# ifconfig bridge0 deletem igc1
