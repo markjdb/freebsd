@@ -44,6 +44,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>	/* getifaddrs */
+#include <inttypes.h>
 #include <libnetmap.h>
 #include <math.h>
 #include <net/ethernet.h>
