@@ -112,6 +112,7 @@ struct qemu_fwcfg_user_file {
 static STAILQ_HEAD(qemu_fwcfg_user_file_list,
     qemu_fwcfg_user_file) user_files = STAILQ_HEAD_INITIALIZER(user_files);
 
+#if !defined(__aarch64__)
 static int
 qemu_fwcfg_selector_port_handler(struct vmctx *const ctx __unused, const int in,
     const int port __unused, const int bytes, uint32_t *const eax,
@@ -179,6 +180,7 @@ qemu_fwcfg_data_port_handler(struct vmctx *const ctx __unused, const int in,
 
 	return (0);
 }
+#endif
 
 static int
 qemu_fwcfg_add_item(const uint16_t architecture, const uint16_t index,
@@ -293,6 +295,7 @@ qemu_fwcfg_add_item_signature(void)
 	    (uint8_t *)fwcfg_signature));
 }
 
+#if !defined(__aarch64__)
 static int
 qemu_fwcfg_register_port(const char *const name, const int port, const int size,
     const int flags, const inout_func_t handler)
@@ -308,6 +311,7 @@ qemu_fwcfg_register_port(const char *const name, const int port, const int size,
 
 	return (register_inout(&iop));
 }
+#endif
 
 int
 qemu_fwcfg_add_file(const char *name, const uint32_t size, void *const data)
@@ -424,6 +428,8 @@ qemu_fwcfg_init(struct vmctx *const ctx)
 {
 	int error;
 
+	(void)ctx;
+#if !defined(__aarch64__)
 	/*
 	 * Bhyve supports fwctl (bhyve) and fwcfg (qemu) as firmware interfaces.
 	 * Both are using the same ports. So, it's not possible to provide both
@@ -468,6 +474,7 @@ qemu_fwcfg_init(struct vmctx *const ctx)
 			goto done;
 		}
 	}
+#endif
 
 	/* add common fwcfg items */
 	if ((error = qemu_fwcfg_add_item_signature()) != 0) {

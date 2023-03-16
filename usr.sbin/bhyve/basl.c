@@ -59,7 +59,9 @@ static STAILQ_HEAD(basl_table_list, basl_table) basl_tables = STAILQ_HEAD_INITIA
     basl_tables);
 
 static struct qemu_loader *basl_loader;
+#if defined(__amd64__)
 static struct basl_table *rsdt;
+#endif
 static struct basl_table *xsdt;
 static bool load_into_memory;
 
