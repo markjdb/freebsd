@@ -45,11 +45,23 @@ __FBSDID("$FreeBSD$");
 #include <sys/un.h>
 #endif
 
+#ifdef __amd64__
 #include <amd64/vmm/intel/vmcs.h>
 #include <x86/apicreg.h>
+#endif
 
 #include <machine/atomic.h>
+#ifdef __amd64__
 #include <machine/segments.h>
+#endif
+
+#if defined(__aarch64__)
+#include <dev/psci/psci.h>
+#include <dev/psci/smccc.h>
+
+#include <machine/armreg.h>
+#include <machine/cpu.h>
+#endif
 
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
@@ -87,6 +99,7 @@ __FBSDID("$FreeBSD$");
 #include "bhyverun.h"
 #include "acpi.h"
 #include "atkbdc.h"
+#include "bootcode.h"
 #include "bootrom.h"
 #include "config.h"
 #include "inout.h"
@@ -112,11 +125,24 @@ __FBSDID("$FreeBSD$");
 #include "rtc.h"
 #include "vmgenc.h"
 
+int fdt_build(struct vmctx *ctx, struct vcpu *bsp, int ncpu);
+
 #define GUEST_NIO_PORT		0x488	/* guest upcalls via i/o port */
 
 #define MB		(1024UL * 1024)
 #define GB		(1024UL * MB)
 
+#if defined(__aarch64__)
+#define	VM_EXIT_PC(vmexit)	(vmexit).pc
+#define	VM_EXIT_PC_NAME		"pc"
+#define	VM_REG_GUEST_PC		VM_REG_ELR_EL2
+#elif defined(__amd64__)
+#define	VM_EXIT_PC(vmexit)	(vmexit).rip
+#define	VM_EXIT_PC_NAME		"rip"
+#define	VM_REG_GUEST_PC		VM_REG_GUEST_RIP
+#endif
+
+#ifdef __amd64__
 static const char * const vmx_exit_reason_desc[] = {
 	[EXIT_REASON_EXCEPTION] = "Exception or non-maskable interrupt (NMI)",
 	[EXIT_REASON_EXT_INTR] = "External interrupt",
@@ -183,6 +209,9 @@ static const char * const vmx_exit_reason_desc[] = {
 	[EXIT_REASON_XSAVES] = "XSAVES",
 	[EXIT_REASON_XRSTORS] = "XRSTORS"
 };
+#endif
+
+void init_uart(struct vmctx *);
 
 typedef int (*vmexit_handler_t)(struct vmctx *, struct vcpu *, struct vm_run *);
 
@@ -195,7 +224,12 @@ static char *progname;
 static const int BSP = 0;
 
 static cpuset_t cpumask;
+#ifdef __aarch64__
+static cpuset_t running_cpumask;
+#endif
 
+static int vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu,
+    enum vm_suspend_how how);
 static void vm_loop(struct vmctx *ctx, struct vcpu *vcpu);
 
 static struct vcpu_info {
@@ -213,8 +247,10 @@ usage(int code)
         fprintf(stderr,
 		"Usage: %s [-AaCDeHhPSuWwxY]\n"
 		"       %*s [-c [[cpus=]numcpus][,sockets=n][,cores=n][,threads=n]]\n"
+#ifdef __amd64__
 		"       %*s [-G port] [-k config_file] [-l lpc] [-m mem] [-o var=value]\n"
 		"       %*s [-p vcpu:hostcpu] [-r file] [-s pci] [-U uuid] vmname\n"
+#endif
 		"       -A: create ACPI tables\n"
 		"       -a: local apic is in xAPIC mode (deprecated)\n"
 		"       -C: include guest memory in core file\n"
@@ -226,7 +262,9 @@ usage(int code)
 		"       -h: help\n"
 		"       -k: key=value flat config file\n"
 		"       -K: PS2 keyboard layout\n"
+#ifdef __amd64__
 		"       -l: LPC device configuration\n"
+#endif
 		"       -m: memory size\n"
 		"       -o: set config 'var' to 'value'\n"
 		"       -P: vmexit from the guest on pause\n"
@@ -237,12 +275,20 @@ usage(int code)
 		"       -S: guest memory cannot be swapped\n"
 		"       -s: <slot,driver,configinfo> PCI slot config\n"
 		"       -U: UUID\n"
+#ifdef __amd64__
 		"       -u: RTC keeps UTC time\n"
+#endif
 		"       -W: force virtio to use single-vector MSI\n"
 		"       -w: ignore unimplemented MSRs\n"
+#ifdef __amd64__
 		"       -x: local APIC is in x2APIC mode\n"
-		"       -Y: disable MPtable generation\n",
-		progname, (int)strlen(progname), "", (int)strlen(progname), "",
+		"       -Y: disable MPtable generation\n"
+#endif
+		"",
+		progname,
+#ifdef __amd64__
+		(int)strlen(progname), "", (int)strlen(progname), "",
+#endif
 		(int)strlen(progname), "");
 
 	exit(code);
@@ -474,6 +520,7 @@ build_vcpumaps(void)
 	}
 }
 
+#ifdef __amd64__
 void
 vm_inject_fault(struct vcpu *vcpu, int vector, int errcode_valid,
     int errcode)
@@ -486,6 +533,7 @@ vm_inject_fault(struct vcpu *vcpu, int vector, int errcode_valid,
 	    restart_instruction);
 	assert(error == 0);
 }
+#endif
 
 void *
 paddr_guest2host(struct vmctx *ctx, uintptr_t gaddr, size_t len)
@@ -568,6 +616,7 @@ fbsdrun_deletecpu(int vcpu)
 	return (CPU_EMPTY(&cpumask));
 }
 
+#ifdef __amd64__
 static int
 vmexit_handle_notify(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
     struct vm_exit *vme __unused, uint32_t eax __unused)
@@ -579,7 +628,176 @@ vmexit_handle_notify(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
 #endif
 	return (VMEXIT_CONTINUE);
 }
+#endif
 
+#ifdef __aarch64__
+static uint64_t
+smccc_affinity_info(uint64_t target_affinity, uint32_t lowest_affinity_level)
+{
+	uint64_t cpu_aff, mask = 0;
+
+	switch(lowest_affinity_level) {
+	case 0:
+		mask |= CPU_AFF0_MASK;
+		/* FALLTHROUGH */
+	case 1:
+		mask |= CPU_AFF1_MASK;
+		/* FALLTHROUGH */
+	case 2:
+		mask |= CPU_AFF2_MASK;
+		/* FALLTHROUGH */
+	case 3:
+		mask |= CPU_AFF3_MASK;
+		break;
+	default:
+		return (PSCI_RETVAL_INVALID_PARAMS);
+	}
+
+	for (int vcpu = 0; vcpu < guest_ncpus; vcpu++) {
+		/* TODO: We should get this from the kernel */
+		cpu_aff = (vcpu & 0xf) << MPIDR_AFF0_SHIFT |
+		    ((vcpu >> 4) & 0xff) << MPIDR_AFF1_SHIFT |
+		    ((vcpu >> 12) & 0xff) << MPIDR_AFF2_SHIFT |
+		    (uint64_t)((vcpu >> 20) & 0xff) << MPIDR_AFF3_SHIFT;
+
+		if ((cpu_aff & mask) == (target_affinity & mask)) {
+			if (CPU_ISSET(vcpu, &running_cpumask)) {
+				/* Return ON if any CPUs are on */
+				return (PSCI_AFFINITY_INFO_ON);
+			}
+		}
+	}
+
+	/* No CPUs in the affinity mask are on, return OFF */
+	return (PSCI_AFFINITY_INFO_OFF);
+}
+
+static int
+vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
+{
+	struct vcpu *newvcpu;
+	uint64_t newcpu, smccc_rv;
+	enum vm_suspend_how how;
+	int error;
+
+	/* Return the Unknown Function Identifier  by default */
+	smccc_rv = SMCCC_RET_NOT_SUPPORTED;
+
+	switch (vme->u.smccc_call.func_id) {
+	case PSCI_FNID_VERSION:
+		/* We implement PSCI 1.0 */
+		smccc_rv = PSCI_VER(1, 0);
+		break;
+	case PSCI_FNID_CPU_SUSPEND:
+	case PSCI_FNID_CPU_OFF:
+		break;
+	case PSCI_FNID_CPU_ON:
+		newcpu = vme->u.smccc_call.args[0];
+		if (newcpu > (uint64_t)guest_ncpus) {
+			smccc_rv = PSCI_RETVAL_INVALID_PARAMS;
+			break;
+		}
+
+		if (CPU_ISSET(newcpu, &running_cpumask)) {
+			smccc_rv = PSCI_RETVAL_ALREADY_ON;
+			break;
+		}
+
+		newvcpu = vcpu_info[newcpu].vcpu;
+		assert(newvcpu != NULL);
+
+		/* Set the context ID */
+		error = vm_set_register(newvcpu, VM_REG_GUEST_X0,
+		    vme->u.smccc_call.args[2]);
+		assert(error == 0);
+
+		/* Set the start program counter */
+		error = vm_set_register(newvcpu, VM_REG_GUEST_PC,
+		    vme->u.smccc_call.args[1]);
+		assert(error == 0);
+
+		vm_resume_cpu(newvcpu);
+		CPU_SET_ATOMIC(newcpu, &running_cpumask);
+
+		smccc_rv = PSCI_RETVAL_SUCCESS;
+		break;
+	case PSCI_FNID_AFFINITY_INFO:
+		smccc_rv = smccc_affinity_info(vme->u.smccc_call.args[0],
+		    vme->u.smccc_call.args[1]);
+		break;
+	case PSCI_FNID_SYSTEM_OFF:
+	case PSCI_FNID_SYSTEM_RESET:
+		if (vme->u.smccc_call.func_id == PSCI_FNID_SYSTEM_OFF)
+			how = VM_SUSPEND_POWEROFF;
+		else
+			how = VM_SUSPEND_RESET;
+		/* Stop the other CPUs */
+		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++) {
+			if (vcpuid != vcpu_id(vcpu)) {
+				fbsdrun_deletecpu(vcpuid);
+			}
+		}
+		vm_do_suspend(ctx, vcpu, how);
+		/* Shouldn't return */
+		assert(false);
+		break;
+	default:
+		break;
+	}
+
+	error = vm_set_register(vcpu, VM_REG_GUEST_X0, smccc_rv);
+	assert(error == 0);
+
+	return (VMEXIT_CONTINUE);
+}
+
+static int
+vmexit_hyp(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_exit *vme)
+{
+	uint64_t esr, exception;
+	int error;
+
+printf("%s: %lx\n", __func__, vme->u.hyp.esr_el2);
+	exception = ESR_ELx_EXCEPTION(vme->u.hyp.esr_el2);
+	switch(exception) {
+	case EXCP_INSN_ABORT_L:
+	case EXCP_DATA_ABORT_L:
+		switch (vme->u.hyp.esr_el2 & ISS_DATA_DFSC_MASK) {
+		case ISS_DATA_DFSC_TF_L0:
+		case ISS_DATA_DFSC_TF_L1:
+		case ISS_DATA_DFSC_TF_L2:
+		case ISS_DATA_DFSC_TF_L3:
+			if (exception == EXCP_INSN_ABORT_L)
+				esr = EXCP_INSN_ABORT << ESR_ELx_EC_SHIFT;
+			else
+				esr = EXCP_DATA_ABORT << ESR_ELx_EC_SHIFT;
+
+			esr |= vme->u.hyp.esr_el2 & ESR_ELx_IL;
+
+			/*
+			 * If the IPA was past the sanitized PA range inject
+			 * an address size fault. Otherwise the address is
+			 * unmapped so we need t oinject an external abort.
+			 */
+			if (false/* addr > PARange */)
+				/* Inject an address fault at level 0 */
+				esr |= ISS_DATA_DFSC_ASF_L0;
+			else
+				/* Inject an external data abort */
+				esr |= ISS_DATA_DFSC_EXT;
+			error = vm_inject_exception(vcpu, esr,
+			    vme->u.hyp.far_el2);
+			assert(error == 0);
+			return (VMEXIT_CONTINUE);
+		}
+
+		break;
+	}
+	return (VMEXIT_ABORT);
+}
+#endif
+
+#ifdef __amd64__
 static int
 vmexit_inout(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 {
@@ -673,6 +891,7 @@ static uint64_t ept_misconfig_gpa, ept_misconfig_pte[4];
 static int ept_misconfig_ptenum;
 #endif
 
+#ifdef __amd64__
 static const char *
 vmexit_vmx_desc(uint32_t exit_reason)
 {
@@ -682,6 +901,7 @@ vmexit_vmx_desc(uint32_t exit_reason)
 		return ("Unknown");
 	return (vmx_exit_reason_desc[exit_reason]);
 }
+#endif
 
 static int
 vmexit_vmx(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
@@ -692,11 +912,13 @@ vmexit_vmx(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 
 	fprintf(stderr, "vm exit[%d]\n", vcpu_id(vcpu));
 	fprintf(stderr, "\treason\t\tVMX\n");
-	fprintf(stderr, "\trip\t\t0x%016lx\n", vme->rip);
+	fprintf(stderr, "\t"VM_EXIT_PC_NAME"\t\t0x%016lx\n", VM_EXIT_PC(*vme));
 	fprintf(stderr, "\tinst_length\t%d\n", vme->inst_length);
 	fprintf(stderr, "\tstatus\t\t%d\n", vme->u.vmx.status);
+#ifdef __amd64__
 	fprintf(stderr, "\texit_reason\t%u (%s)\n", vme->u.vmx.exit_reason,
 	    vmexit_vmx_desc(vme->u.vmx.exit_reason));
+#endif
 	fprintf(stderr, "\tqualification\t0x%016lx\n",
 	    vme->u.vmx.exit_qualification);
 	fprintf(stderr, "\tinst_type\t\t%d\n", vme->u.vmx.inst_type);
@@ -728,23 +950,28 @@ vmexit_svm(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_run *vmrun)
 
 	fprintf(stderr, "vm exit[%d]\n", vcpu_id(vcpu));
 	fprintf(stderr, "\treason\t\tSVM\n");
-	fprintf(stderr, "\trip\t\t0x%016lx\n", vme->rip);
+	fprintf(stderr, "\t"VM_EXIT_PC_NAME"\t\t0x%016lx\n", VM_EXIT_PC(*vme));
 	fprintf(stderr, "\tinst_length\t%d\n", vme->inst_length);
 	fprintf(stderr, "\texitcode\t%#lx\n", vme->u.svm.exitcode);
 	fprintf(stderr, "\texitinfo1\t%#lx\n", vme->u.svm.exitinfo1);
 	fprintf(stderr, "\texitinfo2\t%#lx\n", vme->u.svm.exitinfo2);
 	return (VMEXIT_ABORT);
 }
+#endif
 
 static int
 vmexit_bogus(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
     struct vm_run *vmrun)
 {
+	(void)vmrun;
+#ifdef __amd64__
 	assert(vmrun->vm_exit->inst_length == 0);
+#endif
 
 	return (VMEXIT_CONTINUE);
 }
 
+#ifdef __amd64__
 static int
 vmexit_reqidle(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
     struct vm_run *vmrun)
@@ -789,19 +1016,24 @@ vmexit_mtrap(struct vmctx *ctx __unused, struct vcpu *vcpu,
 
 	return (VMEXIT_CONTINUE);
 }
+#endif
 
 static int
 vmexit_inst_emul(struct vmctx *ctx __unused, struct vcpu *vcpu,
     struct vm_run *vmrun)
 {
 	struct vm_exit *vme;
+	int err;
 	struct vie *vie;
-	int err, i, cs_d;
+#ifdef __amd64__
+	int i, cs_d;
 	enum vm_cpu_mode mode;
+#endif
 
 	vme = vmrun->vm_exit;
 
 	vie = &vme->u.inst_emul.vie;
+#ifdef __amd64__
 	if (!vie->decoded) {
 		/*
 		 * Attempt to decode in userspace as a fallback.  This allows
@@ -818,6 +1050,7 @@ vmexit_inst_emul(struct vmctx *ctx __unused, struct vcpu *vcpu,
 		    vme->rip + vie->num_processed) != 0)
 			goto fail;
 	}
+#endif
 
 	err = emulate_mem(vcpu, vme->u.inst_emul.gpa, vie,
 	    &vme->u.inst_emul.paging);
@@ -832,10 +1065,14 @@ vmexit_inst_emul(struct vmctx *ctx __unused, struct vcpu *vcpu,
 	return (VMEXIT_CONTINUE);
 
 fail:
-	fprintf(stderr, "Failed to emulate instruction sequence [ ");
+	fprintf(stderr, "Failed to emulate instruction ");
+#ifdef __amd64__
+	fprintf(stderr, "sequence [ ");
 	for (i = 0; i < vie->num_valid; i++)
 		fprintf(stderr, "%02x", vie->inst[i]);
-	FPRINTLN(stderr, " ] at 0x%lx", vme->rip);
+	fprintf(stderr, " ] ");
+#endif
+	FPRINTLN(stderr, "at 0x%lx", VM_EXIT_PC(*vme));
 	return (VMEXIT_ABORT);
 }
 
@@ -843,15 +1080,9 @@ static pthread_mutex_t resetcpu_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t resetcpu_cond = PTHREAD_COND_INITIALIZER;
 
 static int
-vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
+vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu, enum vm_suspend_how how)
 {
-	struct vm_exit *vme;
-	enum vm_suspend_how how;
 	int vcpuid = vcpu_id(vcpu);
-
-	vme = vmrun->vm_exit;
-
-	how = vme->u.suspended.how;
 
 	fbsdrun_deletecpu(vcpuid);
 
@@ -887,6 +1118,17 @@ vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 }
 
 static int
+vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
+{
+	struct vm_exit *vme;
+	enum vm_suspend_how how;
+
+	vme = vmrun->vm_exit;
+	how = vme->u.suspended.how;
+	return (vm_do_suspend(ctx, vcpu, how));
+}
+
+static int
 vmexit_debug(struct vmctx *ctx __unused, struct vcpu *vcpu,
     struct vm_run *vmrun __unused)
 {
@@ -906,6 +1148,7 @@ vmexit_debug(struct vmctx *ctx __unused, struct vcpu *vcpu,
 	return (VMEXIT_CONTINUE);
 }
 
+#ifdef __amd64__
 static int
 vmexit_breakpoint(struct vmctx *ctx __unused, struct vcpu *vcpu,
     struct vm_run *vmrun)
@@ -950,23 +1193,36 @@ vmexit_ipi(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
 
 	return (error);
 }
+#endif
 
 static vmexit_handler_t handler[VM_EXITCODE_MAX] = {
+#ifdef __amd64__
 	[VM_EXITCODE_INOUT]  = vmexit_inout,
 	[VM_EXITCODE_INOUT_STR]  = vmexit_inout,
 	[VM_EXITCODE_VMX]    = vmexit_vmx,
 	[VM_EXITCODE_SVM]    = vmexit_svm,
+#endif
 	[VM_EXITCODE_BOGUS]  = vmexit_bogus,
+#ifdef __amd64__
 	[VM_EXITCODE_REQIDLE] = vmexit_reqidle,
 	[VM_EXITCODE_RDMSR]  = vmexit_rdmsr,
 	[VM_EXITCODE_WRMSR]  = vmexit_wrmsr,
 	[VM_EXITCODE_MTRAP]  = vmexit_mtrap,
+#endif
 	[VM_EXITCODE_INST_EMUL] = vmexit_inst_emul,
 	[VM_EXITCODE_SUSPENDED] = vmexit_suspend,
+#ifdef __amd64__
 	[VM_EXITCODE_TASK_SWITCH] = vmexit_task_switch,
+#endif
 	[VM_EXITCODE_DEBUG] = vmexit_debug,
+#ifdef __amd64__
 	[VM_EXITCODE_BPT] = vmexit_breakpoint,
 	[VM_EXITCODE_IPI] = vmexit_ipi,
+#endif
+#ifdef __aarch64__
+	[VM_EXITCODE_SMCCC] = vmexit_smccc,
+	[VM_EXITCODE_HYP] = vmexit_hyp,
+#endif
 };
 
 static void
@@ -1033,7 +1289,7 @@ num_vcpus_allowed(struct vmctx *ctx, struct vcpu *vcpu)
 }
 
 static void
-fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp)
+fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp __unused)
 {
 	int err, tmp;
 
@@ -1044,8 +1300,10 @@ fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp)
 			exit(4);
 		}
 		vm_set_capability(vcpu, VM_CAP_HALT_EXIT, 1);
+#ifdef __amd64__
 		if (bsp)
 			handler[VM_EXITCODE_HLT] = vmexit_hlt;
+#endif
 	}
 
 	if (get_config_bool_default("x86.vmexit_on_pause", false)) {
@@ -1059,14 +1317,19 @@ fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp)
 			exit(4);
 		}
 		vm_set_capability(vcpu, VM_CAP_PAUSE_EXIT, 1);
+#ifdef __amd64__
 		if (bsp)
 			handler[VM_EXITCODE_PAUSE] = vmexit_pause;
+#endif
         }
 
+#ifdef __amd64__
 	if (get_config_bool_default("x86.x2apic", false))
 		err = vm_set_x2apic_state(vcpu, X2APIC_ENABLED);
 	else
 		err = vm_set_x2apic_state(vcpu, X2APIC_DISABLED);
+
+	vm_set_capability(ctx, cpu, VM_CAP_ENABLE_INVPCID, 1);
 
 	if (err) {
 		fprintf(stderr, "Unable to set x2apic state (%d)\n", err);
@@ -1077,6 +1340,7 @@ fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp)
 
 	err = vm_set_capability(vcpu, VM_CAP_IPI_EXIT, 1);
 	assert(err == 0);
+#endif
 }
 
 static struct vmctx *
@@ -1088,8 +1352,13 @@ do_open(const char *vmname)
 
 	reinit = romboot = false;
 
+#ifdef __aarch64__
+	romboot = true;
+#endif
+#ifdef __amd64__
 	if (lpc_bootrom())
 		romboot = true;
+#endif
 
 	error = vm_create(vmname);
 	if (error) {
@@ -1135,21 +1404,24 @@ do_open(const char *vmname)
 			exit(4);
 		}
 	}
+#ifdef __amd64__
 	error = vm_set_topology(ctx, cpu_sockets, cpu_cores, cpu_threads,
 	    0 /* maxcpus, unimplemented */);
 	if (error)
 		errx(EX_OSERR, "vm_set_topology");
+#endif
 	return (ctx);
 }
 
 static void
 spinup_vcpu(struct vcpu_info *vi, bool bsp)
 {
-	int error;
+	//int error;
 
 	if (!bsp) {
 		fbsdrun_set_capabilities(vi->vcpu, false);
 
+#if 0
 		/*
 		 * Enable the 'unrestricted guest' mode for APs.
 		 *
@@ -1157,6 +1429,7 @@ spinup_vcpu(struct vcpu_info *vi, bool bsp)
 		 */
 		error = vm_set_capability(vi->vcpu, VM_CAP_UNRESTRICTED_GUEST, 1);
 		assert(error == 0);
+#endif
 	}
 
 	fbsdrun_addcpu(vi);
@@ -1247,7 +1520,9 @@ main(int argc, char *argv[])
 	int max_vcpus, memflags;
 	struct vcpu *bsp;
 	struct vmctx *ctx;
+#ifdef __amd64__
 	struct qemu_fwcfg_item *e820_fwcfg_item;
+#endif
 	uint64_t rip;
 	size_t memsize;
 	const char *optstr, *value, *vmname;
@@ -1269,9 +1544,11 @@ main(int argc, char *argv[])
 #endif
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
+#ifdef __amd64__
 		case 'a':
 			set_config_bool("x86.x2apic", false);
 			break;
+#endif
 		case 'A':
 			set_config_bool("acpi_tables", true);
 			break;
@@ -1307,6 +1584,7 @@ main(int argc, char *argv[])
 		case 'K':
 			set_config_value("keyboard.layout", optarg);
 			break;
+#ifdef __amd64__
 		case 'l':
 			if (strncmp(optarg, "help", strlen(optarg)) == 0) {
 				lpc_print_supported_devices();
@@ -1316,6 +1594,7 @@ main(int argc, char *argv[])
 				    "configuration '%s'", optarg);
 			}
 			break;
+#endif
 #ifdef BHYVE_SNAPSHOT
 		case 'r':
 			restore_file = optarg;
@@ -1357,9 +1636,11 @@ main(int argc, char *argv[])
 		case 'e':
 			set_config_bool("x86.strictio", true);
 			break;
+#ifdef __amd64__
 		case 'u':
 			set_config_bool("rtc.use_localtime", false);
 			break;
+#endif
 		case 'U':
 			set_config_value("uuid", optarg);
 			break;
@@ -1369,12 +1650,14 @@ main(int argc, char *argv[])
 		case 'W':
 			set_config_bool("virtio_msix", false);
 			break;
+#ifdef __amd64__
 		case 'x':
 			set_config_bool("x86.x2apic", true);
 			break;
 		case 'Y':
 			set_config_bool("x86.mptable", false);
 			break;
+#endif
 		case 'h':
 			usage(0);
 		default:
@@ -1469,13 +1752,34 @@ main(int argc, char *argv[])
 		exit(4);
 	}
 
+#ifdef __amd64__
 	error = init_msr();
 	if (error) {
 		fprintf(stderr, "init_msr error %d", error);
 		exit(4);
 	}
+#endif
 
 	init_mem(guest_ncpus);
+	init_uart(ctx);
+#ifdef __aarch64__
+{
+	const char *bootrom = NULL;
+
+	bootrom = get_config_value("bootrom");
+	if (bootrom == NULL)
+		bootrom = "/root/u-boot.bin";
+
+	error = bootcode_load(ctx, bootrom, &rip);
+	assert(error == 0);
+}
+	error = vm_set_register(bsp, VM_REG_GUEST_PC, rip);
+	assert(error == 0);
+	error = vm_attach_vgic(ctx, 0x2f000000UL, 0x10000UL, 0x2f100000UL,
+	    0x20000UL);
+	assert(error == 0);
+#endif
+#ifdef __amd64__
 	init_inout();
 	kernemu_dev_init();
 	init_bootrom(ctx);
@@ -1501,6 +1805,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "Unable to setup E820");
 		exit(4);
 	}
+#endif
 
 	/*
 	 * Exit if a device emulation finds an error in its initilization
@@ -1519,6 +1824,7 @@ main(int argc, char *argv[])
 
 	init_gdb(ctx);
 
+#ifdef __amd64__
 	if (lpc_bootrom()) {
 		if (vm_set_capability(bsp, VM_CAP_UNRESTRICTED_GUEST, 1)) {
 			fprintf(stderr, "ROM boot failed: unrestricted guest "
@@ -1528,6 +1834,7 @@ main(int argc, char *argv[])
 		error = vcpu_reset(bsp);
 		assert(error == 0);
 	}
+#endif
 
 	/*
 	 * Add all vCPUs.
@@ -1569,6 +1876,7 @@ main(int argc, char *argv[])
 	}
 #endif
 
+#ifdef __amd64__
 	error = vm_get_register(bsp, VM_REG_GUEST_RIP, &rip);
 	assert(error == 0);
 
@@ -1586,12 +1894,14 @@ main(int argc, char *argv[])
 	error = smbios_build(ctx);
 	if (error != 0)
 		exit(4);
+#endif
 
 	if (get_config_bool("acpi_tables")) {
 		error = acpi_build(ctx, guest_ncpus);
 		assert(error == 0);
 	}
 
+#ifdef __amd64__
 	e820_fwcfg_item = e820_get_fwcfg_item();
 	if (e820_fwcfg_item == NULL) {
 	    fprintf(stderr, "invalid e820 table");
@@ -1603,10 +1913,16 @@ main(int argc, char *argv[])
 		exit(4);
 	}
 	free(e820_fwcfg_item);
+#endif
 
+	error = fdt_build(ctx, bsp, guest_ncpus);
+	assert(error == 0);
+
+#ifdef __amd64__
 	if (lpc_bootrom() && strcmp(lpc_fwcfg(), "bhyve") == 0) {
 		fwctl_init();
 	}
+#endif
 
 	/*
 	 * Change the proc title to include the VM name.
