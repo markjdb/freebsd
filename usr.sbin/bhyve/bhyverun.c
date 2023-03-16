@@ -123,8 +123,10 @@ usage(int code)
 	fprintf(stderr,
 		"Usage: %s [-AaCDeHhPSuWwxY]\n"
 		"       %*s [-c [[cpus=]numcpus][,sockets=n][,cores=n][,threads=n]]\n"
+#ifdef __amd64__
 		"       %*s [-G port] [-k config_file] [-l lpc] [-m mem] [-o var=value]\n"
 		"       %*s [-p vcpu:hostcpu] [-r file] [-s pci] [-U uuid] vmname\n"
+#endif
 		"       -A: create ACPI tables\n"
 		"       -a: local apic is in xAPIC mode (deprecated)\n"
 		"       -C: include guest memory in core file\n"
@@ -136,7 +138,9 @@ usage(int code)
 		"       -h: help\n"
 		"       -k: key=value flat config file\n"
 		"       -K: PS2 keyboard layout\n"
+#ifdef __amd64__
 		"       -l: LPC device configuration\n"
+#endif
 		"       -m: memory size\n"
 		"       -o: set config 'var' to 'value'\n"
 		"       -P: vmexit from the guest on pause\n"
@@ -147,12 +151,20 @@ usage(int code)
 		"       -S: guest memory cannot be swapped\n"
 		"       -s: <slot,driver,configinfo> PCI slot config\n"
 		"       -U: UUID\n"
+#ifdef __amd64__
 		"       -u: RTC keeps UTC time\n"
+#endif
 		"       -W: force virtio to use single-vector MSI\n"
 		"       -w: ignore unimplemented MSRs\n"
+#ifdef __amd64__
 		"       -x: local APIC is in x2APIC mode\n"
-		"       -Y: disable MPtable generation\n",
-		progname, (int)strlen(progname), "", (int)strlen(progname), "",
+		"       -Y: disable MPtable generation\n"
+#endif
+		"",
+		progname,
+#ifdef __amd64__
+		(int)strlen(progname), "", (int)strlen(progname), "",
+#endif
 		(int)strlen(progname), "");
 
 	exit(code);
@@ -564,6 +576,9 @@ do_open(const char *vmname)
 
 	reinit = romboot = false;
 
+#ifdef __aarch64__
+	romboot = true;
+#endif
 #ifdef __amd64__
 	if (lpc_bootrom())
 		romboot = true;
@@ -613,9 +628,11 @@ do_open(const char *vmname)
 			exit(4);
 		}
 	}
+#ifdef __amd64__
 	error = vm_set_topology(ctx, cpu_sockets, cpu_cores, cpu_threads, 0);
 	if (error)
 		errx(EX_OSERR, "vm_set_topology");
+#endif
 	return (ctx);
 }
 
@@ -956,6 +973,7 @@ main(int argc, char *argv[])
 		    strerror(errno));
 		exit(4);
 	}
+#ifdef __amd64__
 	if (init_tpm(ctx) != 0) {
 		EPRINTLN("Failed to init TPM device");
 		exit(4);
@@ -967,6 +985,7 @@ main(int argc, char *argv[])
 	 */
 	if (get_config_bool("acpi_tables"))
 		vmgenc_init(ctx);
+#endif
 
 #ifdef BHYVE_GDB
 	init_gdb(ctx);
