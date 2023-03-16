@@ -75,7 +75,9 @@ __FBSDID("$FreeBSD$");
 static int basl_keep_temps;
 static int basl_verbose_iasl;
 static int basl_ncpu;
+#if defined(__amd64__)
 static uint32_t hpet_capabilities;
+#endif
 
 /*
  * Contains the full pathname of the template to be passed
@@ -461,6 +463,7 @@ build_facs(struct vmctx *const ctx)
 	return (0);
 }
 
+#if defined(__amd64__)
 static int
 build_fadt(struct vmctx *const ctx)
 {
@@ -555,6 +558,7 @@ build_hpet(struct vmctx *const ctx)
 
 	return (0);
 }
+#endif
 
 static int
 build_madt(struct vmctx *const ctx)
@@ -724,13 +728,17 @@ build_spcr(struct vmctx *const ctx)
 int
 acpi_build(struct vmctx *ctx, int ncpu)
 {
+#if defined(__amd64__)
 	int err;
+#endif
 
 	basl_ncpu = ncpu;
 
+#if defined(__amd64__)
 	err = vm_get_hpet_capabilities(ctx, &hpet_capabilities);
 	if (err != 0)
 		return (err);
+#endif
 
 	/*
 	 * For debug, allow the user to have iasl compiler output sent
@@ -758,9 +766,13 @@ acpi_build(struct vmctx *ctx, int ncpu)
 	 * first table after XSDT.
 	 */
 	BASL_EXEC(build_rsdp(ctx));
+#if defined(__amd64__)
 	BASL_EXEC(build_fadt(ctx));
+#endif
 	BASL_EXEC(build_madt(ctx));
+#if defined(__amd64__)
 	BASL_EXEC(build_hpet(ctx));
+#endif
 	BASL_EXEC(build_mcfg(ctx));
 	BASL_EXEC(build_facs(ctx));
 	BASL_EXEC(build_spcr(ctx));
