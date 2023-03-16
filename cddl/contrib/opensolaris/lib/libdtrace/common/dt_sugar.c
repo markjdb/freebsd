@@ -80,12 +80,12 @@ struct elf_info {
 };
 
 struct entry {
-	const char		*callerfunc;
-	int			noff;
 	struct off {
 		const char	*func;
 		uint64_t	val;
+		int		valid;
 	}			*off;
+	int			noff;
 	TAILQ_ENTRY(entry)	next;
 };
 
@@ -367,12 +367,6 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 		}
 	}
 
-	if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0) {
-		off->val = addr_lo - lo;
-		return;
-	} else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
-		;	/* nothing */
-
 	/* Find inline copy's return offset. */
 	for (i = 1; i < dp->dtsp_elf_kern.shnum; i++) {
 		s = &dp->dtsp_elf_kern.sl[i];
@@ -393,6 +387,27 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 		addr = s->sh.sh_addr + d->d_off;
 
 		/*
+		 * Compiling without `-mno-omit-leaf-frame-pointer` might
+		 * result in, as the name suggests, leaf functions omitting
+		 * `push %rbp`. kinst ignores any function that doesn't start
+		 * with this instruction, so in order to avoid having dtrace(1)
+		 * exit because one of the probes we're creating is a leaf
+		 * function with its 'push %rbp' ommitted, we're catching this
+		 * error before we get to kinst.
+		 */
+		while (addr != lo) {
+			addr++;
+			buf++;
+		}
+		if (*buf != 0x55) {
+			warnx("dt_sugar: ignoring '%s': function does not "
+			    "begin with 'push %%rbp'", off->func);
+			off->valid = 0;
+			return;
+		}
+		off->valid = 1;
+
+		/*
 		 * Get to the inline copy's start manually to avoid potential
 		 * dtrace_disx86() failures.
 		 */
@@ -400,6 +415,12 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 			addr++;
 			buf++;
 		}
+
+		if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0) {
+			off->val = addr - lo;
+			return;
+		} else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
+			;	/* nothing */
 
 		d86.d86_data = &buf;
 		d86.d86_get_byte = dt_sugar_dis_get_byte;
@@ -646,15 +667,14 @@ cont:
 /*
  * Append new clauses for each inline copy to the parse tree.
  *
- * For example, if foo() is an inline function, and bar() is an inline copy of
- * it called from function baz() at offsets 10 and 20 respectively, we'll
- * transform the parse tree from:
+ * If foo() is an inline function, and is called from functions bar() and baz()
+ * at offsets 10 and 20 respectively, we'll transform the parse tree from:
  *
  *	kinst::foo:<entry/return> /pred/{ acts }
  *
  * To:
  *
- *	kinst::baz:10 /pred/{ acts }
+ *	kinst::bar:10 /pred/{ acts }
  *	kinst::baz:20 /pred/{ acts }
  */
 static void
@@ -667,9 +687,9 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 
 	/*
 	 * Perform a deep copy of the predicates and actions so that we can
-	 * clone them when we create new clauses for inline copies. If we don't
-	 * have a deep copy we'll end up in an infinite loop when we start
-	 * appending clauses to the clause list.
+	 * clone them when we create new clauses for inline copies. If we
+	 * append the new clauses directly to `dp->dtsp_clause_list` we'll end
+	 * up in an infinite loop.
 	 */
 	p = dp->dtsp_clause_list;
 	dcopy = NULL;
@@ -705,6 +725,8 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 		e = TAILQ_FIRST(&dp->dtsp_head);
 		TAILQ_REMOVE(&dp->dtsp_head, e, next);
 		for (i = 0; i < e->noff; i++) {
+			if (!e->off[i].valid)
+				continue;
 			if (j++ == 0) {
 				/*
 				 * Since we're trying to trace inline copies of
@@ -715,7 +737,7 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 				 * traced, and as a result DTrace will exit
 				 * with an error because it cannot create a
 				 * probe for this function. In order to get
-				 * around this, we're replacing the requested
+				 * around this, we're overriding the requested
 				 * probe's <function> and <offset> fields with
 				 * the very first inline copy's information.
 				 */
