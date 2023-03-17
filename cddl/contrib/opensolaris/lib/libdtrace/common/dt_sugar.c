@@ -418,7 +418,7 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 
 		if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0) {
 			off->val = addr - lo;
-			return;
+			break;
 		} else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
 			;	/* nothing */
 
@@ -670,55 +670,30 @@ cont:
  * If foo() is an inline function, and is called from functions bar() and baz()
  * at offsets 10 and 20 respectively, we'll transform the parse tree from:
  *
- *	kinst::foo:<entry/return> /pred/{ acts }
+ *	kinst::foo:<entry/return>
+ *	/pred/
+ *	{
+ *		acts
+ *	}
  *
  * To:
  *
- *	kinst::bar:10 /pred/{ acts }
- *	kinst::baz:20 /pred/{ acts }
+ *	kinst::bar:10,
+ *	kinst::baz:20
+ *	/pred/
+ *	{
+ *		acts
+ *	}
  */
 static void
 dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 {
-	dt_node_t *pdesc, *dcopy, *dcopyhead, *p, *q;
+	dt_node_t *pdesc, *p;
 	struct entry *e;
 	char buf[DTRACE_FULLNAMELEN];
 	int i, j = 0;
 
-	/*
-	 * Perform a deep copy of the predicates and actions so that we can
-	 * clone them when we create new clauses for inline copies. If we
-	 * append the new clauses directly to `dp->dtsp_clause_list` we'll end
-	 * up in an infinite loop.
-	 */
-	p = dp->dtsp_clause_list;
-	dcopy = NULL;
-	if (p != NULL) {
-		/* XXX: when do we dt_node_free? */
-		dcopy = dt_node_xalloc(dp->dtsp_dtp, p->dn_kind);
-		if (dcopy == NULL)
-			err(1, "dt_sugar: dt_node_xalloc()");
-		dcopyhead = dcopy;
-		for (q = p; q != NULL; q = q->dn_list) {
-			dcopy->dn_pred = NULL;
-			dcopy->dn_acts = NULL;
-
-			if (q->dn_pred != NULL)
-				dcopy->dn_pred = q->dn_pred;
-			if (q->dn_acts != NULL)
-				dcopy->dn_acts = q->dn_acts;
-			if (q->dn_list != NULL) {
-				/* XXX are we leaking memory? */
-				dcopy->dn_list = dt_node_xalloc(dp->dtsp_dtp,
-				    q->dn_kind);
-				if (dcopy->dn_list == NULL)
-					err(1, "dt_sugar: dt_node_xalloc()");
-				dcopy = dcopy->dn_list;
-			}
-		}
-		dcopy = NULL;
-		dcopy = dcopyhead;
-	}
+	p = dp->dtsp_clause_list->dn_pdescs;
 
 	/* Clean up as well */
 	while (!TAILQ_EMPTY(&dp->dtsp_head)) {
@@ -748,22 +723,15 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 				    sizeof(dp->dtsp_desc->dtpd_name));
 			} else {
 				/*
-				 * Create new clauses for each inline copy with
-				 * the requested probe's predicates and
-				 * actions.
+				 * Append the probe description of each inline
+				 * copy to main clause.
 				 */
 				snprintf(buf, sizeof(buf), "%s:%s:%s:%lu",
 				    dp->dtsp_desc->dtpd_provider,
 				    dp->dtsp_desc->dtpd_mod,
 				    e->off[i].func, e->off[i].val);
 				pdesc = dt_node_pdesc_by_name(strdup(buf));
-
-				/* Clone all predicates and actions. */
-				for (p = dcopy; p != NULL; p = p->dn_list) {
-					dt_sugar_append_clause(dp,
-					    dt_node_clause(pdesc,
-					    p->dn_pred, p->dn_acts));
-				}
+				p = dt_node_link(p, pdesc);
 			}
 		}
 		dt_free(dp->dtsp_dtp, e->off);
