@@ -32,13 +32,25 @@
 
 #include <sys/cdefs.h>
 
+/*
+ * XXX-MJ this is hackish.
+ * Should we just introduce a different file for rescue kernels?
+ */
+#ifndef SYM
+#define	SYM	mfs_root
+#endif
+
+#ifndef SYM_END
+#define	SYM_END	mfs_root_end
+#endif
+
 	.section mfs, "a", %progbits
-	.globl	mfs_root
-	.type	mfs_root, %object
-mfs_root:
+	.globl	SYM
+	.type	SYM, %object
+SYM:
 	.incbin	MFS_IMAGE
-	.size	mfs_root, . - mfs_root
-	.globl	mfs_root_end
-	.type	mfs_root_end, %object
-mfs_root_end:
-	.size	mfs_root_end, . - mfs_root_end
+	.size	SYM, . - SYM
+	.globl	SYM_END
+	.type	SYM_END, %object
+SYM_END:
+	.size	SYM_END, . - SYM_END
