@@ -94,7 +94,6 @@ typedef struct dt_sugar_parse {
 	dt_node_t *dtsp_pdescs;		/* probe descriptions */
 	int dtsp_num_conditions;	/* number of condition variables */
 	int dtsp_num_ifs;		/* number of "if" statements */
-	int dtsp_kinst;			/* specify if the provider is kinst */
 	dt_node_t *dtsp_clause_list;	/* list of clauses */
 	struct elf_info	dtsp_elf_kern;	/* ELF info of the kernel executable */
 	struct elf_info dtsp_elf_dbg;	/* ELF info of the kernel debug file */
@@ -671,29 +670,29 @@ cont:
  * at offsets 10 and 20 respectively, we'll transform the parse tree from:
  *
  *	kinst::foo:<entry/return>
- *	/pred/
+ *	/<pred>/
  *	{
- *		acts
+ *		<acts>
  *	}
  *
  * To:
  *
  *	kinst::bar:10,
  *	kinst::baz:20
- *	/pred/
+ *	/<pred>/
  *	{
- *		acts
+ *		<acts>
  *	}
  */
 static void
-dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
+dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 {
-	dt_node_t *pdesc, *p;
+	dt_node_t *pdesc, *dnp;
 	struct entry *e;
 	char buf[DTRACE_FULLNAMELEN];
 	int i, j = 0;
 
-	p = dp->dtsp_clause_list->dn_pdescs;
+	dnp = dp->dtsp_clause_list->dn_pdescs;
 
 	/* Clean up as well */
 	while (!TAILQ_EMPTY(&dp->dtsp_head)) {
@@ -731,7 +730,7 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
 				    dp->dtsp_desc->dtpd_mod,
 				    e->off[i].func, e->off[i].val);
 				pdesc = dt_node_pdesc_by_name(strdup(buf));
-				p = dt_node_link(p, pdesc);
+				dnp = dt_node_link(dnp, pdesc);
 			}
 		}
 		dt_free(dp->dtsp_dtp, e->off);
@@ -743,7 +742,7 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp, dt_node_t *dnp)
  * Initialize libelf and libdwarf and parse kernel.debug's DWARF info.
  */
 static void
-dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp, dt_node_t *dnp)
+dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 {
 	Dwarf_Debug dbg;
 	Dwarf_Die die;
@@ -803,18 +802,7 @@ dt_sugar_visit_all(dt_sugar_parse_t *dp, dt_node_t *dnp)
 	case DT_NODE_SYM:
 	case DT_NODE_TYPE:
 	case DT_NODE_PROBE:
-		break;
-
 	case DT_NODE_PDESC:
-		if (strcmp(dnp->dn_desc->dtpd_provider, "kinst") != 0)
-			break;
-		dp->dtsp_kinst = 1;
-		dp->dtsp_inline = 0;
-		dp->dtsp_entry_or_return = 0;
-		dp->dtsp_desc = dnp->dn_desc;
-		dt_sugar_do_kinst_inline(dp, dnp);
-		break;
-
 	case DT_NODE_IDENT:
 		break;
 
@@ -1074,6 +1062,7 @@ dt_node_t *
 dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 {
 	dt_sugar_parse_t dp = { 0 };
+	dt_node_t *dnp;
 	int condid = 0;
 
 	dp.dtsp_dtp = dtp;
@@ -1120,9 +1109,44 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 		    dt_sugar_new_clearerror_clause(&dp));
 	}
 
-	if (dp.dtsp_kinst) {
+	/*
+	 * This loop is a bit of a hack. What it does is iterate through all
+	 * probe descriptions and handle kinst entry/return probes, but you
+	 * will notice that in case we handle inline function probes,
+	 * dt_sugar_kinst_create_probes() appends new elements to the list
+	 * we're looping through, yet it works just fine!
+	 *
+	 * Consider the following initial `dn_pdescs` list:
+	 *
+	 * dn_pdescs				= kinst::inlinefunc1:entry
+	 * dn_pdescs->dn_list			= kinst::inlinefunc2:return
+	 * dn_pdescs->dn_list->dn_list		= kinst::normalfunc1:0
+	 * dn_pdescs->dn_list->dn_list->dn_list = kinst::normalfunc2:entry
+	 *
+	 * The final list will look like this (read the comments in
+	 * dt_sugar_kinst_create_probes()):
+	 *
+	 * dn_pdescs				= kinst::callerfunc1:<x>
+	 * dn_pdescs->dn_list			= kinst::callerfunc2:<y>
+	 * dn_pdescs->dn_list->dn_list		= kinst::normalfunc1:0
+	 * dn_pdescs->dn_list->dn_list->dn_list	= fbt::normalfunc2:entry
+	 * ...					= new probes are appended here
+	 *
+	 * Because it is guaranteed that any new probes appended to the list by
+	 * dt_sugar_kinst_create_probes() will be regular kinst probes, the
+	 * loop below *does* loop through them as well, but does nothing since
+	 * regular kinst probes are skipped.
+	 */
+	for (dnp = dp.dtsp_clause_list->dn_pdescs; dnp != NULL;
+	    dnp = dnp->dn_list) {
+		if (strcmp(dnp->dn_desc->dtpd_provider, "kinst") != 0)
+			continue;
+		dp.dtsp_inline = 0;
+		dp.dtsp_entry_or_return = 0;
+		dp.dtsp_desc = dnp->dn_desc;
+		dt_sugar_do_kinst_inline(&dp);
 		if (dp.dtsp_inline)
-			dt_sugar_kinst_create_probes(&dp, clause);
+			dt_sugar_kinst_create_probes(&dp);
 		else if (!dp.dtsp_inline && dp.dtsp_entry_or_return) {
 			/*
 			 * Delegate non-inline function probes to FBT so that
