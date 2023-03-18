@@ -500,7 +500,8 @@ if (yypcb->pcb_token != 0) {
 					break;
 			}
 
-			if (c == 0 || c == ';' || c == '{' || c == '/') {
+			if (c == 0 || c == ';' || c == '{' || c == '/' ||
+			    c == EOF) {
 				if (yypcb->pcb_parens != 0) {
 					yyerror("closing ) expected in "
 					    "predicate before /\n");
