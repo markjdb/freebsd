@@ -527,7 +527,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	 * correspond to exception handlers with which we should not meddle.
 	 *
 	 * FIXME: This does however exclude functions which can be safely
-	 * traced, such as cpu_switch().
+	 * traced, such as cpu_switch() and leaf functions compiled without
+	 * `-mno-omit-leaf-frame-pointer`.
 	 */
 	p = instr;
 	found = 0;
