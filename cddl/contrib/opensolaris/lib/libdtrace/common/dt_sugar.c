@@ -83,7 +83,6 @@ struct entry {
 	struct off {
 		const char	*func;
 		uint64_t	val;
-		int		valid;
 	}			*off;
 	int			noff;
 	TAILQ_ENTRY(entry)	next;
@@ -337,6 +336,7 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 		if (s->sh.sh_link >= dp->dtsp_elf_kern.shnum)
 			continue;
 		stab = s->sh.sh_link;
+		len = (int)(s->sh.sh_size / s->sh.sh_entsize);
 		(void) elf_errno();
 		if ((d = elf_getdata(s->scn, NULL)) == NULL) {
 			if (elf_errno() != 0)
@@ -348,9 +348,8 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 			continue;
 		if (s->sh.sh_entsize == 0)
 			continue;
-		else if (s->sh.sh_size / s->sh.sh_entsize > INT_MAX)
+		else if (len > INT_MAX)
 			continue;
-		len = (int)(s->sh.sh_size / s->sh.sh_entsize);
 		for (j = 0; j < len; j++) {
 			if (gelf_getsym(d, j, &sym) != &sym) {
 				warnx("dt_sugar: gelf_getsym(): %s",
@@ -386,66 +385,52 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 		buf = d->d_buf;
 		addr = s->sh.sh_addr + d->d_off;
 
-		/*
-		 * Compiling without `-mno-omit-leaf-frame-pointer` might
-		 * result in, as the name suggests, leaf functions omitting
-		 * `push %rbp`. kinst ignores any function that doesn't start
-		 * with this instruction, so in order to avoid having dtrace(1)
-		 * exit because one of the probes we're creating is a leaf
-		 * function with its 'push %rbp' ommitted, we're catching this
-		 * error before we get to kinst.
-		 */
 		while (addr != lo) {
-			addr++;
-			buf++;
-		}
-		if (*buf != 0x55) {
-			warnx("dt_sugar: ignoring '%s': function does not "
-			    "begin with 'push %%rbp'", off->func);
-			off->valid = 0;
-			return;
-		}
-		off->valid = 1;
-
-		/*
-		 * Get to the inline copy's start manually to avoid potential
-		 * dtrace_disx86() failures.
-		 */
-		while (addr != addr_lo) {
 			addr++;
 			buf++;
 		}
 
 		if (dp->dtsp_entry) {
-			off->val = addr - lo;
-			break;
-		} else if (dp->dtsp_return)
-			;	/* nothing */
+			off->val = addr_lo - lo;
+		} else if (dp->dtsp_return) {
+			if (addr_hi == hi || last) {
+				/*
+				 * In this case the offset is one instruction
+				 * *outside* the inline or the caller function,
+				 * so we have to go back one instruction to
+				 * stay within bounds.
+				 */
 
-		d86.d86_data = &buf;
-		d86.d86_get_byte = dt_sugar_dis_get_byte;
-		d86.d86_check_func = NULL;
-
-		/* Get to the inline copy's end. */
-		while (addr != addr_hi) {
-			/*
-			 * XXX We might have to add #ifdefs when we port kinst
-			 * to other architectures.
-			 */
-			if (dtrace_disx86(&d86, SIZE64) != 0) {
-				warnx("dt_sugar: dtrace_disx86() failed");
-				return;
-			}
-			addr += d86.d86_len;
+				/*
+				 * Get to the inline copy's start manually to
+				 * avoid potential dtrace_disx86() failures.
+				 */
+				while (addr != addr_lo) {
+					addr++;
+					buf++;
+				}
+				d86.d86_data = &buf;
+				d86.d86_get_byte = dt_sugar_dis_get_byte;
+				d86.d86_check_func = NULL;
+				/* Get to the inline copy's end. */
+				while (addr != addr_hi) {
+					/*
+					 * XXX We might have to add #ifdefs
+					 * when we port kinst to other
+					 * architectures.
+					 */
+					if (dtrace_disx86(&d86, SIZE64) != 0) {
+						warnx("dt_sugar: "
+						    "dtrace_disx86() failed");
+						return;
+					}
+					addr += d86.d86_len;
+				}
+				addr -= d86.d86_len;
+				off->val = addr - lo;
+			} else
+				off->val = addr_hi - lo;
 		}
-		/*
-		 * In this case the offset is one instruction *outside* the
-		 * inline or the caller function, so we have to go back one
-		 * instruction to stay within bounds.
-		 */
-		if (addr_hi == hi || last)
-			addr -= d86.d86_len;
-		off->val = addr - lo;
 		break;
 	}
 }
@@ -702,8 +687,6 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 		e = TAILQ_FIRST(&dp->dtsp_head);
 		TAILQ_REMOVE(&dp->dtsp_head, e, next);
 		for (i = 0; i < e->noff; i++) {
-			if (!e->off[i].valid)
-				continue;
 			if (j++ == 0) {
 				/*
 				 * Since we're trying to trace inline copies of
