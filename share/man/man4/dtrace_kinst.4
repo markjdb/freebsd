@@ -24,7 +24,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd February 27, 2023
+.Dd March 18, 2023
 .Dt DTRACE_KINST 4
 .Os
 .Sh NAME
@@ -50,8 +50,8 @@ If the probe is
 or
 .Cm return
 but the function is not an inline one, the probe will be delegated to FBT,
-otherwise DTrace will find all call sites of the inline function and create
-individual probes for each one of them.
+otherwise DTrace will find all call sites of the inline function and create new
+probes for each one of them.
 .Pp
 .Nm kinst
 creates probes on-demand, meaning it searches for and parses the function's
@@ -107,16 +107,27 @@ Trace the return point of
 .Fn vm_page_mvqueue ,
 which is an inline function:
 .Bd -literal -offset indent
-# dtrace -n 'kinst::vm_page_mvqueue:return'
-dtrace: description 'kinst::vm_page_mvqueue:return' matched 15 probes
+# dtrace -n 'kinst::critical_enter:return'
+dtrace: description 'kinst::critical_enter:return' matched 130 probes
 CPU     ID                    FUNCTION:NAME
-  2  80627               vm_page_advise:421
-  2  80627               vm_page_advise:421
-  2  80627               vm_page_advise:421
-  2  80618            vm_page_deactivate:85
-  1  80618            vm_page_deactivate:85
-  2  80618            vm_page_deactivate:85
-  1  80618            vm_page_deactivate:85
+  1  71024                spinlock_enter:53
+  0  71024                spinlock_enter:53
+  1  70992                uma_zalloc_arg:49
+  1  70925    malloc_type_zone_allocated:21
+  1  70994                uma_zfree_arg:365
+  1  70924             malloc_type_freed:21
+  1  71024                spinlock_enter:53
+  0  71024                spinlock_enter:53
+  0  71024                spinlock_enter:53
+  0  71024                spinlock_enter:53
+  1  71024                spinlock_enter:53
+  0  71024                spinlock_enter:53
+  0  70947         _epoch_enter_preempt:122
+  0  70949           _epoch_exit_preempt:28
+  0  71024                spinlock_enter:53
+  0  71024                spinlock_enter:53
+  0  70947         _epoch_enter_preempt:122
+  0  70949           _epoch_exit_preempt:28
   ^C
 .Ed
 .Sh SEE ALSO
