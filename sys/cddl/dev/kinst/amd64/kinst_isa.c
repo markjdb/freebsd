@@ -507,8 +507,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	struct kinst_probe *kp;
 	dtrace_kinst_probedesc_t *pd;
 	const char *func;
-	int error, instrsize, n, off;
-	uint8_t *instr, *limit;
+	uint8_t *instr, *limit, *p;
+	int error, instrsize, n, off, found;
 
 	pd = opaque;
 	func = symval->name;
@@ -521,12 +521,24 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		return (0);
 
 	/*
-	 * Ignore functions not beginning with the usual function prologue.
-	 * These might correspond to exception handlers with which we should not
-	 * meddle.  This does however exclude functions which can be safely
+	 * Instead of ignoring functions that do not `push %rbp` in their first
+	 * instruction right away, we check if there's a `push %rbp` anywhere
+	 * in the function. Functions that do not push the frame pointer might
+	 * correspond to exception handlers with which we should not meddle.
+	 *
+	 * FIXME: This does however exclude functions which can be safely
 	 * traced, such as cpu_switch().
 	 */
-	if (*instr != KINST_PUSHL_RBP)
+	p = instr;
+	found = 0;
+	while (p < limit) {
+		if (*p == KINST_PUSHL_RBP) {
+			found = 1;
+			break;
+		}
+		p += dtrace_instr_size(p);
+	}
+	if (!found)
 		return (0);
 
 	n = 0;
