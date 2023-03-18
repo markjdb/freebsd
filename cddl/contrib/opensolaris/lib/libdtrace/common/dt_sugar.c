@@ -100,7 +100,8 @@ typedef struct dt_sugar_parse {
 	dtrace_probedesc_t *dtsp_desc;	/* kinst pdesc to duplicate contents */
 	Dwarf_Off dtsp_dieoff;		/* DIE offset of kinst inline definition */
 	int dtsp_inline;		/* kinst probe function is inline */
-	int dtsp_entry_or_return;	/* kinst probe is entry or return */
+	int dtsp_entry;			/* kinst probe is entry */
+	int dtsp_return;		/* kinst probe is return */
 	TAILQ_HEAD(, entry) dtsp_head;	/* kinst inline copy entry TAILQ */
 } dt_sugar_parse_t;
 
@@ -316,7 +317,7 @@ dt_sugar_dis_get_byte(void *p)
  */
 static void
 dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
-    uint64_t addr_lo, uint64_t addr_hi)
+    uint64_t addr_lo, uint64_t addr_hi, int last)
 {
 	Elf_Data *d;
 	GElf_Sym sym;
@@ -415,10 +416,10 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 			buf++;
 		}
 
-		if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0) {
+		if (dp->dtsp_entry) {
 			off->val = addr - lo;
 			break;
-		} else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
+		} else if (dp->dtsp_return)
 			;	/* nothing */
 
 		d86.d86_data = &buf;
@@ -438,11 +439,12 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 			addr += d86.d86_len;
 		}
 		/*
-		 * DWARF considers addr_hi to be the instruction
-		 * *after* the inline copy's end, so we want to go back
-		 * one instruction.
+		 * In this case the offset is one instruction *outside* the
+		 * inline or the caller function, so we have to go back one
+		 * instruction to stay within bounds.
 		 */
-		addr -= d86.d86_len;
+		if (addr_hi == hi || last)
+			addr -= d86.d86_len;
 		off->val = addr - lo;
 		break;
 	}
@@ -558,14 +560,14 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			}
 			base0 = lowpc;
 
-			if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0) {
+			if (dp->dtsp_entry) {
 				/*
 				 * Trace the first instruction of the first
 				 * range since this is the beginning of the
 				 * inline copy.
 				 */
 				noff = 1;
-			} else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0) {
+			} else if (dp->dtsp_return) {
 				/*
 				 * Trace the last instruction of every range in
 				 * case the inline copy is split into multiple
@@ -582,7 +584,8 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 					base0 = rp->dwr_addr2;
 				dt_sugar_kinst_find_caller_func(dp, &off[i],
 				    rp->dwr_addr1 + base0,
-				    rp->dwr_addr2 + base0);
+				    rp->dwr_addr2 + base0,
+				    dp->dtsp_return && i == noff - 1);
 			}
 			dwarf_ranges_dealloc(dbg, ranges, nranges);
 		} else {
@@ -602,7 +605,7 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			if (off == NULL)
 				err(1, "dt_sugar: dt_alloc()");
 			dt_sugar_kinst_find_caller_func(dp, off, lowpc,
-			    lowpc + highpc);
+			    lowpc + highpc, dp->dtsp_return);
 		}
 	} else
 		goto cont;
@@ -750,9 +753,15 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 	char dbgfile[MAXPATHLEN];
 	int res = DW_DLV_OK;
 
+	dp->dtsp_entry = 0;
+	dp->dtsp_return = 0;
+	dp->dtsp_inline = 0;
 	/* We only make entry and return probes for inline functions. */
-	if (strcmp(dp->dtsp_desc->dtpd_name, "entry") != 0 &&
-	    strcmp(dp->dtsp_desc->dtpd_name, "return") != 0)
+	if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0)
+		dp->dtsp_entry = 1;
+	else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
+		dp->dtsp_return = 1;
+	else
 		return;
 
 	(void) snprintf(dbgfile, sizeof(dbgfile), "/usr/lib/debug/%s.debug",
@@ -764,8 +773,6 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 	if (dwarf_elf_init(dp->dtsp_elf_dbg.elf, DW_DLC_READ, NULL, NULL, &dbg,
 	    &error) != DW_DLV_OK)
 		errx(1, "dt_sugar: dwarf_elf_init(): %s", dwarf_errmsg(error));
-
-	dp->dtsp_entry_or_return = 1;
 
 	TAILQ_INIT(&dp->dtsp_head);
 	/*
@@ -1141,13 +1148,11 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 	    dnp = dnp->dn_list) {
 		if (strcmp(dnp->dn_desc->dtpd_provider, "kinst") != 0)
 			continue;
-		dp.dtsp_inline = 0;
-		dp.dtsp_entry_or_return = 0;
 		dp.dtsp_desc = dnp->dn_desc;
 		dt_sugar_do_kinst_inline(&dp);
 		if (dp.dtsp_inline)
 			dt_sugar_kinst_create_probes(&dp);
-		else if (!dp.dtsp_inline && dp.dtsp_entry_or_return) {
+		else if (!dp.dtsp_inline && (dp.dtsp_entry || dp.dtsp_return)) {
 			/*
 			 * Delegate non-inline function probes to FBT so that
 			 * we don't duplicate FBT code in kinst.
