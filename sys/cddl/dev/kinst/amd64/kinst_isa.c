@@ -500,6 +500,29 @@ kinst_instr_dissect(struct kinst_probe *kp, uint8_t **instr)
 	return (0);
 }
 
+
+/*
+ * Instead of ignoring functions that do not `push %rbp` in their first
+ * instruction right away, we check if there's a `push %rbp` anywhere in the
+ * function. Functions that do not push the frame pointer might correspond to
+ * exception handlers with which we should not meddle.
+ *
+ * FIXME: This does however exclude functions which can be safely traced, such
+ * as cpu_switch() and leaf functions compiled without
+ * `-mno-omit-leaf-frame-pointer`.
+ */
+static bool
+kinst_can_trace_func(uint8_t *instr, uint8_t *limit)
+{
+	uint8_t *p;
+
+	for (p = instr; p < limit; p += dtrace_instr_size(p))
+		if (*p == KINST_PUSHL_RBP)
+			return (true);
+
+	return (false);
+}
+
 int
 kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
     void *opaque)
@@ -507,8 +530,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	struct kinst_probe *kp;
 	dtrace_kinst_probedesc_t *pd;
 	const char *func;
-	uint8_t *instr, *limit, *p;
-	int error, instrsize, n, off, found;
+	int error, instrsize, n, off;
+	uint8_t *instr, *limit;
 
 	pd = opaque;
 	func = symval->name;
@@ -520,26 +543,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	if (instr >= limit)
 		return (0);
 
-	/*
-	 * Instead of ignoring functions that do not `push %rbp` in their first
-	 * instruction right away, we check if there's a `push %rbp` anywhere
-	 * in the function. Functions that do not push the frame pointer might
-	 * correspond to exception handlers with which we should not meddle.
-	 *
-	 * FIXME: This does however exclude functions which can be safely
-	 * traced, such as cpu_switch() and leaf functions compiled without
-	 * `-mno-omit-leaf-frame-pointer`.
-	 */
-	p = instr;
-	found = 0;
-	while (p < limit) {
-		if (*p == KINST_PUSHL_RBP) {
-			found = 1;
-			break;
-		}
-		p += dtrace_instr_size(p);
-	}
-	if (!found)
+	if (!kinst_can_trace_func(instr, limit))
 		return (0);
 
 	n = 0;

@@ -329,8 +329,8 @@ probe_definition:
 			yybegin(YYS_CLAUSE);
 		}
 	|	probe_specifiers DT_TOK_DIV expression DT_TOK_EPRED {
-			$$ = dt_node_clause($1, $3, NULL);
-			yybegin(YYS_CLAUSE);
+			dnerror($3, D_SYNTAX, "expected actions { } following "
+			    "probe description and predicate\n");
 		}
 	|	probe_specifiers DT_TOK_DIV expression DT_TOK_EPRED
 		    '{' statement_list '}' {
