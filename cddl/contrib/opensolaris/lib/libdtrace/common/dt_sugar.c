@@ -94,7 +94,7 @@ typedef struct dt_sugar_parse {
 	int dtsp_num_conditions;	/* number of condition variables */
 	int dtsp_num_ifs;		/* number of "if" statements */
 	dt_node_t *dtsp_clause_list;	/* list of clauses */
-	struct elf_info	dtsp_elf_kern;	/* ELF info of the kernel executable */
+	struct elf_info	dtsp_elf_mod;	/* ELF info of the kernel executable */
 	struct elf_info dtsp_elf_dbg;	/* ELF info of the kernel debug file */
 	dtrace_probedesc_t *dtsp_desc;	/* kinst pdesc to duplicate contents */
 	Dwarf_Off dtsp_dieoff;		/* DIE offset of kinst inline definition */
@@ -329,11 +329,11 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 
 	/* Find the caller function's boundaries and name. */
 	off->func = NULL;
-	for (i = 1; i < dp->dtsp_elf_kern.shnum; i++) {
-		s = &dp->dtsp_elf_kern.sl[i];
+	for (i = 1; i < dp->dtsp_elf_mod.shnum; i++) {
+		s = &dp->dtsp_elf_mod.sl[i];
 		if (s->sh.sh_type != SHT_SYMTAB && s->sh.sh_type != SHT_DYNSYM)
 			continue;
-		if (s->sh.sh_link >= dp->dtsp_elf_kern.shnum)
+		if (s->sh.sh_link >= dp->dtsp_elf_mod.shnum)
 			continue;
 		stab = s->sh.sh_link;
 		len = (int)(s->sh.sh_size / s->sh.sh_entsize);
@@ -360,15 +360,15 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 			hi = sym.st_value + sym.st_size;
 			if (addr_lo < lo || addr_hi > hi)
 				continue;
-			if ((off->func = elf_strptr(dp->dtsp_elf_kern.elf, stab,
+			if ((off->func = elf_strptr(dp->dtsp_elf_mod.elf, stab,
 			    sym.st_name)) != NULL)
 				break;
 		}
 	}
 
 	/* Find inline copy's return offset. */
-	for (i = 1; i < dp->dtsp_elf_kern.shnum; i++) {
-		s = &dp->dtsp_elf_kern.sl[i];
+	for (i = 1; i < dp->dtsp_elf_mod.shnum; i++) {
+		s = &dp->dtsp_elf_mod.sl[i];
 		if (strcmp(s->name, ".text") != 0 ||
 		    s->sh.sh_type != SHT_PROGBITS)
 			continue;
@@ -730,6 +730,7 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 static void
 dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 {
+	dt_module_t *dmp;
 	Dwarf_Debug dbg;
 	Dwarf_Die die;
 	Dwarf_Error error;
@@ -738,7 +739,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 
 	dp->dtsp_entry = 0;
 	dp->dtsp_return = 0;
-	dp->dtsp_inline = 0;
+
 	/* We only make entry and return probes for inline functions. */
 	if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0)
 		dp->dtsp_entry = 1;
@@ -747,34 +748,55 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 	else
 		return;
 
-	(void) snprintf(dbgfile, sizeof(dbgfile), "/usr/lib/debug/%s.debug",
-	    dp->dtsp_dtp->bootfile);
-	dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_kern,
-	    dp->dtsp_dtp->bootfile);
-	dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_dbg, dbgfile);
+	for (dmp = dt_list_next(&dp->dtsp_dtp->dt_modlist); dmp != NULL;
+	    dmp = dt_list_next(dmp)) {
+		if (strcmp(dmp->dm_name, "C") == 0 ||
+		    strcmp(dmp->dm_name, "D") == 0)
+			continue;
 
-	if (dwarf_elf_init(dp->dtsp_elf_dbg.elf, DW_DLC_READ, NULL, NULL, &dbg,
-	    &error) != DW_DLV_OK)
-		errx(1, "dt_sugar: dwarf_elf_init(): %s", dwarf_errmsg(error));
+		(void) snprintf(dbgfile, sizeof(dbgfile),
+		    "/usr/lib/debug/%s.debug", dmp->dm_file);
+		dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_mod, dmp->dm_file);
+		dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_dbg, dbgfile);
 
-	TAILQ_INIT(&dp->dtsp_head);
-	/*
-	 * Parse DWARF info for kernel.debug and create entries for the inline
-	 * copies we'll create probes for.
-	 */
-	while ((res = dwarf_next_cu_header(dbg, NULL, NULL, NULL, NULL, NULL,
-	    &error)) == DW_DLV_OK) {
-		die = NULL;
-		while (dwarf_siblingof(dbg, die, &die, &error) == DW_DLV_OK)
-			dt_sugar_kinst_parse_die(dp, dbg, die, 0, F_SUBPROGRAM);
-		dwarf_dealloc(dbg, die, DW_DLA_DIE);
+		if (dwarf_elf_init(dp->dtsp_elf_dbg.elf, DW_DLC_READ, NULL,
+		    NULL, &dbg, &error) != DW_DLV_OK)
+			errx(1, "dt_sugar: dwarf_elf_init(): %s",
+			    dwarf_errmsg(error));
+
+		TAILQ_INIT(&dp->dtsp_head);
+		dp->dtsp_inline = 0;
+
+		while ((res = dwarf_next_cu_header(dbg, NULL, NULL, NULL, NULL,
+		    NULL, &error)) == DW_DLV_OK) {
+			die = NULL;
+			while (dwarf_siblingof(dbg, die, &die, &error) ==
+			    DW_DLV_OK) {
+				dt_sugar_kinst_parse_die(dp, dbg, die, 0,
+				    F_SUBPROGRAM);
+			}
+			dwarf_dealloc(dbg, die, DW_DLA_DIE);
+		}
+		if (res == DW_DLV_ERROR)
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
+
+		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
+		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);
+		dwarf_finish(dbg, &error);
+
+		if (dp->dtsp_inline)
+			dt_sugar_kinst_create_probes(dp);
+		else if (!dp->dtsp_inline &&
+		    (dp->dtsp_entry || dp->dtsp_return)) {
+			/*
+			 * Delegate non-inline function probes to FBT so that
+			 * we don't duplicate FBT code in kinst.
+			 */
+			strlcpy(dp->dtsp_desc->dtpd_provider, "fbt",
+			    sizeof(dp->dtsp_desc->dtpd_provider));
+		}
+		/* Regular kinst probes are not affected. */
 	}
-	if (res == DW_DLV_ERROR)
-		warnx("dt_sugar: %s", dwarf_errmsg(error));
-
-	dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_kern);
-	dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);
-	dwarf_finish(dbg, &error);
 }
 
 /*
@@ -1133,17 +1155,6 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 			continue;
 		dp.dtsp_desc = dnp->dn_desc;
 		dt_sugar_do_kinst_inline(&dp);
-		if (dp.dtsp_inline)
-			dt_sugar_kinst_create_probes(&dp);
-		else if (!dp.dtsp_inline && (dp.dtsp_entry || dp.dtsp_return)) {
-			/*
-			 * Delegate non-inline function probes to FBT so that
-			 * we don't duplicate FBT code in kinst.
-			 */
-			strlcpy(dp.dtsp_desc->dtpd_provider, "fbt",
-			    sizeof(dp.dtsp_desc->dtpd_provider));
-		}
-		/* Regular kinst probes are not affected. */
 	}
 
 	if (dp.dtsp_clause_list != NULL &&
