@@ -98,9 +98,11 @@ typedef struct dt_sugar_parse {
 	struct elf_info dtsp_elf_dbg;	/* ELF info of the kernel debug file */
 	dtrace_probedesc_t *dtsp_desc;	/* kinst pdesc to duplicate contents */
 	Dwarf_Off dtsp_dieoff;		/* DIE offset of kinst inline definition */
-	int dtsp_inline;		/* kinst probe function is inline */
-	int dtsp_entry;			/* kinst probe is entry */
-	int dtsp_return;		/* kinst probe is return */
+#define DF_EXISTS	0x01		/* kinst probe function exists in module */
+#define DF_INLINE	0x02		/* kinst probe function is inline */
+#define DF_ENTRY	0x04		/* kinst probe is entry */
+#define DF_RETURN	0x08		/* kinst probe is return */
+	int dtsp_flags;			/* kinst-related flags */
 	TAILQ_HEAD(, entry) dtsp_head;	/* kinst inline copy entry TAILQ */
 } dt_sugar_parse_t;
 
@@ -235,7 +237,7 @@ dt_sugar_new_condition(dt_sugar_parse_t *dp, dt_node_t *pred, int condid)
 /*
  * kinst-related
  */
-static void
+static int
 dt_sugar_elf_init(dtrace_hdl_t *dtp, struct elf_info *ei, const char *file)
 {
 	Elf_Scn *scn;
@@ -244,25 +246,39 @@ dt_sugar_elf_init(dtrace_hdl_t *dtp, struct elf_info *ei, const char *file)
 	const char *name;
 	size_t shstrndx, ndx;
 
-	if (elf_version(EV_CURRENT) == EV_NONE)
-		errx(1, "dt_sugar: elf_version(): %s", elf_errmsg(-1));
-	if ((ei->fd = open(file, O_RDONLY)) < 0)
-		err(1, "dt_sugar: open(%s)", file);
-	if ((ei->elf = elf_begin(ei->fd, ELF_C_READ, NULL)) == NULL)
-		errx(1, "dt_sugar: elf_begin(): %s", elf_errmsg(-1));
-	if (elf_kind(ei->elf) == ELF_K_NONE)
-		errx(1, "dt_sugar: not an ELF file: %s", file);
+	if (elf_version(EV_CURRENT) == EV_NONE) {
+		warnx("dt_sugar: elf_version(): %s", elf_errmsg(-1));
+		return (-1);
+	}
+	if ((ei->fd = open(file, O_RDONLY)) < 0) {
+		dt_dprintf("dt_sugar: open(%s)", file);
+		return (-1);
+	}
+	if ((ei->elf = elf_begin(ei->fd, ELF_C_READ, NULL)) == NULL) {
+		warnx("dt_sugar: elf_begin(): %s", elf_errmsg(-1));
+		return (-1);
+	}
+	if (elf_kind(ei->elf) == ELF_K_NONE) {
+		warnx("dt_sugar: not an ELF file: %s", file);
+		return (-1);
+	}
 
 	/* Load ELF sections */
-	if (!elf_getshnum(ei->elf, &ei->shnum))
-		errx(1, "dt_sugar: elf_getshnum(): %s", elf_errmsg(-1));
+	if (!elf_getshnum(ei->elf, &ei->shnum)) {
+		warnx("dt_sugar: elf_getshnum(): %s", elf_errmsg(-1));
+		return (-1);
+	}
 	ei->sl = dt_alloc(dtp, ei->shnum * sizeof(struct section));
 	if (ei->sl == NULL)
-		err(1, "dt_sugar: dt_alloc()");
-	if (!elf_getshstrndx(ei->elf, &shstrndx))
-		errx(1, "dt_sugar: elf_getshstrndx(): %s", elf_errmsg(-1));
-	if ((scn = elf_getscn(ei->elf, 0)) == NULL)
-		errx(1, "dt_sugar: elf_getscn(): %s", elf_errmsg(-1));
+		longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+	if (!elf_getshstrndx(ei->elf, &shstrndx)) {
+		warnx("dt_sugar: elf_getshstrndx(): %s", elf_errmsg(-1));
+		return (-1);
+	}
+	if ((scn = elf_getscn(ei->elf, 0)) == NULL) {
+		warnx("dt_sugar: elf_getscn(): %s", elf_errmsg(-1));
+		return (-1);
+	}
 	(void) elf_errno();
 
 	do {
@@ -286,6 +302,8 @@ dt_sugar_elf_init(dtrace_hdl_t *dtp, struct elf_info *ei, const char *file)
 	} while ((scn = elf_nextscn(ei->elf, scn)) != NULL);
 	if (elf_errno() != 0)
 		warnx("dt_sugar: elf_nextscn(): %s", elf_errmsg(-1));
+
+	return (0);
 }
 
 static void
@@ -390,9 +408,9 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 			buf++;
 		}
 
-		if (dp->dtsp_entry) {
+		if (dp->dtsp_flags & DF_ENTRY) {
 			off->val = addr_lo - lo;
-		} else if (dp->dtsp_return) {
+		} else if (dp->dtsp_flags & DF_RETURN) {
 			if (addr_hi == hi || last) {
 				/*
 				 * In this case the offset is one instruction
@@ -409,6 +427,7 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr++;
 					buf++;
 				}
+#ifdef amd64
 				d86.d86_data = &buf;
 				d86.d86_get_byte = dt_sugar_dis_get_byte;
 				d86.d86_check_func = NULL;
@@ -427,6 +446,7 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr += d86.d86_len;
 				}
 				addr -= d86.d86_len;
+#endif /* amd64 */
 				off->val = addr - lo;
 			} else
 				off->val = addr_hi - lo;
@@ -476,6 +496,22 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 	}
 	if (tag != DW_TAG_subprogram && tag != DW_TAG_inlined_subroutine)
 		goto cont;
+
+	/* Find if the function exists in the current module. */
+	if (dwarf_hasattr(die, DW_AT_name, &v_flag, &error) !=
+	    DW_DLV_OK) {
+		warnx("dt_sugar: %s", dwarf_errmsg(error));
+		goto cont;
+	}
+	if (v_flag) {
+		if (dwarf_diename(die, &v_str, &error) != DW_DLV_OK) {
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
+			goto cont;
+		}
+		if (strcmp(v_str, dp->dtsp_desc->dtpd_func) == 0)
+			dp->dtsp_flags |= DF_EXISTS;
+	}
+
 	if (flag == F_SUBPROGRAM && tag == DW_TAG_subprogram) {
 		if (dwarf_hasattr(die, DW_AT_inline, &v_flag, &error) !=
 		    DW_DLV_OK) {
@@ -484,11 +520,6 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 		}
 		if (!v_flag)
 			goto cont;
-		res = dwarf_diename(die, &v_str, &error);
-		if (res != DW_DLV_OK) {
-			warnx("dt_sugar: %s", dwarf_errmsg(error));
-			goto cont;
-		}
 		if (strcmp(v_str, dp->dtsp_desc->dtpd_func) != 0)
 			goto cont;
 		/*
@@ -545,14 +576,14 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			}
 			base0 = lowpc;
 
-			if (dp->dtsp_entry) {
+			if (dp->dtsp_flags & DF_ENTRY) {
 				/*
 				 * Trace the first instruction of the first
 				 * range since this is the beginning of the
 				 * inline copy.
 				 */
 				noff = 1;
-			} else if (dp->dtsp_return) {
+			} else if (dp->dtsp_flags & DF_RETURN) {
 				/*
 				 * Trace the last instruction of every range in
 				 * case the inline copy is split into multiple
@@ -562,7 +593,7 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			}
 			off = dt_alloc(dp->dtsp_dtp, noff * sizeof(struct off));
 			if (off == NULL)
-				err(1, "dt_sugar: dt_alloc()");
+				longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
 			for (i = 0; i < noff; i++) {
 				rp = &ranges[i];
 				if (rp->dwr_type == DW_RANGES_ADDRESS_SELECTION)
@@ -570,7 +601,8 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 				dt_sugar_kinst_find_caller_func(dp, &off[i],
 				    rp->dwr_addr1 + base0,
 				    rp->dwr_addr2 + base0,
-				    dp->dtsp_return && i == noff - 1);
+				    (dp->dtsp_flags & DF_RETURN) &&
+				    i == noff - 1);
 			}
 			dwarf_ranges_dealloc(dbg, ranges, nranges);
 		} else {
@@ -588,16 +620,17 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			noff = 1;
 			off = dt_alloc(dp->dtsp_dtp, noff * sizeof(struct off));
 			if (off == NULL)
-				err(1, "dt_sugar: dt_alloc()");
+				longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
 			dt_sugar_kinst_find_caller_func(dp, off, lowpc,
-			    lowpc + highpc, dp->dtsp_return);
+			    lowpc + highpc,
+			    dp->dtsp_flags & DF_RETURN);
 		}
 	} else
 		goto cont;
 
 	e = dt_alloc(dp->dtsp_dtp, sizeof(struct entry));
 	if (e == NULL)
-		err(1, "dt_sugar: dt_alloc()");
+		longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
 	e->noff = noff;
 	e->off = off;
 	TAILQ_INSERT_TAIL(&dp->dtsp_head, e, next);
@@ -627,7 +660,7 @@ cont:
 		 * points to it.
 		 */
 		dp->dtsp_dieoff = dieoff;
-		dp->dtsp_inline = 1;
+		dp->dtsp_flags |= DF_INLINE;
 		flag = F_INLINE_COPY;
 	}
 
@@ -737,14 +770,13 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 	char dbgfile[MAXPATHLEN];
 	int res = DW_DLV_OK;
 
-	dp->dtsp_entry = 0;
-	dp->dtsp_return = 0;
+	dp->dtsp_flags = 0;
 
 	/* We only make entry and return probes for inline functions. */
 	if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0)
-		dp->dtsp_entry = 1;
+		dp->dtsp_flags |= DF_ENTRY;
 	else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
-		dp->dtsp_return = 1;
+		dp->dtsp_flags |= DF_RETURN;
 	else
 		return;
 
@@ -756,16 +788,21 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 
 		(void) snprintf(dbgfile, sizeof(dbgfile),
 		    "/usr/lib/debug/%s.debug", dmp->dm_file);
-		dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_mod, dmp->dm_file);
-		dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_dbg, dbgfile);
-
+		if (dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_mod,
+		    dmp->dm_file) < 0)
+			continue;
+		if (dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_dbg,
+		    dbgfile) < 0)
+			continue;
 		if (dwarf_elf_init(dp->dtsp_elf_dbg.elf, DW_DLC_READ, NULL,
-		    NULL, &dbg, &error) != DW_DLV_OK)
-			errx(1, "dt_sugar: dwarf_elf_init(): %s",
+		    NULL, &dbg, &error) != DW_DLV_OK) {
+			warnx("dt_sugar: dwarf_elf_init(): %s",
 			    dwarf_errmsg(error));
+			continue;
+		}
 
 		TAILQ_INIT(&dp->dtsp_head);
-		dp->dtsp_inline = 0;
+		dp->dtsp_flags &= ~(DF_INLINE | DF_EXISTS);
 
 		while ((res = dwarf_next_cu_header(dbg, NULL, NULL, NULL, NULL,
 		    NULL, &error)) == DW_DLV_OK) {
@@ -780,22 +817,24 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 		if (res == DW_DLV_ERROR)
 			warnx("dt_sugar: %s", dwarf_errmsg(error));
 
-		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
-		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);
-		dwarf_finish(dbg, &error);
+		if (!(dp->dtsp_flags & DF_EXISTS))
+			goto cont;
 
-		if (dp->dtsp_inline)
+		if (dp->dtsp_flags & DF_INLINE) {
 			dt_sugar_kinst_create_probes(dp);
-		else if (!dp->dtsp_inline &&
-		    (dp->dtsp_entry || dp->dtsp_return)) {
+		} else {
 			/*
 			 * Delegate non-inline function probes to FBT so that
-			 * we don't duplicate FBT code in kinst.
+			 * we don't duplicate FBT code in kinst. Regular kinst
+			 * probes are not affected by this.
 			 */
 			strlcpy(dp->dtsp_desc->dtpd_provider, "fbt",
 			    sizeof(dp->dtsp_desc->dtpd_provider));
 		}
-		/* Regular kinst probes are not affected. */
+cont:
+		dwarf_finish(dbg, &error);
+		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
+		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);
 	}
 }
 
