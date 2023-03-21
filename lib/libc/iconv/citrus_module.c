@@ -90,6 +90,7 @@
  * SUCH DAMAGE.
  */
 
+#include "namespace.h"
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
@@ -97,6 +98,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <paths.h>
 #include <stdbool.h>
@@ -105,6 +107,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "un-namespace.h"
 
 #define	I18NMODULE_MAJOR	5
 
@@ -115,9 +118,10 @@
 
 static int		 _getdewey(int[], char *);
 static int		 _cmpndewey(int[], int, int[], int);
-static const char	*_findshlib(char *, int *, int *);
+static const char	*_findshlib(char *, int *, int *, int *);
 
 static const char *_pathI18nModule = NULL;
+static int I18nModuledfd = -1;
 
 /* from libexec/ld.aout_so/shlib.c */
 #undef major
@@ -175,10 +179,10 @@ _cmpndewey(int d1[], int n1, int d2[], int n2)
 }
 
 static const char *
-_findshlib(char *name, int *majorp, int *minorp)
+_findshlib(char *name, int *majorp, int *minorp, int *dfd)
 {
 	char *lname;
-	const char *search_dirs[1];
+	int search_dirs[1];
 	static char path[PATH_MAX];
 	int dewey[MAXDEWEY], tmp[MAXDEWEY];
 	int i, len, major, minor, ndewey, n_search_dirs;
@@ -187,7 +191,7 @@ _findshlib(char *name, int *majorp, int *minorp)
 	major = *majorp;
 	minor = *minorp;
 	path[0] = '\0';
-	search_dirs[0] = _pathI18nModule;
+	search_dirs[0] = I18nModuledfd;
 	len = strlen(name);
 	lname = name;
 
@@ -195,7 +199,7 @@ _findshlib(char *name, int *majorp, int *minorp)
 
 	for (i = 0; i < n_search_dirs; i++) {
 		struct dirent *dp;
-		DIR *dd = opendir(search_dirs[i]);
+		DIR *dd = fdopendir(search_dirs[i]);
 		int found_dot_a = 0, found_dot_so = 0;
 
 		if (dd == NULL)
@@ -240,8 +244,8 @@ _findshlib(char *name, int *majorp, int *minorp)
 
 			/* We have a better version */
 			found_dot_so = 1;
-			snprintf(path, sizeof(path), "%s/%s", search_dirs[i],
-			    dp->d_name);
+			*dfd = search_dirs[i];
+			strlcpy(path, dp->d_name, sizeof(path));
 			found_dot_a = 0;
 			bcopy(tmp, dewey, sizeof(dewey));
 			ndewey = n;
@@ -258,6 +262,26 @@ _findshlib(char *name, int *majorp, int *minorp)
 	}
 
 	return (path[0] ? path : NULL);
+}
+
+int
+_citrus_preopen_module(void)
+{
+	const char *p;
+
+	if (_pathI18nModule == NULL) {
+		p = secure_getenv("PATH_I18NMODULE");
+		if (p != NULL) {
+			_pathI18nModule = strdup(p);
+			if (_pathI18nModule == NULL)
+				return (ENOMEM);
+		} else
+			_pathI18nModule = _PATH_I18NMODULE;
+		I18nModuledfd = _open(_pathI18nModule, O_DIRECTORY | O_CLOEXEC);
+		if (I18nModuledfd < 0)
+			return (errno);
+	}
+	return (0);
 }
 
 void *
@@ -279,25 +303,23 @@ _citrus_load_module(_citrus_module_t *rhandle, const char *encname)
 	const char *p;
 	char path[PATH_MAX];
 	void *handle;
-	int maj, min;
+	int dfd, error, fd, maj, min;
 
-	if (_pathI18nModule == NULL) {
-		p = secure_getenv("PATH_I18NMODULE");
-		if (p != NULL) {
-			_pathI18nModule = strdup(p);
-			if (_pathI18nModule == NULL)
-				return (ENOMEM);
-		} else
-			_pathI18nModule = _PATH_I18NMODULE;
-	}
+	error = _citrus_preopen_module();
+	if (error != 0)
+		return (error);
 
 	(void)snprintf(path, sizeof(path), "lib%s", encname);
 	maj = I18NMODULE_MAJOR;
 	min = -1;
-	p = _findshlib(path, &maj, &min);
+	p = _findshlib(path, &maj, &min, &dfd);
 	if (!p)
 		return (EINVAL);
-	handle = libc_dlopen(p, RTLD_LAZY);
+	fd = _openat(dfd, p, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return (errno);
+	handle = libc_fdlopen(fd, RTLD_LAZY);
+	(void)_close(fd);
 	if (!handle) {
 		printf("%s", dlerror());
 		return (EINVAL);

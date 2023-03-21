@@ -32,6 +32,12 @@
 #include <iconv.h>
 #include "iconv-internal.h"
 
+int
+__iconv_preopen(void)
+{
+	return __bsd___iconv_preopen();
+}
+
 iconv_t
 iconv_open(const char *a, const char *b)
 {

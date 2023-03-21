@@ -35,6 +35,7 @@ size_t	__bsd___iconv(iconv_t, char **, size_t *, char **,
 		size_t *, __uint32_t, size_t *);
 void	__bsd___iconv_free_list(char **, size_t);
 int	__bsd___iconv_get_list(char ***, size_t *, __iconv_bool);
+int	__bsd___iconv_preopen(void);
 size_t	__bsd_iconv(iconv_t, char ** __restrict,
 		    size_t * __restrict, char ** __restrict,
 		    size_t * __restrict);

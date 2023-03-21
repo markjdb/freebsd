@@ -275,6 +275,12 @@ release_shared(struct _citrus_iconv_shared * __restrict ci)
 	UNLOCK(&ci_lock);
 }
 
+int
+_citrus_iconv_preopen(void)
+{
+	return (_citrus_preopen_module());
+}
+
 /*
  * _citrus_iconv_open:
  *	open a converter for the specified in/out codes.

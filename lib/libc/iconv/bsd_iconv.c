@@ -77,6 +77,12 @@ __bsd___iconv_open(const char *out, const char *in, struct _citrus_iconv *handle
 	return ((iconv_t)(void *)handle);
 }
 
+int
+__bsd___iconv_preopen(void)
+{
+	return (_citrus_iconv_preopen());
+}
+
 iconv_t
 __bsd_iconv_open(const char *out, const char *in)
 {

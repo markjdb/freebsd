@@ -37,6 +37,7 @@ struct _citrus_iconv_ops;
 struct _citrus_iconv;
 
 __BEGIN_DECLS
+int		 _citrus_iconv_preopen(void);
 int		 _citrus_iconv_open(struct _citrus_iconv * __restrict * __restrict,
 		    const char * __restrict, const char * __restrict);
 void		 _citrus_iconv_close(struct _citrus_iconv *);

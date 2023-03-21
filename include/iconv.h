@@ -62,6 +62,7 @@ int	iconv_close(iconv_t);
 /*
  * non-portable interfaces for iconv
  */
+int	__iconv_preopen(void);
 int	__iconv_get_list(char ***, size_t *, __iconv_bool);
 void	__iconv_free_list(char **, size_t);
 size_t	__iconv(iconv_t, char **, size_t *, char **,

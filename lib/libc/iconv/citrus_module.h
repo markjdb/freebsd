@@ -46,6 +46,7 @@ do {								\
 typedef struct _citrus_module_rec *_citrus_module_t;
 
 __BEGIN_DECLS
+int	 _citrus_preopen_module(void);
 void	*_citrus_find_getops(_citrus_module_t __restrict,
 	    const char * __restrict, const char * __restrict);
 int	 _citrus_load_module(_citrus_module_t * __restrict,

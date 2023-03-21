@@ -16,6 +16,10 @@ FBSD_1.3 {
 	__bsd_iconvlist;
 };
 
+FBSD_1.7 {
+	__bsd___iconv_preopen;
+};
+
 FBSDprivate_1.0 {
 	_citrus_bcs_convert_to_lower;
 	_citrus_bcs_convert_to_upper;
