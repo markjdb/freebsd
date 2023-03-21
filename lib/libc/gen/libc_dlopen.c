@@ -44,12 +44,21 @@ static int __libc_restricted_mode = 0;
 void *
 libc_dlopen(const char *path, int mode)
 {
-
 	if (__libc_restricted_mode) {
 		_rtld_error("Service unavailable -- libc in restricted mode");
 		return (NULL);
 	}
 	return (dlopen(path, mode));
+}
+
+void *
+libc_fdlopen(int fd, int mode)
+{
+	if (__libc_restricted_mode) {
+		_rtld_error("Service unavailable -- libc in restricted mode");
+		return (NULL);
+	}
+	return (fdlopen(fd, mode));
 }
 
 void

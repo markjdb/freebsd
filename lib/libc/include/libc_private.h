@@ -71,6 +71,7 @@ extern void	*__elf_aux_vector;
  * flag where loading of new shared objects can be restricted.
  */
 void *libc_dlopen(const char *, int);
+void *libc_fdlopen(int, int);
 
 /*
  * For dynamic linker.
