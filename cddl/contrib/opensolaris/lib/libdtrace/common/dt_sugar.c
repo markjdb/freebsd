@@ -530,7 +530,7 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 		} else
 			dp->dtsp_flags |= DF_REGULAR;
 		goto cont;
-	} else if (flag == F_INLINE_COPY && tag == DW_TAG_inlined_subroutine) {
+	} else if (flag == F_INLINE_COPY) {
 		res = dwarf_attr(die, DW_AT_abstract_origin, &attp, &error);
 		if (res != DW_DLV_OK) {
 			if (res == DW_DLV_ERROR)
