@@ -501,13 +501,15 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 	if (tag != DW_TAG_subprogram && tag != DW_TAG_inlined_subroutine)
 		goto cont;
 
-	/* Find if the function exists in the current module. */
-	if (dwarf_hasattr(die, DW_AT_name, &v_flag, &error) !=
-	    DW_DLV_OK) {
-		warnx("dt_sugar: %s", dwarf_errmsg(error));
-		goto cont;
-	}
-	if (v_flag) {
+	if (flag == F_SUBPROGRAM && tag == DW_TAG_subprogram) {
+		/* Find if the function exists in the current module. */
+		if (dwarf_hasattr(die, DW_AT_name, &v_flag, &error) !=
+		    DW_DLV_OK) {
+			warnx("dt_sugar: %s", dwarf_errmsg(error));
+			goto cont;
+		}
+		if (!v_flag)
+			goto cont;
 		if (dwarf_diename(die, &v_str, &error) != DW_DLV_OK) {
 			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
@@ -516,19 +518,17 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			dp->dtsp_flags |= DF_EXISTS;
 		else
 			goto cont;
-	}
 
-	if (flag == F_SUBPROGRAM && tag == DW_TAG_subprogram) {
 		if (dwarf_hasattr(die, DW_AT_inline, &v_flag, &error) !=
 		    DW_DLV_OK) {
 			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
-		if (v_flag)
+		if (v_flag) {
 			dp->dtsp_flags |= DF_INLINE;
-		else
-			goto cont;
-		found = 1;
+			found = 1;
+		} else
+			dp->dtsp_flags |= DF_REGULAR;
 		goto cont;
 	} else if (flag == F_INLINE_COPY && tag == DW_TAG_inlined_subroutine) {
 		res = dwarf_attr(die, DW_AT_abstract_origin, &attp, &error);
@@ -847,8 +847,6 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 
 		if (!(dp->dtsp_flags & DF_EXISTS))
 			goto cont;
-		if ((dp->dtsp_flags & DF_EXISTS) && !(dp->dtsp_flags & DF_INLINE))
-			dp->dtsp_flags |= DF_REGULAR;
 
 		dt_sugar_kinst_create_probes(dp);
 cont:
