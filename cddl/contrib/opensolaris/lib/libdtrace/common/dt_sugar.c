@@ -94,7 +94,7 @@ typedef struct dt_sugar_parse {
 	int dtsp_num_conditions;	/* number of condition variables */
 	int dtsp_num_ifs;		/* number of "if" statements */
 	dt_node_t *dtsp_clause_list;	/* list of clauses */
-	struct elf_info	dtsp_elf_mod;	/* ELF info of the kernel executable */
+	struct elf_info dtsp_elf_mod;	/* ELF info of the kernel executable */
 	struct elf_info dtsp_elf_dbg;	/* ELF info of the kernel debug file */
 	dtrace_probedesc_t *dtsp_desc;	/* kinst pdesc to duplicate contents */
 	Dwarf_Off dtsp_dieoff;		/* DIE offset of kinst inline definition */
@@ -776,7 +776,7 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 		 */
 		strlcpy(dp->dtsp_desc->dtpd_provider, "fbt",
 		    sizeof(dp->dtsp_desc->dtpd_provider));
-	} else if ((dp->dtsp_flags & (DF_REGULAR | DF_INLINE)) && n) {
+	} else if ((~dp->dtsp_flags & (DF_REGULAR | DF_INLINE)) == 0 && n) {
 		/*
 		 * If we have found a regular definition along with an inline
 		 * one, create an FBT probe for the non-inline definition as
