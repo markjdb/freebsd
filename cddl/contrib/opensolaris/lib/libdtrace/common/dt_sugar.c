@@ -98,11 +98,15 @@ typedef struct dt_sugar_parse {
 	struct elf_info dtsp_elf_dbg;	/* ELF info of the kernel debug file */
 	dtrace_probedesc_t *dtsp_desc;	/* kinst pdesc to duplicate contents */
 	Dwarf_Off dtsp_dieoff;		/* DIE offset of kinst inline definition */
-#define DF_EXISTS	0x01		/* kinst probe function exists in module */
-#define DF_INLINE	0x02		/* kinst probe function is inline */
-#define DF_ENTRY	0x04		/* kinst probe is entry */
-#define DF_RETURN	0x08		/* kinst probe is return */
+#define DF_EXISTS	0x01		/* function exists in module */
+#define DF_REGULAR	0x02		/* function has regular definition */
+#define DF_INLINE	0x04		/* function has inline definition */
+#define DF_ENTRY	0x08		/* probe is entry */
+#define DF_RETURN	0x10		/* probe is return */
+#define DF_NEWPDESC	0x20		/* we're searching a new pdesc */
 	int dtsp_flags;			/* kinst-related flags */
+	char dtsp_func[DTRACE_FUNCNAMELEN];	/* current function */
+	char dtsp_name[DTRACE_NAMELEN];	/* current probe name */
 	TAILQ_HEAD(, entry) dtsp_head;	/* kinst inline copy entry TAILQ */
 } dt_sugar_parse_t;
 
@@ -374,6 +378,8 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 				    elf_errmsg(-1));
 				continue;
 			}
+			if (GELF_ST_TYPE(sym.st_info) != STT_FUNC)
+				continue;
 			lo = sym.st_value;
 			hi = sym.st_value + sym.st_size;
 			if (addr_lo < lo || addr_hi > hi)
@@ -508,8 +514,10 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
-		if (strcmp(v_str, dp->dtsp_desc->dtpd_func) == 0)
+		if (strcmp(v_str, dp->dtsp_func) == 0)
 			dp->dtsp_flags |= DF_EXISTS;
+		else
+			goto cont;
 	}
 
 	if (flag == F_SUBPROGRAM && tag == DW_TAG_subprogram) {
@@ -518,10 +526,12 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 			warnx("dt_sugar: %s", dwarf_errmsg(error));
 			goto cont;
 		}
-		if (!v_flag)
+		if (v_flag)
+			dp->dtsp_flags |= DF_INLINE;
+		else {
+			dp->dtsp_flags |= DF_REGULAR;
 			goto cont;
-		if (strcmp(v_str, dp->dtsp_desc->dtpd_func) != 0)
-			goto cont;
+		}
 		/*
 		 * The function name we're searching for has an inline
 		 * definition.
@@ -660,7 +670,6 @@ cont:
 		 * points to it.
 		 */
 		dp->dtsp_dieoff = dieoff;
-		dp->dtsp_flags |= DF_INLINE;
 		flag = F_INLINE_COPY;
 	}
 
@@ -708,19 +717,22 @@ cont:
 static void
 dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 {
-	dt_node_t *pdesc, *dnp;
+	dt_node_t *dnp, *pdesc;
 	struct entry *e;
 	char buf[DTRACE_FULLNAMELEN];
-	int i, j = 0;
+	int i, n;
 
 	dnp = dp->dtsp_clause_list->dn_pdescs;
+	n = dp->dtsp_flags & DF_NEWPDESC;
 
-	/* Clean up as well */
+	/* We have found inline copies. Clean up as well */
 	while (!TAILQ_EMPTY(&dp->dtsp_head)) {
 		e = TAILQ_FIRST(&dp->dtsp_head);
 		TAILQ_REMOVE(&dp->dtsp_head, e, next);
 		for (i = 0; i < e->noff; i++) {
-			if (j++ == 0) {
+			if (dp->dtsp_flags & DF_NEWPDESC) {
+				/* We want to get here only once per-pdesc. */
+				dp->dtsp_flags &= ~DF_NEWPDESC;
 				/*
 				 * Since we're trying to trace inline copies of
 				 * a given function by requesting a probe of
@@ -741,8 +753,9 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 				    sizeof(dp->dtsp_desc->dtpd_name));
 			} else {
 				/*
-				 * Append the probe description of each inline
-				 * copy to main clause.
+				 * Create a new probe description for each
+				 * inline copy and append it to the main pdesc
+				 * list.
 				 */
 				snprintf(buf, sizeof(buf), "%s:%s:%s:%lu",
 				    dp->dtsp_desc->dtpd_provider,
@@ -754,6 +767,25 @@ dt_sugar_kinst_create_probes(dt_sugar_parse_t *dp)
 		}
 		dt_free(dp->dtsp_dtp, e->off);
 		dt_free(dp->dtsp_dtp, e);
+	}
+	if (!(dp->dtsp_flags & DF_INLINE)) {
+		/*
+		 * Delegate non-inline function probes to FBT so that we don't
+		 * duplicate FBT code in kinst. Regular kinst probes are not
+		 * affected by this.
+		 */
+		strlcpy(dp->dtsp_desc->dtpd_provider, "fbt",
+		    sizeof(dp->dtsp_desc->dtpd_provider));
+	} else if ((dp->dtsp_flags & (DF_REGULAR | DF_INLINE)) && n) {
+		/*
+		 * If we have found a regular definition along with an inline
+		 * one, create an FBT probe for the non-inline definition as
+		 * well.
+		 */
+		snprintf(buf, sizeof(buf), "fbt:%s:%s:%s",
+		    dp->dtsp_desc->dtpd_mod, dp->dtsp_func, dp->dtsp_name);
+		pdesc = dt_node_pdesc_by_name(strdup(buf));
+		dnp = dt_node_link(dnp, pdesc);
 	}
 }
 
@@ -770,12 +802,13 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 	char dbgfile[MAXPATHLEN];
 	int res = DW_DLV_OK;
 
-	dp->dtsp_flags = 0;
+	strlcpy(dp->dtsp_func, dp->dtsp_desc->dtpd_func, sizeof(dp->dtsp_func));
+	strlcpy(dp->dtsp_name, dp->dtsp_desc->dtpd_name, sizeof(dp->dtsp_func));
 
 	/* We only make entry and return probes for inline functions. */
-	if (strcmp(dp->dtsp_desc->dtpd_name, "entry") == 0)
+	if (strcmp(dp->dtsp_name, "entry") == 0)
 		dp->dtsp_flags |= DF_ENTRY;
-	else if (strcmp(dp->dtsp_desc->dtpd_name, "return") == 0)
+	else if (strcmp(dp->dtsp_name, "return") == 0)
 		dp->dtsp_flags |= DF_RETURN;
 	else
 		return;
@@ -802,7 +835,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 		}
 
 		TAILQ_INIT(&dp->dtsp_head);
-		dp->dtsp_flags &= ~(DF_INLINE | DF_EXISTS);
+		dp->dtsp_flags &= ~(DF_INLINE | DF_REGULAR | DF_EXISTS);
 
 		while ((res = dwarf_next_cu_header(dbg, NULL, NULL, NULL, NULL,
 		    NULL, &error)) == DW_DLV_OK) {
@@ -820,17 +853,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 		if (!(dp->dtsp_flags & DF_EXISTS))
 			goto cont;
 
-		if (dp->dtsp_flags & DF_INLINE) {
-			dt_sugar_kinst_create_probes(dp);
-		} else {
-			/*
-			 * Delegate non-inline function probes to FBT so that
-			 * we don't duplicate FBT code in kinst. Regular kinst
-			 * probes are not affected by this.
-			 */
-			strlcpy(dp->dtsp_desc->dtpd_provider, "fbt",
-			    sizeof(dp->dtsp_desc->dtpd_provider));
-		}
+		dt_sugar_kinst_create_probes(dp);
 cont:
 		dwarf_finish(dbg, &error);
 		dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
@@ -1193,6 +1216,8 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 		if (strcmp(dnp->dn_desc->dtpd_provider, "kinst") != 0)
 			continue;
 		dp.dtsp_desc = dnp->dn_desc;
+		dp.dtsp_flags = 0;
+		dp.dtsp_flags |= DF_NEWPDESC;
 		dt_sugar_do_kinst_inline(&dp);
 	}
 
