@@ -433,7 +433,6 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr++;
 					buf++;
 				}
-#ifdef amd64
 				d86.d86_data = &buf;
 				d86.d86_get_byte = dt_sugar_dis_get_byte;
 				d86.d86_check_func = NULL;
@@ -452,7 +451,6 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr += d86.d86_len;
 				}
 				addr -= d86.d86_len;
-#endif /* amd64 */
 				off->val = addr - lo;
 			} else
 				off->val = addr_hi - lo;
@@ -528,14 +526,8 @@ dt_sugar_kinst_parse_die(dt_sugar_parse_t *dp, Dwarf_Debug dbg, Dwarf_Die die,
 		}
 		if (v_flag)
 			dp->dtsp_flags |= DF_INLINE;
-		else {
-			dp->dtsp_flags |= DF_REGULAR;
+		else
 			goto cont;
-		}
-		/*
-		 * The function name we're searching for has an inline
-		 * definition.
-		 */
 		found = 1;
 		goto cont;
 	} else if (flag == F_INLINE_COPY && tag == DW_TAG_inlined_subroutine) {
@@ -805,6 +797,8 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 	strlcpy(dp->dtsp_func, dp->dtsp_desc->dtpd_func, sizeof(dp->dtsp_func));
 	strlcpy(dp->dtsp_name, dp->dtsp_desc->dtpd_name, sizeof(dp->dtsp_func));
 
+	dp->dtsp_flags = 0;
+
 	/* We only make entry and return probes for inline functions. */
 	if (strcmp(dp->dtsp_name, "entry") == 0)
 		dp->dtsp_flags |= DF_ENTRY;
@@ -812,6 +806,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 		dp->dtsp_flags |= DF_RETURN;
 	else
 		return;
+	dp->dtsp_flags |= DF_NEWPDESC;
 
 	for (dmp = dt_list_next(&dp->dtsp_dtp->dt_modlist); dmp != NULL;
 	    dmp = dt_list_next(dmp)) {
@@ -852,6 +847,8 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 
 		if (!(dp->dtsp_flags & DF_EXISTS))
 			goto cont;
+		if ((dp->dtsp_flags & DF_EXISTS) && !(dp->dtsp_flags & DF_INLINE))
+			dp->dtsp_flags |= DF_REGULAR;
 
 		dt_sugar_kinst_create_probes(dp);
 cont:
@@ -1216,8 +1213,6 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 		if (strcmp(dnp->dn_desc->dtpd_provider, "kinst") != 0)
 			continue;
 		dp.dtsp_desc = dnp->dn_desc;
-		dp.dtsp_flags = 0;
-		dp.dtsp_flags |= DF_NEWPDESC;
 		dt_sugar_do_kinst_inline(&dp);
 	}
 
