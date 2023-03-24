@@ -872,7 +872,7 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 		if (dt_sugar_elf_verify_debuglink(&dp->dtsp_elf_mod,
 		    dp->dtsp_elf_dbg.fd) < 0) {
 			warnx("dt_sugar: debug link mismatch: "
-			    "make sure '%s' is up to date", dbgfile); {
+			    "make sure '%s' is up to date", dbgfile);
 			dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
 			dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);
 			continue;
