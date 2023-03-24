@@ -8,6 +8,10 @@ PACKAGE=	tests
 
 ${PACKAGE}FILES= \
      tst.basic.ksh  \
+     tst.dtracetest_fbtconvert.ksh \
+     tst.dtracetest_inline.ksh \
+     tst.inline_agg.ksh \
+     tst.inline_multiple.ksh \
 
 TESTEXES= \
 

@@ -35,6 +35,7 @@
 #include <sys/module.h>
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
 #include <sys/vnode.h>
 
 SDT_PROVIDER_DEFINE(test);
@@ -75,6 +76,56 @@ dtrace_test_sdttest(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
+static __always_inline void
+kinst_test_inline(void)
+{
+	struct timeval tv;
+	size_t len;
+
+	/*
+	 * TODO Modify the code so that the function is splitted into multiple
+	 * DW_AT_ranges.
+	 */
+	len = sizeof(struct timeval);
+	if (kernel_sysctlbyname(curthread, "kern.boottime", &tv, &len,
+	    NULL, 0, NULL, 0) != 0)
+		return;
+}
+
+static __noinline void
+kinst_test_fbtconvert(void)
+{
+	struct timeval tv;
+	size_t len;
+
+	len = sizeof(struct timeval);
+	(void) kernel_sysctlbyname(curthread, "kern.boottime", &tv, &len,
+	    NULL, 0, NULL, 0);
+}
+
+static int
+kinst_test(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	switch (val) {
+	case 1:
+		kinst_test_inline();
+		break;
+	case 2:
+		kinst_test_fbtconvert();
+		break;
+	default:
+		return (0);
+	}
+
+	return (error);
+}
+
 static SYSCTL_NODE(_debug, OID_AUTO, dtracetest,
     CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "");
@@ -82,6 +133,10 @@ static SYSCTL_NODE(_debug, OID_AUTO, dtracetest,
 SYSCTL_PROC(_debug_dtracetest, OID_AUTO, sdttest,
     CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RW, NULL, 0, dtrace_test_sdttest,
     "I", "Trigger the SDT test probe");
+
+SYSCTL_PROC(_debug_dtracetest, OID_AUTO, kinst,
+    CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RW, NULL, 0, kinst_test,
+    "I", "Trigger the kinst test functions");
 
 static int
 dtrace_test_modevent(module_t mod, int type, void *data)
