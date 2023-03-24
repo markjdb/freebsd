@@ -80,6 +80,52 @@ kinst_excluded(const char *name)
 	}
 
 	/*
+	 * Do not allow instrumentation of exception handlers. The only
+	 * exceptions is Xfast_syscall* which are safe to trace.
+	 */
+	if (strcmp(name, "Xdiv") == 0 ||
+	    strcmp(name, "Xdbg") == 0 ||
+	    strcmp(name, "Xnmi") == 0 ||
+	    strcmp(name, "Xbpt") == 0 ||
+	    strcmp(name, "Xofl") == 0 ||
+	    strcmp(name, "Xbnd") == 0 ||
+	    strcmp(name, "Xill") == 0 ||
+	    strcmp(name, "Xdna") == 0 ||
+	    strcmp(name, "Xfpusegm") == 0 ||
+	    strcmp(name, "Xtss") == 0 ||
+	    strcmp(name, "Xmissing") == 0 ||
+	    strcmp(name, "Xstk") == 0 ||
+	    strcmp(name, "Xprot") == 0 ||
+	    strcmp(name, "Xpage") == 0 ||
+	    strcmp(name, "Xmchk") == 0 ||
+	    strcmp(name, "Xrsvd") == 0 ||
+	    strcmp(name, "Xfpu") == 0 ||
+	    strcmp(name, "Xalign") == 0 ||
+	    strcmp(name, "Xxmm") == 0 ||
+	    strcmp(name, "Xdblfault") == 0 ||
+	    strcmp(name, "Xdiv_pti") == 0 ||
+	    strcmp(name, "Xbpt_pti") == 0 ||
+	    strcmp(name, "Xofl_pti") == 0 ||
+	    strcmp(name, "Xbnd_pti") == 0 ||
+	    strcmp(name, "Xill_pti") == 0 ||
+	    strcmp(name, "Xdna_pti") == 0 ||
+	    strcmp(name, "Xfpusegm_pti") == 0 ||
+	    strcmp(name, "Xtss_pti") == 0 ||
+	    strcmp(name, "Xmissing_pti") == 0 ||
+	    strcmp(name, "Xstk_pti") == 0 ||
+	    strcmp(name, "Xprot_pti") == 0 ||
+	    strcmp(name, "Xpage_pti") == 0 ||
+	    strcmp(name, "Xrsvd_pti") == 0 ||
+	    strcmp(name, "Xfpu_pti") == 0 ||
+	    strcmp(name, "Xalign_pti") == 0 ||
+	    strcmp(name, "Xxmm_pti") == 0 ||
+	    strcmp(name, "Xdtrace_ret") == 0 ||
+	    strcmp(name, "Xdtrace_ret_pti") == 0 ||
+	    strcmp(name, "Xxen_intr_upcall") == 0 ||
+	    strcmp(name, "Xxen_intr_upcall_pti") == 0)
+		return (1);
+
+	/*
 	 * Omit instrumentation of functions that are probably in DDB.  It
 	 * makes it too hard to debug broken kinst.
 	 *
