@@ -67,6 +67,8 @@
 
 #include <dis_tables.h>
 
+#include <zlib.h>
+
 /* kinst-related */
 struct elf_info {
 	Elf			*elf;
@@ -316,6 +318,47 @@ dt_sugar_elf_deinit(dtrace_hdl_t *dtp, struct elf_info *ei)
 	dt_free(dtp, ei->sl);
 	close(ei->fd);
 	elf_end(ei->elf);
+}
+
+/*
+ * Verify the checksum in the .gnu_debuglink section to make sure the debug
+ * file is up to date.
+ */
+static int
+dt_sugar_elf_verify_debuglink(struct elf_info *ei, int dbgfd)
+{
+	Elf_Data *d;
+	struct section *s;
+	char buf[MAXPHYS];
+	ssize_t nr;
+	uint32_t crc, compcrc;
+	int i;
+
+	for (i = 1; i < ei->shnum; i++) {
+		s = &ei->sl[i];
+		if (strcmp(s->name, ".gnu_debuglink") == 0)
+			break;
+	}
+	if ((d = elf_getdata(s->scn, NULL)) == NULL) {
+		if (elf_errno() != 0)
+			warnx("dt_sugar: elf_getdata(): %s", elf_errmsg(-1));
+		return (-1);
+	}
+	if (d->d_size < sizeof(crc) + 1 || d->d_buf == NULL)
+		return (-1);
+	if (strnlen(d->d_buf, d->d_size) >= d->d_size - sizeof(crc))
+		return (-1);
+	memcpy(&crc, (uint8_t *)d->d_buf + d->d_size - sizeof(crc),
+	    sizeof(crc));
+
+	compcrc = crc32(0L, Z_NULL, 0);
+	while ((nr = read(dbgfd, buf, sizeof(buf))) > 0)
+		compcrc = crc32(compcrc, (char *)buf, nr);
+
+	if (nr != 0 || crc != compcrc)
+		return (-1);
+
+	return (0);
 }
 
 static int
@@ -816,12 +859,25 @@ dt_sugar_do_kinst_inline(dt_sugar_parse_t *dp)
 
 		(void) snprintf(dbgfile, sizeof(dbgfile),
 		    "/usr/lib/debug/%s.debug", dmp->dm_file);
+
 		if (dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_mod,
 		    dmp->dm_file) < 0)
 			continue;
 		if (dt_sugar_elf_init(dp->dtsp_dtp, &dp->dtsp_elf_dbg,
-		    dbgfile) < 0)
+		    dbgfile) < 0) {
+			dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
 			continue;
+		}
+
+		if (dt_sugar_elf_verify_debuglink(&dp->dtsp_elf_mod,
+		    dp->dtsp_elf_dbg.fd) < 0) {
+			warnx("dt_sugar: debug link mismatch: "
+			    "make sure '%s' is up to date", dbgfile); {
+			dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_mod);
+			dt_sugar_elf_deinit(dp->dtsp_dtp, &dp->dtsp_elf_dbg);
+			continue;
+		}
+
 		if (dwarf_elf_init(dp->dtsp_elf_dbg.elf, DW_DLC_READ, NULL,
 		    NULL, &dbg, &error) != DW_DLV_OK) {
 			warnx("dt_sugar: dwarf_elf_init(): %s",
