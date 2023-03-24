@@ -331,7 +331,6 @@ struct dtrace_hdl {
 	int dt_stdout_fd;	/* file descriptor for saved stdout */
 #else
 	FILE *dt_freopen_fp;	/* file pointer for freopened stdout */
-	char bootfile[MAXPATHLEN];	/* kernel boot file */
 #endif
 	dtrace_handle_err_f *dt_errhdlr; /* error handler, if any */
 	void *dt_errarg;	/* error handler argument */
