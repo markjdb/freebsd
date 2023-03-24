@@ -273,6 +273,7 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 {
 	cap_channel_t *capsysctl, *ocapsysctl;
 	void *limit;
+	unsigned int result;
 
 	ocapsysctl = initcap();
 
@@ -306,10 +307,11 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_RDWR | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
 	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE |
 	    SYSCTL1_READ0 | SYSCTL1_READ1 | SYSCTL1_READ2 | SYSCTL1_WRITE |
-	    SYSCTL1_READ_WRITE));
+	    SYSCTL1_READ_WRITE), "result = %x", result);
 
 	limit = cap_sysctl_limit_init(capsysctl);
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME,
@@ -318,10 +320,11 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_RDWR | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
 	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE |
 	    SYSCTL1_READ0 | SYSCTL1_READ1 | SYSCTL1_READ2 | SYSCTL1_WRITE |
-	    SYSCTL1_READ_WRITE));
+	    SYSCTL1_READ_WRITE), "result = %x", result);
 
 	limit = cap_sysctl_limit_init(capsysctl);
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME,
@@ -330,20 +333,25 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	limit = cap_sysctl_limit_init(capsysctl);
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	limit = cap_sysctl_limit_init(capsysctl);
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL0_READ0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0), "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -381,10 +389,11 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
 	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE |
 	    SYSCTL1_READ0 | SYSCTL1_READ1 | SYSCTL1_READ2 | SYSCTL1_WRITE |
-	    SYSCTL1_READ_WRITE));
+	    SYSCTL1_READ_WRITE), "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -418,7 +427,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_READ | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -452,10 +462,11 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
 	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE |
 	    SYSCTL1_READ0 | SYSCTL1_READ1 | SYSCTL1_READ2 | SYSCTL1_WRITE |
-	    SYSCTL1_READ_WRITE));
+	    SYSCTL1_READ_WRITE), "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -492,8 +503,10 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_READ | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL1_READ0 | SYSCTL1_READ1 |
-	    SYSCTL1_READ2 | SYSCTL1_WRITE | SYSCTL1_READ_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL1_READ0 | SYSCTL1_READ1 |
+	    SYSCTL1_READ2 | SYSCTL1_WRITE | SYSCTL1_READ_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -526,10 +539,11 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
 	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE |
 	    SYSCTL1_READ0 | SYSCTL1_READ1 | SYSCTL1_READ2 | SYSCTL1_WRITE |
-	    SYSCTL1_READ_WRITE));
+	    SYSCTL1_READ_WRITE), "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -583,7 +597,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_PARENT, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_READ0));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_READ0),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -637,7 +653,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_READ0));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_READ0),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -699,7 +717,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_PARENT, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -761,7 +780,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_READ0));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_READ0),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -785,7 +806,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_READ0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_READ0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -809,7 +831,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_READ0));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_READ0),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -863,7 +887,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_WRITE | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_WRITE | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -917,7 +943,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_WRITE | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_WRITE | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -979,7 +1007,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1041,7 +1070,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_WRITE | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_WRITE | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1065,7 +1096,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_WRITE);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_WRITE, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1089,7 +1121,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_WRITE | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_WRITE | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1109,7 +1143,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1129,7 +1165,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1147,7 +1185,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1165,7 +1204,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1184,7 +1225,8 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_WRITE);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_WRITE, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1203,7 +1245,9 @@ ATF_TC_BODY(cap_sysctl__operation, tc)
 	    CAP_SYSCTL_WRITE | CAP_SYSCTL_RECURSIVE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == 0);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL1_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL1_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 }
@@ -1220,6 +1264,7 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 {
 	cap_channel_t *capsysctl, *ocapsysctl;
 	void *limit;
+	unsigned int result;
 
 	ocapsysctl = initcap();
 
@@ -1253,7 +1298,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL0_READ0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL0_READ0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1287,7 +1333,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_READ0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_READ0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1321,7 +1368,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL0_WRITE);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL0_WRITE, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1355,7 +1403,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_WRITE);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_WRITE, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1389,8 +1438,10 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL0_READ0 | SYSCTL0_READ1 |
-	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1424,8 +1475,10 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL1_READ0 | SYSCTL1_READ1 |
-	    SYSCTL1_READ2 | SYSCTL1_WRITE | SYSCTL1_READ_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL1_READ0 | SYSCTL1_READ1 |
+	    SYSCTL1_READ2 | SYSCTL1_WRITE | SYSCTL1_READ_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1448,7 +1501,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1471,7 +1525,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_READ);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_READ0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_READ0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1494,7 +1549,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1517,7 +1573,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_WRITE);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == SYSCTL1_WRITE);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == SYSCTL1_WRITE, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1540,7 +1597,8 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL1_PARENT, CAP_SYSCTL_RDWR);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == 0);
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == 0, "result = %x", result);
 
 	cap_close(capsysctl);
 
@@ -1563,8 +1621,10 @@ ATF_TC_BODY(cap_sysctl__names, tc)
 	(void)cap_sysctl_limit_name(limit, SYSCTL0_NAME, CAP_SYSCTL_RDWR);
 	ATF_REQUIRE(cap_sysctl_limit(limit) == -1 && errno == ENOTCAPABLE);
 
-	ATF_REQUIRE(checkcaps(capsysctl) == (SYSCTL1_READ0 | SYSCTL1_READ1 |
-	    SYSCTL1_READ2 | SYSCTL1_WRITE | SYSCTL1_READ_WRITE));
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL1_READ0 | SYSCTL1_READ1 |
+	    SYSCTL1_READ2 | SYSCTL1_WRITE | SYSCTL1_READ_WRITE),
+	    "result = %x", result);
 
 	cap_close(capsysctl);
 }
@@ -1580,13 +1640,15 @@ ATF_TC_HEAD(cap_sysctl__no_limits, tc)
 ATF_TC_BODY(cap_sysctl__no_limits, tc)
 {
 	cap_channel_t *capsysctl;
+	unsigned int result;
 
 	capsysctl = initcap();
 
-	ATF_REQUIRE_EQ(checkcaps(capsysctl), (SYSCTL0_READ0 | SYSCTL0_READ1 |
+	result = checkcaps(capsysctl);
+	ATF_REQUIRE_MSG(result == (SYSCTL0_READ0 | SYSCTL0_READ1 |
 	    SYSCTL0_READ2 | SYSCTL0_WRITE | SYSCTL0_READ_WRITE |
 	    SYSCTL1_READ0 | SYSCTL1_READ1 | SYSCTL1_READ2 | SYSCTL1_WRITE |
-	    SYSCTL1_READ_WRITE));
+	    SYSCTL1_READ_WRITE), "result = %x", result);
 }
 ATF_TC_CLEANUP(cap_sysctl__no_limits, tc)
 {
