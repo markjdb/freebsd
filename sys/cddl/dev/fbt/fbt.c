@@ -194,14 +194,17 @@ fbt_provide_module(void *arg, modctl_t *lf)
 		return;
 
 	/*
-	 * To register with DTrace, a module must list 'dtrace' as a
-	 * dependency in order for the kernel linker to resolve
-	 * symbols like dtrace_register(). All modules with such a
-	 * dependency are ineligible for FBT tracing.
+	 * To register with DTrace, a module must list 'dtrace' as a dependency
+	 * in order for the kernel linker to resolve symbols like
+	 * dtrace_register(). All modules with such a dependency are ineligible
+	 * for FBT tracing. An exception is dtrace_test.ko, whose functions we
+	 * want to be able to trace.
 	 */
-	for (i = 0; i < lf->ndeps; i++)
-		if (strncmp(lf->deps[i]->filename, "dtrace", 6) == 0)
-			return;
+	if (strcmp(modname, "dtrace_test") != 0) {
+		for (i = 0; i < lf->ndeps; i++)
+			if (strncmp(lf->deps[i]->filename, "dtrace", 6) == 0)
+				return;
+	}
 
 	if (lf->fbt_nentries) {
 		/*
