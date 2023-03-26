@@ -59,6 +59,29 @@ struct thread *ptrauth_switch(struct thread *);
 void ptrauth_exit_el0(struct thread *);
 void ptrauth_enter_el0(struct thread *);
 
+static bool
+ptrauth_disable(void)
+{
+	u_int midr;
+
+	/*
+	 * Work around Cortex-A78C erratum 2478780: Pointer Authentication
+	 * controls might become corrupt.  At the time of writing the erratum
+	 * is present in all revisions of the core.
+	 *
+	 * This workaround currently only works when booting on an affected
+	 * core.
+	 */
+	midr = PCPU_GET(midr);
+	if (CPU_IMPL(midr) == CPU_IMPL_ARM &&
+	    CPU_PART(midr) == CPU_PART_CORTEX_A78C) {
+		if (boothowto & RB_VERBOSE)
+			printf("PAC is disabled for erratum 2478780\n");
+		return (true);
+	}
+	return (false);
+}
+
 void
 ptrauth_init(void)
 {
@@ -77,7 +100,11 @@ ptrauth_init(void)
 		return;
 	}
 
-	get_kernel_reg(ID_AA64ISAR1_EL1, &isar1);
+	if (!get_kernel_reg(ID_AA64ISAR1_EL1, &isar1))
+		return;
+
+	if (ptrauth_disable())
+		return;
 
 	/*
 	 * This assumes if there is pointer authentication on the boot CPU
