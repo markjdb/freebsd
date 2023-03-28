@@ -80,9 +80,10 @@ kinst_excluded(const char *name)
 	}
 
 	/*
-	 * Do not allow instrumentation of exception handlers. The only
-	 * exceptions is Xfast_syscall* which are safe to trace.
+	 * Do not allow instrumentation of exception handlers.
 	 */
+#ifdef __amd64__
+	/* Xfast_syscall* are safe to trace. */
 	if (strcmp(name, "Xdiv") == 0 ||
 	    strcmp(name, "Xdbg") == 0 ||
 	    strcmp(name, "Xnmi") == 0 ||
@@ -124,6 +125,7 @@ kinst_excluded(const char *name)
 	    strcmp(name, "Xxen_intr_upcall") == 0 ||
 	    strcmp(name, "Xxen_intr_upcall_pti") == 0)
 		return (1);
+#endif /* __amd64__ */
 
 	/*
 	 * Omit instrumentation of functions that are probably in DDB.  It
