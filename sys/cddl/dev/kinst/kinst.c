@@ -128,6 +128,12 @@ kinst_excluded(const char *name)
 #endif /* __amd64__ */
 
 	/*
+	 * Tracing cpu_switch() can trigger panics.
+	 */
+	if (strcmp(name, "cpu_switch") == 0)
+		return (1);
+
+	/*
 	 * Omit instrumentation of functions that are probably in DDB.  It
 	 * makes it too hard to debug broken kinst.
 	 *
