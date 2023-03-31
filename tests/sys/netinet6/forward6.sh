@@ -30,15 +30,15 @@
 . $(atf_get_srcdir)/../common/vnet.subr
 
 atf_test_case "fwd_ip6_gu_icmp_iface_fast_success" "cleanup"
-fwd_ip6_gu_icmp_iface_fast_success_head() {
-
+fwd_ip6_gu_icmp_iface_fast_success_head()
+{
 	atf_set descr 'Test valid IPv6 global unicast fast-forwarding to interface'
 	atf_set require.user root
 	atf_set require.progs scapy
 }
 
-fwd_ip6_gu_icmp_iface_fast_success_body() {
-
+fwd_ip6_gu_icmp_iface_fast_success_body()
+{
 	ids=65529
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -88,27 +88,27 @@ fwd_ip6_gu_icmp_iface_fast_success_body() {
 		--test_name fwd_ip6_icmp \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${ip6a} \
-		--iface ${epair}a 
-	
+		--iface ${epair}a
+
 	# check counters are valid
 	atf_check -o match:'1 packet forwarded' jexec ${jname} netstat -sp ip6
 }
 
-fwd_ip6_gu_icmp_iface_fast_success_cleanup() {
-
+fwd_ip6_gu_icmp_iface_fast_success_cleanup()
+{
 	vnet_cleanup
 }
 
 atf_test_case "fwd_ip6_gu_icmp_gw_gu_fast_success" "cleanup"
-fwd_ip6_gu_icmp_gw_gu_fast_success_head() {
-
+fwd_ip6_gu_icmp_gw_gu_fast_success_head()
+{
 	atf_set descr 'Test valid IPv6 global unicast fast-forwarding to GU gw'
 	atf_set require.user root
 	atf_set require.progs scapy
 }
 
-fwd_ip6_gu_icmp_gw_gu_fast_success_body() {
-
+fwd_ip6_gu_icmp_gw_gu_fast_success_body()
+{
 	ids=65528
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -162,27 +162,27 @@ fwd_ip6_gu_icmp_gw_gu_fast_success_body() {
 		--test_name fwd_ip6_icmp \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${dst_ip} \
-		--iface ${epair}a 
-	
+		--iface ${epair}a
+
 	# check counters are valid
 	atf_check -o match:'1 packet forwarded' jexec ${jname} netstat -sp ip6
 }
 
-fwd_ip6_gu_icmp_gw_gu_fast_success_cleanup() {
-
+fwd_ip6_gu_icmp_gw_gu_fast_success_cleanup()
+{
 	vnet_cleanup
 }
 
 atf_test_case "fwd_ip6_gu_icmp_gw_ll_fast_success" "cleanup"
-fwd_ip6_gu_icmp_gw_ll_fast_success_head() {
-
+fwd_ip6_gu_icmp_gw_ll_fast_success_head()
+{
 	atf_set descr 'Test valid IPv6 global unicast fast-forwarding to LL gw'
 	atf_set require.user root
 	atf_set require.progs scapy
 }
 
-fwd_ip6_gu_icmp_gw_ll_fast_success_body() {
-
+fwd_ip6_gu_icmp_gw_ll_fast_success_body()
+{
 	ids=65527
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -237,27 +237,27 @@ fwd_ip6_gu_icmp_gw_ll_fast_success_body() {
 		--test_name fwd_ip6_icmp \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${dst_ip} \
-		--iface ${epair}a 
-	
+		--iface ${epair}a
+
 	# check counters are valid
 	atf_check -o match:'1 packet forwarded' jexec ${jname} netstat -sp ip6
 }
 
-fwd_ip6_gu_icmp_gw_ll_fast_success_cleanup() {
-
+fwd_ip6_gu_icmp_gw_ll_fast_success_cleanup()
+{
 	vnet_cleanup
 }
 
 atf_test_case "fwd_ip6_gu_icmp_iface_slow_success" "cleanup"
-fwd_ip6_gu_icmp_iface_slow_success_head() {
-
+fwd_ip6_gu_icmp_iface_slow_success_head()
+{
 	atf_set descr 'Test valid IPv6 global unicast fast-forwarding to interface'
 	atf_set require.user root
 	atf_set require.progs scapy
 }
 
-fwd_ip6_gu_icmp_iface_slow_success_body() {
-
+fwd_ip6_gu_icmp_iface_slow_success_body()
+{
 	ids=65526
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -306,14 +306,14 @@ fwd_ip6_gu_icmp_iface_slow_success_body() {
 		--test_name fwd_ip6_icmp \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${ip6a} \
-		--iface ${epair}a 
-	
+		--iface ${epair}a
+
 	# check counters are valid
 	atf_check -o match:'1 packet forwarded' jexec ${jname} netstat -sp ip6
 }
 
-fwd_ip6_gu_icmp_iface_slow_success_cleanup() {
-
+fwd_ip6_gu_icmp_iface_slow_success_cleanup()
+{
 	vnet_cleanup
 }
 
@@ -325,8 +325,8 @@ fwd_ip6_gu_icmp_gw_gu_slow_success_head() {
 	atf_set require.progs scapy
 }
 
-fwd_ip6_gu_icmp_gw_gu_slow_success_body() {
-
+fwd_ip6_gu_icmp_gw_gu_slow_success_body()
+{
 	ids=65525
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -380,28 +380,29 @@ fwd_ip6_gu_icmp_gw_gu_slow_success_body() {
 		--test_name fwd_ip6_icmp \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${dst_ip} \
-		--iface ${epair}a 
+		--iface ${epair}a
 	jexec ${jname} netstat -sp ip6
-	
+
 	# check counters are valid
 	atf_check -o match:'1 packet forwarded' jexec ${jname} netstat -sp ip6
 }
 
-fwd_ip6_gu_icmp_gw_gu_slow_success_cleanup() {
+fwd_ip6_gu_icmp_gw_gu_slow_success_cleanup()
+{
 
 	vnet_cleanup
 }
 
 atf_test_case "fwd_ip6_gu_icmp_gw_ll_slow_success" "cleanup"
-fwd_ip6_gu_icmp_gw_ll_slow_success_head() {
-
+fwd_ip6_gu_icmp_gw_ll_slow_success_head()
+{
 	atf_set descr 'Test valid IPv6 global unicast fast-forwarding to LL gw'
 	atf_set require.user root
 	atf_set require.progs scapy
 }
 
-fwd_ip6_gu_icmp_gw_ll_slow_success_body() {
-
+fwd_ip6_gu_icmp_gw_ll_slow_success_body()
+{
 	ids=65524
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -455,20 +456,19 @@ fwd_ip6_gu_icmp_gw_ll_slow_success_body() {
 		--test_name fwd_ip6_icmp \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${dst_ip} \
-		--iface ${epair}a 
-	
+		--iface ${epair}a
+
 	# check counters are valid
 	atf_check -o match:'1 packet forwarded' jexec ${jname} netstat -sp ip6
 }
 
-fwd_ip6_gu_icmp_gw_ll_slow_success_cleanup() {
-
+fwd_ip6_gu_icmp_gw_ll_slow_success_cleanup()
+{
 	vnet_cleanup
 }
 
 atf_init_test_cases()
 {
-
 	atf_add_test_case "fwd_ip6_gu_icmp_iface_fast_success"
 	atf_add_test_case "fwd_ip6_gu_icmp_gw_gu_fast_success"
 	atf_add_test_case "fwd_ip6_gu_icmp_gw_ll_fast_success"
@@ -476,6 +476,3 @@ atf_init_test_cases()
 	atf_add_test_case "fwd_ip6_gu_icmp_gw_gu_slow_success"
 	atf_add_test_case "fwd_ip6_gu_icmp_gw_ll_slow_success"
 }
-
-# end
-
