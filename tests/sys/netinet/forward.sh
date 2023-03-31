@@ -49,35 +49,35 @@ fwd_ip_icmp_iface_fast_success_body()
 	script_name="../common/sender.py"
 
 	epair=$(vnet_mkepair)
-	ifconfig ${epair}a up
-	ifconfig ${epair}a inet ${ip4a}/${plen}
-
 	jname="v4t-fwd_ip_icmp_iface_fast_success"
-	vnet_mkjail ${jname} ${epair}b
-	jexec ${jname} ifconfig ${epair}b up
-	jexec ${jname} ifconfig ${epair}b inet ${ip4b}/${plen}
+	vnet_mkjail ${jname}a ${epair}a
+	jexec ${jname}a ifconfig ${epair}a up
+	jexec ${jname}a ifconfig ${epair}a inet ${ip4a}/${plen}
+	vnet_mkjail ${jname}b ${epair}b
+	jexec ${jname}b ifconfig ${epair}b up
+	jexec ${jname}b ifconfig ${epair}b inet ${ip4b}/${plen}
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname}b ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`jexec ${jname}a ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
 
-	jexec ${jname} sysctl net.inet.ip.forwarding=1
+	jexec ${jname}b sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
-	jexec ${jname} sysctl net.inet.ip.redirect=0
+	jexec ${jname}b sysctl net.inet.ip.redirect=0
 
 	# echo "LOCAL: ${local_ip} ${local_mac}"
 	# echo "REMOTE: ${remote_rtr_ip} ${remote_rtr_mac}"
 
-	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
+	atf_check -s exit:0 jexec ${jname}a $(atf_get_srcdir)/${script_name} \
 		--test_name fwd_ip_icmp_fast \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${ip4a} \
 		--iface ${epair}a
 
 	# check counters are valid
-	atf_check -o match:'1 packet forwarded \(1 packet fast forwarded\)' jexec ${jname} netstat -sp ip
+	atf_check -o match:'1 packet forwarded \(1 packet fast forwarded\)' jexec ${jname}b netstat -sp ip
 }
 
 fwd_ip_icmp_iface_fast_success_cleanup()
@@ -106,38 +106,38 @@ fwd_ip_icmp_gw_fast_success_body()
 	script_name="../common/sender.py"
 
 	epair=$(vnet_mkepair)
-	ifconfig ${epair}a up
-	ifconfig ${epair}a inet ${ip4a}/${plen}
-
 	jname="v4t-fwd_ip_icmp_gw_fast_success"
-	vnet_mkjail ${jname} ${epair}b
-	jexec ${jname} ifconfig ${epair}b up
-	jexec ${jname} ifconfig ${epair}b inet ${ip4b}/${plen}
+	vnet_mkjail ${jname}a ${epair}a
+	jexec ${jname}a ifconfig ${epair}a up
+	jexec ${jname}a ifconfig ${epair}a inet ${ip4a}/${plen}
+	vnet_mkjail ${jname}b ${epair}b
+	jexec ${jname}b ifconfig ${epair}b up
+	jexec ${jname}b ifconfig ${epair}b inet ${ip4b}/${plen}
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname}b ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`jexec ${jname}a ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
 
-	jexec ${jname} sysctl net.inet.ip.forwarding=1
+	jexec ${jname}b sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
-	jexec ${jname} sysctl net.inet.ip.redirect=0
+	jexec ${jname}b sysctl net.inet.ip.redirect=0
 
 	# Add host route
-	jexec ${jname} route -4 add -host ${dst_ip} ${ip4a}
+	jexec ${jname}b route -4 add -host ${dst_ip} ${ip4a}
 
 	# echo "LOCAL: ${local_ip} ${local_mac}"
 	# echo "REMOTE: ${remote_rtr_ip} ${remote_rtr_mac}"
 
-	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
+	atf_check -s exit:0 jexec ${jname}a $(atf_get_srcdir)/${script_name} \
 		--test_name fwd_ip_icmp_fast \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${dst_ip} \
 		--iface ${epair}a
 
 	# check counters are valid
-	atf_check -o match:'1 packet forwarded \(1 packet fast forwarded\)' jexec ${jname} netstat -sp ip
+	atf_check -o match:'1 packet forwarded \(1 packet fast forwarded\)' jexec ${jname}b netstat -sp ip
 }
 
 fwd_ip_icmp_gw_fast_success_cleanup()
@@ -165,33 +165,33 @@ fwd_ip_icmp_iface_slow_success_body()
 	script_name="../common/sender.py"
 
 	epair=$(vnet_mkepair)
-	ifconfig ${epair}a up
-	ifconfig ${epair}a inet ${ip4a}/${plen}
-
 	jname="v4t-fwd_ip_icmp_iface_slow_success"
-	vnet_mkjail ${jname} ${epair}b
-	jexec ${jname} ifconfig ${epair}b up
-	jexec ${jname} ifconfig ${epair}b inet ${ip4b}/${plen}
+	vnet_mkjail ${jname}a ${epair}a
+	jexec ${jname}a ifconfig ${epair}a up
+	jexec ${jname}a ifconfig ${epair}a inet ${ip4a}/${plen}
+	vnet_mkjail ${jname}b ${epair}b
+	jexec ${jname}b ifconfig ${epair}b up
+	jexec ${jname}b ifconfig ${epair}b inet ${ip4b}/${plen}
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname}b ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`jexec ${jname}a ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
 
-	jexec ${jname} sysctl net.inet.ip.forwarding=1
+	jexec ${jname}b sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
-	jexec ${jname} sysctl net.inet.ip.redirect=0
+	jexec ${jname}b sysctl net.inet.ip.redirect=0
 
 	# Generate packet with options to force slow-path
-	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
+	atf_check -s exit:0 jexec ${jname}a $(atf_get_srcdir)/${script_name} \
 		--test_name fwd_ip_icmp_slow \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${ip4a} \
 		--iface ${epair}a
 
 	# check counters are valid
-	atf_check -o match:'1 packet forwarded \(0 packets fast forwarded\)' jexec ${jname} netstat -sp ip
+	atf_check -o match:'1 packet forwarded \(0 packets fast forwarded\)' jexec ${jname}b netstat -sp ip
 }
 
 fwd_ip_icmp_iface_slow_success_cleanup()
@@ -220,38 +220,38 @@ fwd_ip_icmp_gw_slow_success_body()
 	script_name="../common/sender.py"
 
 	epair=$(vnet_mkepair)
-	ifconfig ${epair}a up
-	ifconfig ${epair}a inet ${ip4a}/${plen}
-
 	jname="v4t-fwd_ip_icmp_gw_slow_success"
-	vnet_mkjail ${jname} ${epair}b
-	jexec ${jname} ifconfig ${epair}b up
-	jexec ${jname} ifconfig ${epair}b inet ${ip4b}/${plen}
+	vnet_mkjail ${jname}a ${epair}a
+	jexec ${jname}a ifconfig ${epair}a up
+	jexec ${jname}a ifconfig ${epair}a inet ${ip4a}/${plen}
+	vnet_mkjail ${jname}b ${epair}b
+	jexec ${jname}b ifconfig ${epair}b up
+	jexec ${jname}b ifconfig ${epair}b inet ${ip4b}/${plen}
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname}b ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`jexec ${jname}a ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
 
-	jexec ${jname} sysctl net.inet.ip.forwarding=1
+	jexec ${jname}b sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
-	jexec ${jname} sysctl net.inet.ip.redirect=0
+	jexec ${jname}b sysctl net.inet.ip.redirect=0
 
 	# Add host route
-	jexec ${jname} route -4 add -host ${dst_ip} ${ip4a}
+	jexec ${jname}b route -4 add -host ${dst_ip} ${ip4a}
 
 	# echo "LOCAL: ${local_ip} ${local_mac}"
 	# echo "REMOTE: ${remote_rtr_ip} ${remote_rtr_mac}"
 
-	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
+	atf_check -s exit:0 jexec ${jname}a $(atf_get_srcdir)/${script_name} \
 		--test_name fwd_ip_icmp_fast \
 		--smac ${our_mac} --dmac ${jail_mac} \
 		--sip ${src_ip} --dip ${dst_ip} \
 		--iface ${epair}a
 
 	# check counters are valid
-	atf_check -o match:'1 packet forwarded \(1 packet fast forwarded\)' jexec ${jname} netstat -sp ip
+	atf_check -o match:'1 packet forwarded \(1 packet fast forwarded\)' jexec ${jname}b netstat -sp ip
 }
 
 fwd_ip_icmp_gw_slow_success_cleanup()
