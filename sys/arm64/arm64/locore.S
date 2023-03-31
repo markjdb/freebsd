@@ -668,6 +668,12 @@ sctlr_clear:
 abort:
 	b abort
 
+.bss
+	.align	PAGE_SHIFT
+initstack:
+	.space	(PAGE_SIZE * KSTACK_PAGES)
+initstack_end:
+
 	.section .init_pagetable, "aw", %nobits
 	.align PAGE_SHIFT
 	/*
@@ -692,17 +698,10 @@ pagetable_l0_ttbr0_boostrap:
 	.space	PAGE_SIZE
 pagetable_l0_ttbr0:
 	.space	PAGE_SIZE
-
 pagetable_end:
 
 el2_pagetable:
 	.space	PAGE_SIZE
-
-	.align	4
-initstack:
-	.space	(PAGE_SIZE * KSTACK_PAGES)
-initstack_end:
-
 
 ENTRY(sigcode)
 	mov	x0, sp
