@@ -65,7 +65,9 @@
 #include <dt_string.h>
 #include <dt_impl.h>
 
+#ifdef __amd64__
 #include <dis_tables.h>
+#endif /* __amd64__ */
 
 #include <zlib.h>
 
@@ -361,6 +363,7 @@ dt_sugar_elf_verify_debuglink(struct elf_info *ei, int dbgfd)
 	return (0);
 }
 
+#ifdef __amd64__
 static int
 dt_sugar_dis_get_byte(void *p)
 {
@@ -372,6 +375,7 @@ dt_sugar_dis_get_byte(void *p)
 
 	return (ret);
 }
+#endif /* __amd64__ */
 
 /*
  * Find the caller function and offset of an inline copy. Since we know the
@@ -386,7 +390,6 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 	Elf_Data *d;
 	GElf_Sym sym;
 	struct section *s;
-	dis86_t d86;
 	uint8_t *buf;
 	uint64_t addr, lo, hi;
 	uint32_t stab;
@@ -476,6 +479,9 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr++;
 					buf++;
 				}
+#ifdef __amd64__
+				dis86_t d86;
+
 				d86.d86_data = &buf;
 				d86.d86_get_byte = dt_sugar_dis_get_byte;
 				d86.d86_check_func = NULL;
@@ -494,6 +500,7 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr += d86.d86_len;
 				}
 				addr -= d86.d86_len;
+#endif /* __amd64__ */
 				off->val = addr - lo;
 			} else
 				off->val = addr_hi - lo;
