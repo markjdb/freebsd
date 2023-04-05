@@ -52,6 +52,8 @@
 #include <machine/smp.h>
 #include <machine/stdarg.h>
 
+#include <x86/apicvar.h>
+
 #include <xen/xen-os.h>
 #include <xen/hypervisor.h>
 #include <xen/xen_intr.h>
