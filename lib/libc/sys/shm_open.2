@@ -162,6 +162,11 @@ number of translation lookaside buffer (TLB) entries required to access a
 mapping of the object,
 and by reducing the number of page faults performed when accessing a mapping.
 This happens automatically for all largepage objects.
+Memory allocated to largepage objects is wired and thus will never be paged
+out.
+Mappings of largepage objects behave as though they have had the
+.Xr mlock 2
+system call applied.
 .Pp
 An existing largepage object can be opened using the
 .Fn shm_open
