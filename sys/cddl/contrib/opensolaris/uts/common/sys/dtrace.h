@@ -51,6 +51,12 @@ extern "C" {
 
 #include <sys/param.h>
 #include <sys/stdint.h>
+#include <sys/types.h>
+
+#if defined(__i386) || defined(__amd64) || defined (__riscv)
+extern int dtrace_instr_size(uint8_t *instr);
+#endif
+
 #ifdef _KERNEL
 #include <sys/endian.h>
 #endif
@@ -71,7 +77,6 @@ typedef int processorid_t;
 #include <sys/ioccom.h>
 #include <sys/cred.h>
 #include <sys/proc.h>
-#include <sys/types.h>
 #include <sys/ucred.h>
 #endif
 typedef int model_t;
@@ -2399,7 +2404,6 @@ extern void dtrace_safe_synchronous_signal(void);
 extern int dtrace_mach_aframes(void);
 
 #if defined(__i386) || defined(__amd64)
-extern int dtrace_instr_size(uint8_t *instr);
 extern int dtrace_instr_size_isa(uint8_t *, model_t, int *);
 extern void dtrace_invop_callsite(void);
 #endif
