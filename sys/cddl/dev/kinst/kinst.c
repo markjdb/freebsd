@@ -126,6 +126,14 @@ kinst_excluded(const char *name)
 	    strcmp(name, "Xxen_intr_upcall_pti") == 0)
 		return (1);
 #endif /* __amd64__ */
+#ifdef __riscv
+	if (strcmp(name, "cpu_exception_handler") == 0 ||
+	    strcmp(name, "cpu_exception_handler_supervisor") == 0 ||
+	    strcmp(name, "cpu_exception_handler_user") == 0 ||
+	    strcmp(name, "do_trap_supervisor") == 0 ||
+	    strcmp(name, "do_trap_user") == 0)
+		return (1);
+#endif /* __riscv */
 
 	/*
 	 * Tracing cpu_switch() can trigger panics.
