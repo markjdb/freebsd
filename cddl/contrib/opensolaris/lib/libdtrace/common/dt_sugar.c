@@ -65,10 +65,6 @@
 #include <dt_string.h>
 #include <dt_impl.h>
 
-#ifdef __amd64__
-#include <dis_tables.h>
-#endif /* __amd64__ */
-
 #include <zlib.h>
 
 /* kinst-related */
@@ -363,20 +359,6 @@ dt_sugar_elf_verify_debuglink(struct elf_info *ei, int dbgfd)
 	return (0);
 }
 
-#ifdef __amd64__
-static int
-dt_sugar_dis_get_byte(void *p)
-{
-	int ret;
-	uint8_t **instr = p;
-
-	ret = **instr;
-	(*instr)++;
-
-	return (ret);
-}
-#endif /* __amd64__ */
-
 /*
  * Find the caller function and offset of an inline copy. Since we know the
  * inline copy's boundaries (`addr_lo` and `addr_hi` arguments), the caller
@@ -479,28 +461,13 @@ dt_sugar_kinst_find_caller_func(dt_sugar_parse_t *dp, struct off *off,
 					addr++;
 					buf++;
 				}
-#ifdef __amd64__
-				dis86_t d86;
 
-				d86.d86_data = &buf;
-				d86.d86_get_byte = dt_sugar_dis_get_byte;
-				d86.d86_check_func = NULL;
-				/* Get to the inline copy's end. */
 				while (addr != addr_hi) {
-					/*
-					 * XXX We might have to add #ifdefs
-					 * when we port kinst to other
-					 * architectures.
-					 */
-					if (dtrace_disx86(&d86, SIZE64) != 0) {
-						warnx("dt_sugar: "
-						    "dtrace_disx86() failed");
-						return;
-					}
-					addr += d86.d86_len;
+					len = dtrace_instr_size(buf);
+					addr += len;
+					buf += len;
 				}
-				addr -= d86.d86_len;
-#endif /* __amd64__ */
+				addr -= len;
 				off->val = addr - lo;
 			} else
 				off->val = addr_hi - lo;
