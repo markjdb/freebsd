@@ -4,9 +4,10 @@
  * Copyright 2023 Christos Margiolis <christos@FreeBSD.org>
  */
 
-#include <machine/encoding.h>
+#include <sys/types.h>
+#include <sys/dtrace.h>
 
-#include <dtrace.h>
+#include <machine/riscvreg.h>
 
 #define RVC_MASK 0x03
 

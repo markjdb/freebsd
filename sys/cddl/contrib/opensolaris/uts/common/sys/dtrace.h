@@ -53,10 +53,6 @@ extern "C" {
 #include <sys/stdint.h>
 #include <sys/types.h>
 
-#if defined(__i386) || defined(__amd64) || defined (__riscv)
-extern int dtrace_instr_size(uint8_t *instr);
-#endif
-
 #ifdef _KERNEL
 #include <sys/endian.h>
 #endif
@@ -2431,6 +2427,10 @@ extern void dtrace_helpers_destroy(proc_t *);
 	(cpu_core[curcpu].cpuc_dtrace_flags &= ~(flag))
 
 #endif /* _KERNEL */
+
+#if defined(__i386) || defined(__amd64) || defined (__riscv)
+extern int dtrace_instr_size(uint8_t *instr);
+#endif
 
 #endif	/* _ASM */
 
