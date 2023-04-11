@@ -20,12 +20,6 @@
 #define	KINST_TRAMP_SIZE	32
 #define	KINST_TRAMPCHUNK_SIZE	PAGE_SIZE
 
-/*
- * Fill the trampolines with breakpoint instructions so that the kernel will
- * crash cleanly if things somehow go wrong.
- */
-#define	KINST_TRAMP_INIT(t, s)	memset((t), KINST_PATCHVAL, (s))
-
 typedef uint8_t kinst_patchval_t;
 
 struct kinst_probe_md {

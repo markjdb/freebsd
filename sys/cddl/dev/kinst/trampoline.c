@@ -29,8 +29,17 @@
 #include "kinst_isa.h"
 
 /*
- * We can have 4KB/32B = 128 trampolines per chunk.
+ * Fill the trampolines with breakpoint instructions so that the kernel will
+ * crash cleanly if things somehow go wrong.
  */
+#define KINST_TRAMP_INIT(t, s)	do {						\
+	int _i, _v;								\
+										\
+	_v = KINST_PATCHVAL;							\
+	for (_i = 0; _i < (s); _i += sizeof(kinst_patchval_t))			\
+		memcpy(&((uint8_t *)(t))[_i], &_v, sizeof(kinst_patchval_t));	\
+} while (0)
+
 #define KINST_TRAMPS_PER_CHUNK	(KINST_TRAMPCHUNK_SIZE / KINST_TRAMP_SIZE)
 
 struct trampchunk {
