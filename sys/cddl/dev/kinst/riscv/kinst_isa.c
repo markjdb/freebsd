@@ -19,12 +19,12 @@
  */
 DPCPU_DEFINE_STATIC(uint8_t *, intr_tramp);
 
-static int
-kinst_regoff(struct trapframe *frame, int n)
-{
 #define _MATCH_REG(reg)	\
 	(offsetof(struct trapframe, tf_ ## reg) / sizeof(register_t))
 
+static int
+kinst_regoff(struct trapframe *frame, int n)
+{
 	switch (n) {
 	case 0:
 		/* There is no zero register in the trapframe structure. */
@@ -47,23 +47,38 @@ kinst_regoff(struct trapframe *frame, int n)
 		return (_MATCH_REG(s[n - 18 + 2]));
 	case 28 ... 31:
 		return (_MATCH_REG(t[n - 28 + 3]));
-#undef _MATCH_REG
 	default:
 		panic("%s: unhandled register index %d", __func__, n);
 	}
 }
 
+static int
+kinst_c_regoff(struct trapframe *frame, int n)
+{
+	switch (n) {
+	case 0 ... 1:
+		return (_MATCH_REG(s[n - 1]));
+	case 2 ... 7:
+		return (_MATCH_REG(a[n - 2]));
+	default:
+		panic("%s: unhandled register index %d", __func__, n);
+	}
+}
+
+#undef _MATCH_REG
+
 /*
  * Emulate instructions that cannot be copied to the trampoline without
- * modification.
+ * modification (i.e instructions that use or modify PC).
  */
 static int
 kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 {
 	kinst_patchval_t instr = kp->kp_savedval;
 	register_t prevpc;
-	int32_t imm;
-	uint8_t width, funct;
+	uint64_t imm;
+	uint16_t off;
+	uint8_t funct;
 
 	if (kp->kp_md.instlen == INSN_SIZE) {
 #define rs1_index	((instr & RS1_MASK) >> RS1_SHIFT)
@@ -75,67 +90,14 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 #define rs1_lval	(rs1_index != 0 ? rs1 : 0)
 #define rs2_lval	(rs2_index != 0 ? rs2 : 0)
 		switch (instr & 0x7f) {
-		case 0b0000011:	/* load */
-			if (rd_index == 0)	/* XXX raise exception? */
-				break;
-			imm = (instr & IMM_MASK) >> IMM_SHIFT;
-			if (imm & 0x00000800)
-				imm |= 0xfffff000;
-			width = (instr >> 12) & 0x07;
-			switch (width) {
-			case 0b000:	/* lb */
-				rd = *(int8_t *)(rs1_lval + imm);
-				break;
-			case 0b001:	/* lh */
-				rd = *(int16_t *)(rs1_lval + imm);
-				break;
-			case 0b010:	/* lw */
-				rd = *(int32_t *)(rs1_lval + imm);
-				break;
-			case 0b100:	/* lbu */
-				rd = *(uint8_t *)(rs1_lval + imm);
-				break;
-			case 0b101:	/* lhu */
-				rd = *(uint16_t *)(rs1_lval + imm);
-				break;
-			case 0b110:	/* lwu */
-				rd = *(uint32_t *)(rs1_lval + imm);
-				break;
-			case 0b011:	/* ld */
-				rd = *(int64_t *)(rs1_lval + imm);
-				break;
-			}
-			frame->tf_sepc += INSN_SIZE;
-			break;
-		case 0b0100011:	/* store */
-			imm = (instr >> 7) & 0x1f;
-			imm |= ((instr >> 25) & 0x7f) << 5;
-			if (imm & 0x00000800)
-				imm |= 0xfffff000;
-			width = (instr >> 12) & 0x07;
-			switch (width) {
-			case 0b000:	/* sb */
-				*(int8_t *)(rs1_lval + imm) = (int8_t)rs2_lval;
-				break;
-			case 0b001:	/* sh */
-				*(int16_t *)(rs1_lval + imm) = (int16_t)rs2_lval;
-				break;
-			case 0b010:	/* sw */
-				*(int32_t *)(rs1_lval + imm) = (int32_t)rs2_lval;
-				break;
-			case 0b011:	/* sd */
-				*(int64_t *)(rs1_lval + imm) = (int64_t)rs2_lval;
-				break;
-			}
-			frame->tf_sepc += INSN_SIZE;
-			break;
 		case 0b1101111: /* jal */
-			imm = (instr >> 12) & 0x00ff;
-			imm |= ((instr >> 20) & 0x0001) << 8;
-			imm |= ((instr >> 21) & 0x03ff) << 9;
-			imm |= ((instr >> 31) & 0x0001) << 19;
-			if (imm & 0x00080000)
-				imm |= 0xfff00000;
+			imm = 0;
+			imm |= ((instr >> 21) & 0x03ff) << 1;
+			imm |= ((instr >> 20) & 0x0001) << 11;
+			imm |= ((instr >> 12) & 0x00ff) << 12;
+			imm |= ((instr >> 31) & 0x0001) << 20;
+			if (imm & 0x0000000000100000)
+				imm |= 0xfffffffffff00000;
 			if (rd_index != 0)
 				rd = frame->tf_sepc + 4;
 			frame->tf_sepc += imm;
@@ -143,19 +105,20 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 		case 0b1100111:	/* jalr */
 			prevpc = frame->tf_sepc;
 			imm = (instr & IMM_MASK) >> IMM_SHIFT;
-			if (imm & 0x00000800)
-				imm |= 0xfffff000;
+			if (imm & 0x0000000000000800)
+				imm |= 0xfffffffffffff000;
 			frame->tf_sepc = (rs1_lval + imm) & ~1;
 			if (rd_index != 0)
 				rd = prevpc + 4;
 			break;
 		case 0b1100011:	/* branch */
-			imm = (instr >> 7) & 0x0001;
+			imm = 0;
 			imm |= ((instr >> 8) & 0x000f) << 1;
 			imm |= ((instr >> 25) & 0x003f) << 5;
-			imm |= ((instr >> 31) & 0x0001) << 11;
-			if (imm & 0x00000800)
-				imm |= 0xfffff000;
+			imm |= ((instr >> 7) & 0x0001) << 11;
+			imm |= ((instr >> 31) & 0x0001) << 12;
+			if (imm & 0x0000000000001000)
+				imm |= 0xfffffffffffff000;
 			funct = (instr >> 12) & 0x07;
 			switch (funct) {
 			case 0b000:	/* beq */
@@ -169,6 +132,11 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 					frame->tf_sepc += imm;
 				else
 					frame->tf_sepc += INSN_SIZE;
+				/*printf("x[%d]: 0x%lx\n", rs1_index, rs1_lval);*/
+				/*printf("x[%d]: 0x%lx\n", rs2_index, rs2_lval);*/
+				/*printf("imm: 0x%x\t%d\n", imm, imm);*/
+				/*printf("target: 0x%lx\n", frame->tf_sepc + imm);*/
+				/*printf("sepc: 0x%lx\n", frame->tf_sepc);*/
 				break;
 			case 0b100:	/* blt */
 				if ((int64_t)rs1_lval < (int64_t)rs2_lval)
@@ -196,16 +164,11 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 				break;
 			}
 			break;
-		case 0b0110111:	/* lui */
-			imm = instr & 0xfffff000;
-			/* XXX: rd = zero */
-			rd = imm;
-			frame->tf_sepc += INSN_SIZE;
-			break;
 		case 0b0010111:	/* auipc */
 			imm = instr & 0xfffff000;
-			/* XXX: rd = zero */
-			rd = frame->tf_sepc + imm;
+			rd = frame->tf_sepc +
+			    (imm & 0x0000000080000000 ?
+			    imm | 0xffffffff80000000 : imm);
 			frame->tf_sepc += INSN_SIZE;
 			break;
 		}
@@ -218,7 +181,46 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 #undef rs2_index
 #undef rd_index
 	} else {
-		/* TODO */
+#define rs1	\
+	((register_t *)frame)[kinst_c_regoff(frame, (instr >> 7) & 0x07)]
+		if ((instr & 0x03) == 0b01) {
+			funct = (instr >> 13) & 0x07;
+			switch (funct) {
+			case 0b101:	/* c.j */
+				off = (instr >> 2) & 0x07ff;
+				imm = 0;
+				imm |= ((off >> 1) & 0x07) << 1;
+				imm |= ((off >> 9) & 0x01) << 4;
+				imm |= ((off >> 0) & 0x01) << 5;
+				imm |= ((off >> 5) & 0x01) << 6;
+				imm |= ((off >> 4) & 0x01) << 7;
+				imm |= ((off >> 7) & 0x03) << 8;
+				imm |= ((off >> 6) & 0x01) << 10;
+				imm |= ((off >> 10) & 0x01) << 11;
+				if (imm & 0x0000000000000800)
+					imm |= 0xfffffffffffff000;
+				frame->tf_sepc += imm;
+				break;
+			case 0b110:	/* c.beqz */
+			case 0b111:	/* c.bnez */
+				imm = 0;
+				imm |= ((instr >> 3) & 0x03) << 1;
+				imm |= ((instr >> 10) & 0x03) << 3;
+				imm |= ((instr >> 2) & 0x01) << 5;
+				imm |= ((instr >> 5) & 0x03) << 6;
+				imm |= ((instr >> 12) & 0x01) << 8;
+				if (imm & 0x0000000000000100)
+					imm |= 0xffffffffffffff00;
+				if (funct == 0b110 && !rs1)
+					frame->tf_sepc += imm;
+				else if (funct == 0b111 && rs1)
+					frame->tf_sepc += imm;
+				else
+					frame->tf_sepc += INSN_C_SIZE;
+				break;
+			}
+		}
+#undef rs1
 	}
 
 	return (MATCH_C_NOP);
@@ -300,6 +302,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 		frame->tf_sepc = (register_t)tramp;
 		curthread->t_kinst_curprobe = kp;
 	}
+
 	return (MATCH_C_NOP);
 }
 
@@ -319,31 +322,40 @@ kinst_patch_tracepoint(struct kinst_probe *kp, kinst_patchval_t val)
 }
 
 static int
-kinst_instr_dissect(struct kinst_probe *kp, uint8_t *instr, int instrsize)
+kinst_instr_dissect(struct kinst_probe *kp, int instrsize)
 {
 	struct kinst_probe_md *kpmd;
+	kinst_patchval_t instr = kp->kp_savedval;
 
 	kpmd = &kp->kp_md;
 	kpmd->instlen = instrsize;
 	kpmd->emulate = 0;
 
+	/*
+	 * TODO explain
+	 */
 	if (kpmd->instlen == INSN_SIZE) {
-		switch (*instr & 0x7f) {
-		case 0b0000011:	/* load */
-		case 0b0100011:	/* store */
+		switch (instr & 0x7f) {
 		case 0b1101111: /* jal */
 		case 0b1100111:	/* jalr */
 		case 0b1100011:	/* branch */
-		case 0b0110111:	/* lui */
 		case 0b0010111:	/* auipc */
 			kpmd->emulate = 1;
 			break;
 		}
 	} else {
-		/* TODO */
+		if ((instr & 0x03) == 0b01) {
+			switch ((instr >> 13) & 0x07) {
+			case 0b101:	/* c.j */
+			case 0b110:	/* c.beqz */
+			case 0b111:	/* c.bnez */
+				kpmd->emulate = 1;
+				break;
+			}
+		}
 	}
 	if (!kpmd->emulate)
-		memcpy(kpmd->template, instr, kpmd->instlen);
+		memcpy(kpmd->template, &instr, kpmd->instlen);
 
 	return (0);
 }
@@ -380,8 +392,11 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		off = (int)(instr - (uint8_t *)symval->value);
 		if (pd->kpd_off != -1 && off != pd->kpd_off)
 			goto cont;
-		
-		/* TODO: handle sti and popf equivalents */
+
+		/*
+		 * XXX are there any instructions we should avoid
+		 * instrumenting?
+		 */
 
 		/*
 		 * Prevent separate dtrace(1) instances from creating copies of
@@ -407,7 +422,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		else
 			kp->kp_patchval = KINST_C_PATCHVAL;
 
-		error = kinst_instr_dissect(kp, instr, instrsize);
+		error = kinst_instr_dissect(kp, instrsize);
 		if (error != 0)
 			return (error);
 
