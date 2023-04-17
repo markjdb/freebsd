@@ -338,8 +338,7 @@ dtrace_getreg(struct trapframe *rp, uint_t reg)
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
 		return (0);
 	}
-
-	return (0);
+	/* NOTREACHED */
 }
 
 static int
