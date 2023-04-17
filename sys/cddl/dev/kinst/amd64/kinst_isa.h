@@ -19,6 +19,8 @@
  */
 #define	KINST_TRAMP_SIZE	32
 #define	KINST_TRAMPCHUNK_SIZE	PAGE_SIZE
+#define KINST_TRAMP_FILL	KINST_PATCHVAL
+#define KINST_TRAMP_FILL_SIZE	sizeof(uint8_t)
 
 typedef uint8_t kinst_patchval_t;
 
