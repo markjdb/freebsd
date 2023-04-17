@@ -22,6 +22,8 @@ inline int R_T2 = 7;
 #pragma D binding "1.0" R_T2
 inline int R_S0 = 8;
 #pragma D binding "1.0" R_S0
+inline int R_FP = 8;
+#pragma D binding "1.0" R_FP
 inline int R_S1 = 9;
 #pragma D binding "1.0" R_S1
 inline int R_A0 = 10;

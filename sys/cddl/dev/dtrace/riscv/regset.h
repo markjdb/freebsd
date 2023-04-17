@@ -51,6 +51,7 @@ extern "C" {
 #define REG_T1		6
 #define REG_T2		7
 #define REG_S0		8
+#define REG_FP		8
 #define REG_S1		9
 #define REG_A0		10
 #define REG_A1		11
