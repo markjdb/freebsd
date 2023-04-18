@@ -18,6 +18,12 @@
  * kinst probe while executing the interrupt handler.
  */
 DPCPU_DEFINE_STATIC(uint8_t *, intr_tramp);
+/*
+ * The double-breakpoint mechanism needs to save the current probe for the next
+ * call to kinst_invop(). As with per-CPU trampolines, this also has to be done
+ * per-CPU when interrupts are disabled.
+ */
+DPCPU_DEFINE_STATIC(struct kinst_probe *, intr_probe);
 
 #define _MATCH_REG(reg)	\
 	(offsetof(struct trapframe, tf_ ## reg) / sizeof(register_t))
@@ -57,7 +63,7 @@ kinst_c_regoff(struct trapframe *frame, int n)
 {
 	switch (n) {
 	case 0 ... 1:
-		return (_MATCH_REG(s[n - 1]));
+		return (_MATCH_REG(s[n]));
 	case 2 ... 7:
 		return (_MATCH_REG(a[n - 2]));
 	default:
@@ -99,7 +105,7 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 			if (imm & 0x0000000000100000)
 				imm |= 0xfffffffffff00000;
 			if (rd_index != 0)
-				rd = frame->tf_sepc + 4;
+				rd = frame->tf_sepc + INSN_SIZE;
 			frame->tf_sepc += imm;
 			break;
 		case 0b1100111:	/* jalr */
@@ -109,7 +115,7 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 				imm |= 0xfffffffffffff000;
 			frame->tf_sepc = (rs1_lval + imm) & ~1;
 			if (rd_index != 0)
-				rd = prevpc + 4;
+				rd = prevpc + INSN_SIZE;
 			break;
 		case 0b1100011:	/* branch */
 			imm = 0;
@@ -132,11 +138,6 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 					frame->tf_sepc += imm;
 				else
 					frame->tf_sepc += INSN_SIZE;
-				/*printf("x[%d]: 0x%lx\n", rs1_index, rs1_lval);*/
-				/*printf("x[%d]: 0x%lx\n", rs2_index, rs2_lval);*/
-				/*printf("imm: 0x%x\t%d\n", imm, imm);*/
-				/*printf("target: 0x%lx\n", frame->tf_sepc + imm);*/
-				/*printf("sepc: 0x%lx\n", frame->tf_sepc);*/
 				break;
 			case 0b100:	/* blt */
 				if ((int64_t)rs1_lval < (int64_t)rs2_lval)
@@ -181,9 +182,10 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 #undef rs2_index
 #undef rd_index
 	} else {
+		switch (instr & 0x03) {
 #define rs1	\
 	((register_t *)frame)[kinst_c_regoff(frame, (instr >> 7) & 0x07)]
-		if ((instr & 0x03) == 0b01) {
+		case 0b01:
 			funct = (instr >> 13) & 0x07;
 			switch (funct) {
 			case 0b101:	/* c.j */
@@ -211,17 +213,40 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 				imm |= ((instr >> 12) & 0x01) << 8;
 				if (imm & 0x0000000000000100)
 					imm |= 0xffffffffffffff00;
-				if (funct == 0b110 && !rs1)
+				if (funct == 0b110 && rs1 == 0)
 					frame->tf_sepc += imm;
-				else if (funct == 0b111 && rs1)
+				else if (funct == 0b111 && rs1 != 0)
 					frame->tf_sepc += imm;
 				else
 					frame->tf_sepc += INSN_C_SIZE;
 				break;
 			}
-		}
+			break;
 #undef rs1
+#define rs1_index	((instr & RD_MASK) >> RD_SHIFT)
+#define rs1		((register_t *)frame)[kinst_regoff(frame, rs1_index)]
+		case 0b10:
+			funct = (instr >> 12) & 0x0f;
+			if (funct == 0b1001 && rs1_index != 0) {
+				/* c.jalr */
+				prevpc = frame->tf_sepc;
+				frame->tf_sepc = rs1;
+				frame->tf_ra = prevpc + INSN_C_SIZE;
+			}
+			break;
+#undef rs1
+#undef rs1_index
+		}
 	}
+
+	return (MATCH_C_NOP);
+}
+
+static int
+kinst_jump_next_instr(struct trapframe *frame, struct kinst_probe *kp)
+{
+	frame->tf_sepc = (register_t)((uint8_t *)kp->kp_patchpoint +
+	    kp->kp_md.instlen);
 
 	return (MATCH_C_NOP);
 }
@@ -229,6 +254,7 @@ kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 static void
 kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
 {
+	static uint16_t nop = MATCH_C_NOP;
 	int ilen;
 
 	ilen = kp->kp_md.instlen;
@@ -236,38 +262,69 @@ kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
 	/*
 	 * Since we cannot encode large displacements in a single instruction
 	 * in order to encode a far-jump back to the next instruction, and we
-	 * also cannot clobber a register inside the trampoline, we instead add
-	 * a breakpoint after the copied instruction. kinst_invop() is
+	 * also cannot clobber a register inside the trampoline, we execute a
+	 * breakpoint after the copied instruction. kinst_invop() is
 	 * responsible for detecting this special case and perform the "jump"
 	 * manually.
+	 *
+	 * Add NOP after a compressed instruction for padding.
 	 */
-	memcpy(&tramp[ilen], &kp->kp_patchval, ilen);
+	if (ilen == INSN_C_SIZE)
+		memcpy(&tramp[ilen], &nop, INSN_C_SIZE);
 }
 
 int
 kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 {
-	solaris_cpu_t *cpu;
+	solaris_cpu_t *scpu;
+	struct proc *p;
+	struct thread *td;
 	struct kinst_probe *kp;
 	uint8_t *tramp;
-
-	if ((frame->tf_sstatus & SSTATUS_SPIE) == 0)
-		tramp = DPCPU_GET(intr_tramp);
-	else
-		tramp = curthread->t_kinst;
+	int cpu;
 
 	/*
-	 * Detect if kinst_invop() was triggered by the trampoline breakpoint,
-	 * and set PC manually to to the next instruction.
+	 * XXX Since we're always executing with interrupts disabled, is there
+	 * a reason to have this check and bother with per-thread tramps and
+	 * probes at all?
 	 */
-	if (tramp != NULL &&
-	    addr == (uintptr_t)(tramp + dtrace_instr_size(tramp))) {
-		kp = curthread->t_kinst_curprobe;
-		curthread->t_kinst_curprobe = NULL;
-		frame->tf_sepc =
-		    (register_t)((uint8_t *)kp->kp_patchpoint +
-		    kp->kp_md.instlen);
-		return (MATCH_C_NOP);
+	if ((frame->tf_sstatus & SSTATUS_SIE) == 0) {
+		/*
+		 * Detect if the breakpoint was triggered by the trampoline,
+		 * and manually set the PC to the next instruction.
+		 *
+		 * The trampolines are searched per-CPU, because there is a
+		 * chance that the breakpoint is handled by a different CPU
+		 * than the one that triggered it.
+		 */
+		CPU_FOREACH(cpu) {
+			tramp = DPCPU_ID_GET(cpu, intr_tramp);
+			kp = DPCPU_ID_GET(cpu, intr_probe);
+			if (tramp == NULL || kp == NULL)
+				continue;
+			if (addr == (uintptr_t)(tramp + INSN_SIZE))
+				return (kinst_jump_next_instr(frame, kp));
+		}
+		/*
+		 * The breakpoint was triggered by the patched instruction.
+		 */
+		tramp = DPCPU_GET(intr_tramp);
+	} else {
+		/*
+		 * Detect the trampoline-breakpoint case per-thread for the
+		 * same reason explained above.
+		 */
+		FOREACH_PROC_IN_SYSTEM(p) {
+			FOREACH_THREAD_IN_PROC(p, td) {
+				tramp = td->t_kinst;
+				kp = td->t_kinst_curprobe;
+				if (tramp == NULL || kp == NULL)
+					continue;
+				if (addr == (uintptr_t)(tramp + INSN_SIZE))
+					return (kinst_jump_next_instr(frame, kp));
+			}
+		}
+		tramp = curthread->t_kinst;
 	}
 
 	LIST_FOREACH(kp, KINST_GETPROBE(addr), kp_hashnext) {
@@ -277,10 +334,10 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	if (kp == NULL)
 		return (0);
 
-	cpu = &solaris_cpu[curcpu];
-	cpu->cpu_dtrace_caller = frame->tf_ra - INSN_SIZE;
+	scpu = &solaris_cpu[curcpu];
+	scpu->cpu_dtrace_caller = addr;	/* XXX is this wrong? */
 	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
-	cpu->cpu_dtrace_caller = 0;
+	scpu->cpu_dtrace_caller = 0;
 
 	if (kp->kp_md.emulate)
 		return (kinst_emulate(frame, kp));
@@ -300,7 +357,10 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	} else {
 		kinst_trampoline_populate(kp, tramp);
 		frame->tf_sepc = (register_t)tramp;
-		curthread->t_kinst_curprobe = kp;
+		if ((frame->tf_sstatus & SSTATUS_SIE) == 0)
+			DPCPU_SET(intr_probe, kp);
+		else
+			curthread->t_kinst_curprobe = kp;
 	}
 
 	return (MATCH_C_NOP);
@@ -321,11 +381,12 @@ kinst_patch_tracepoint(struct kinst_probe *kp, kinst_patchval_t val)
 	}
 }
 
-static int
+static void
 kinst_instr_dissect(struct kinst_probe *kp, int instrsize)
 {
 	struct kinst_probe_md *kpmd;
 	kinst_patchval_t instr = kp->kp_savedval;
+	uint8_t funct;
 
 	kpmd = &kp->kp_md;
 	kpmd->instlen = instrsize;
@@ -344,20 +405,28 @@ kinst_instr_dissect(struct kinst_probe *kp, int instrsize)
 			break;
 		}
 	} else {
-		if ((instr & 0x03) == 0b01) {
-			switch ((instr >> 13) & 0x07) {
+		switch (instr & 0x03) {
+		case 0b01:
+			funct = (instr >> 13) & 0x07;
+			switch (funct) {
 			case 0b101:	/* c.j */
 			case 0b110:	/* c.beqz */
 			case 0b111:	/* c.bnez */
 				kpmd->emulate = 1;
 				break;
 			}
+			break;
+		case 0b10:
+			funct = (instr >> 12) & 0x0f;
+			if (funct == 0b1001 &&
+			    ((instr >> 7) & 0x1f) != 0 &&
+			    ((instr >> 2) & 0x1f) == 0)
+				kpmd->emulate = 1;	/* c.jalr */
+			break;
 		}
 	}
 	if (!kpmd->emulate)
 		memcpy(kpmd->template, &instr, kpmd->instlen);
-
-	return (0);
 }
 
 int
@@ -368,7 +437,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	dtrace_kinst_probedesc_t *pd;
 	const char *func;
 	uint8_t *instr, *limit;
-	int error, instrsize, n, off;
+	int instrsize, n, off;
 
 	pd = opaque;
 	func = symval->name;
@@ -393,10 +462,9 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		if (pd->kpd_off != -1 && off != pd->kpd_off)
 			goto cont;
 
-		/*
-		 * XXX are there any instructions we should avoid
-		 * instrumenting?
-		 */
+		/* FIXME */
+		if (off >= 4436 && off <= 4450)
+			goto cont;
 
 		/*
 		 * Prevent separate dtrace(1) instances from creating copies of
@@ -422,10 +490,7 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		else
 			kp->kp_patchval = KINST_C_PATCHVAL;
 
-		error = kinst_instr_dissect(kp, instrsize);
-		if (error != 0)
-			return (error);
-
+		kinst_instr_dissect(kp, instrsize);
 		kinst_probe_create(kp, lf);
 cont:
 		instr += instrsize;
