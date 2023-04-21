@@ -62,23 +62,19 @@ void ptrauth_enter_el0(struct thread *);
 static bool
 ptrauth_disable(void)
 {
-	u_int midr;
+	const char *family, *maker, *product;
 
-	/*
-	 * Work around Cortex-A78C erratum 2478780: Pointer Authentication
-	 * controls might become corrupt.  At the time of writing the erratum
-	 * is present in all revisions of the core.
-	 *
-	 * This workaround currently only works when booting on an affected
-	 * core.
-	 */
-	midr = PCPU_GET(midr);
-	if (CPU_IMPL(midr) == CPU_IMPL_ARM &&
-	    CPU_PART(midr) == CPU_PART_CORTEX_A78C) {
-		if (boothowto & RB_VERBOSE)
-			printf("PAC is disabled for erratum 2478780\n");
+	family = kern_getenv("smbios.system.family");
+	maker = kern_getenv("smbios.system.maker");
+	product = kern_getenv("smbios.system.product");
+	if (family == NULL || maker == NULL || product == NULL)
+		return (false);
+
+	if (strcmp(maker, "Microsoft Corporation") == 0 &&
+	    strcmp(family, "Surface") == 0 &&
+	    strcmp(product, "Windows Dev Kit 2023") == 0)
 		return (true);
-	}
+
 	return (false);
 }
 
