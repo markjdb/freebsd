@@ -147,6 +147,8 @@
 
 #ifndef LOCORE
 
+#include <x86/intr_machdep.h>
+
 #define	APIC_IPI_DEST_SELF	-1
 #define	APIC_IPI_DEST_ALL	-2
 #define	APIC_IPI_DEST_OTHERS	-3
