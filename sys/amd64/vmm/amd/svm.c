@@ -122,7 +122,7 @@ SYSCTL_UINT(_hw_vmm_svm, OID_AUTO, num_asids, CTLFLAG_RDTUN, &nasid, 0,
     "Number of ASIDs supported by this processor");
 
 /* Current ASID generation for each host cpu */
-static struct asid asid[MAXCPU];
+static struct asid *asid;
 
 /* SVM host state saved area of size 4KB for each physical core. */
 static uint8_t *hsave;
@@ -167,6 +167,7 @@ svm_modcleanup(void)
 
 	smp_rendezvous(NULL, svm_disable, NULL, NULL);
 	kmem_free(hsave, (mp_maxid + 1) * PAGE_SIZE);
+	free(asid, M_SVM);
 	return (0);
 }
 
@@ -254,7 +255,9 @@ svm_modinit(int ipinum)
 
 	vmcb_clean &= VMCB_CACHE_DEFAULT;
 
-	for (cpu = 0; cpu < MAXCPU; cpu++) {
+	asid = malloc(sizeof(struct asid) * (mp_maxid + 1), M_SVM,
+	    M_WAITOK | M_ZERO);
+	CPU_FOREACH(cpu) {
 		/*
 		 * Initialize the host ASIDs to their "highest" valid values.
 		 *

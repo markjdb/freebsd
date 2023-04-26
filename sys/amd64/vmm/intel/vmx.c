@@ -134,7 +134,7 @@ SYSCTL_DECL(_hw_vmm);
 SYSCTL_NODE(_hw_vmm, OID_AUTO, vmx, CTLFLAG_RW | CTLFLAG_MPSAFE, NULL,
     NULL);
 
-int vmxon_enabled[MAXCPU];
+int *vmxon_enabled;
 static uint8_t *vmxon_region;
 
 static uint32_t pinbased_ctls, procbased_ctls, procbased_ctls2;
@@ -620,6 +620,7 @@ vmx_modcleanup(void)
 
 	smp_rendezvous(NULL, vmx_disable, NULL, NULL);
 	kmem_free(vmxon_region, (mp_maxid + 1) * PAGE_SIZE);
+	free(vmxon_enabled, M_VMX);
 
 	return (0);
 }
@@ -955,6 +956,8 @@ vmx_modinit(int ipinum)
 	vmx_msr_init();
 
 	/* enable VMX operation */
+	vmxon_enabled = malloc(sizeof(*vmxon_enabled) * (mp_maxid + 1),
+	    M_VMX, M_WAITOK | M_ZERO);
 	vmxon_region = kmem_malloc((mp_maxid + 1) * PAGE_SIZE,
 	    M_WAITOK | M_ZERO);
 	smp_rendezvous(NULL, vmx_enable, NULL, NULL);
@@ -1046,6 +1049,9 @@ vmx_init(struct vm *vm, pmap_t pmap)
 	vmx->msr_bitmap = malloc_aligned(PAGE_SIZE, PAGE_SIZE, M_VMX,
 	    M_WAITOK | M_ZERO);
 	msr_bitmap_initialize(vmx->msr_bitmap);
+
+	vmx->eptgen = malloc(sizeof(*vmx->eptgen) * (mp_maxid + 1), M_VMX,
+	    M_WAITOK | M_ZERO);
 
 	/*
 	 * It is safe to allow direct access to MSR_GSBASE and MSR_FSBASE.
@@ -3224,6 +3230,7 @@ vmx_cleanup(void *vmi)
 	if (virtual_interrupt_delivery)
 		vm_unmap_mmio(vmx->vm, DEFAULT_APIC_BASE, PAGE_SIZE);
 
+	free(vmx->eptgen, M_VMX);
 	free(vmx->msr_bitmap, M_VMX);
 	free(vmx, M_VMX);
 

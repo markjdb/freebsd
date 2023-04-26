@@ -145,7 +145,7 @@ struct vmx {
 	struct vm	*vm;
 	char		*msr_bitmap;
 	uint64_t	eptp;
-	long		eptgen[MAXCPU];		/* cached pmap->pm_eptgen */
+	long		*eptgen;	/* cached pmap->pm_eptgen */
 	pmap_t		pmap;
 };
 
