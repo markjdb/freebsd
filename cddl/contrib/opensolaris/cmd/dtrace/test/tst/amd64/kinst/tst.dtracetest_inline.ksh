@@ -16,11 +16,17 @@
 
 script()
 {
-	kldload dtrace_test
+	loaded="$(kldstat | grep 'dtrace_test')"
+
+	# Don't attempt to load it if it was already loaded.
+	test -n "${loaded}" || kldload dtrace_test
+
 	$dtrace -q -n \
 		'kinst::kinst_test_inline:entry,kinst::kinst_test_inline:return' \
 		-c "sysctl debug.dtracetest.kinst=1"
-	kldunload dtrace_test
+
+	# If it wasn't loaded by us, don't unload it.
+	test -n "${loaded}" || kldunload dtrace_test
 }
 
 spin()
