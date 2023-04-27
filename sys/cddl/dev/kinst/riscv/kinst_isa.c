@@ -276,55 +276,26 @@ kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
 int
 kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 {
-	solaris_cpu_t *scpu;
-	struct proc *p;
-	struct thread *td;
+	solaris_cpu_t *cpu;
 	struct kinst_probe *kp;
 	uint8_t *tramp;
-	int cpu;
 
-	/*
-	 * XXX Since we're always executing with interrupts disabled, is there
-	 * a reason to have this check and bother with per-thread tramps and
-	 * probes at all?
-	 */
-	if ((frame->tf_sstatus & SSTATUS_SIE) == 0) {
+	if ((frame->tf_sstatus & SSTATUS_SPIE) == 0) {
+		tramp = DPCPU_GET(intr_tramp);
 		/*
 		 * Detect if the breakpoint was triggered by the trampoline,
 		 * and manually set the PC to the next instruction.
-		 *
-		 * The trampolines are searched per-CPU, because there is a
-		 * chance that the breakpoint is handled by a different CPU
-		 * than the one that triggered it.
 		 */
-		CPU_FOREACH(cpu) {
-			tramp = DPCPU_ID_GET(cpu, intr_tramp);
-			kp = DPCPU_ID_GET(cpu, intr_probe);
-			if (tramp == NULL || kp == NULL)
-				continue;
-			if (addr == (uintptr_t)(tramp + INSN_SIZE))
-				return (kinst_jump_next_instr(frame, kp));
+		if (addr == (uintptr_t)(tramp + INSN_SIZE)) {
+			kp = DPCPU_GET(intr_probe);
+			return (kinst_jump_next_instr(frame, kp));
 		}
-		/*
-		 * The breakpoint was triggered by the patched instruction.
-		 */
-		tramp = DPCPU_GET(intr_tramp);
 	} else {
-		/*
-		 * Detect the trampoline-breakpoint case per-thread for the
-		 * same reason explained above.
-		 */
-		FOREACH_PROC_IN_SYSTEM(p) {
-			FOREACH_THREAD_IN_PROC(p, td) {
-				tramp = td->t_kinst;
-				kp = td->t_kinst_curprobe;
-				if (tramp == NULL || kp == NULL)
-					continue;
-				if (addr == (uintptr_t)(tramp + INSN_SIZE))
-					return (kinst_jump_next_instr(frame, kp));
-			}
-		}
 		tramp = curthread->t_kinst;
+		if (addr == (uintptr_t)(tramp + INSN_SIZE)) {
+			kp = curthread->t_kinst_curprobe;
+			return (kinst_jump_next_instr(frame, kp));
+		}
 	}
 
 	LIST_FOREACH(kp, KINST_GETPROBE(addr), kp_hashnext) {
@@ -334,10 +305,10 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	if (kp == NULL)
 		return (0);
 
-	scpu = &solaris_cpu[curcpu];
-	scpu->cpu_dtrace_caller = addr;	/* XXX is this wrong? */
+	cpu = &solaris_cpu[curcpu];
+	cpu->cpu_dtrace_caller = addr;	/* XXX is this wrong? */
 	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
-	scpu->cpu_dtrace_caller = 0;
+	cpu->cpu_dtrace_caller = 0;
 
 	if (kp->kp_md.emulate)
 		return (kinst_emulate(frame, kp));
@@ -357,7 +328,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 	} else {
 		kinst_trampoline_populate(kp, tramp);
 		frame->tf_sepc = (register_t)tramp;
-		if ((frame->tf_sstatus & SSTATUS_SIE) == 0)
+		if ((frame->tf_sstatus & SSTATUS_SPIE) == 0)
 			DPCPU_SET(intr_probe, kp);
 		else
 			curthread->t_kinst_curprobe = kp;
