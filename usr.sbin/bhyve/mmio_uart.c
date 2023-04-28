@@ -1,6 +1,4 @@
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+/* XXX-MJ missing license */
 
 #include <sys/param.h>
 

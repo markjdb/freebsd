@@ -28,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef	_BOOTROM_H_
-#define	_BOOTROM_H_
+#ifndef	_BOOTCODE_H_
+#define	_BOOTCODE_H_
 
 int bootcode_load(struct vmctx *, const char *, vm_paddr_t *);
 

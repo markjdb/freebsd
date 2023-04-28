@@ -228,7 +228,7 @@ static cpuset_t cpumask;
 static cpuset_t running_cpumask;
 #endif
 
-static int vm_do_suspend(struct vmctx *ctx, int vcpu, enum vm_suspend_how how);
+static int vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu, enum vm_suspend_how how);
 static void vm_loop(struct vmctx *ctx, struct vcpu *vcpu);
 
 static struct bhyvestats {
@@ -683,7 +683,7 @@ smccc_affinity_info(uint64_t target_affinity, uint32_t lowest_affinity_level)
 }
 
 static int
-vmexit_smccc(struct vmctx *ctx, struct vm_exit *vme, int *pvcpu)
+vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 {
 	uint64_t newcpu, smccc_rv;
 	enum vm_suspend_how how;
@@ -738,8 +738,8 @@ vmexit_smccc(struct vmctx *ctx, struct vm_exit *vme, int *pvcpu)
 		else
 			how = VM_SUSPEND_RESET;
 		/* Stop the other CPUs */
-		for (int vcpu = 0; vcpu < guest_ncpus; vcpu++) {
-			if (vcpu != *pvcpu) {
+		for (int cpu = 0; cpu < guest_ncpus; cpu++) {
+			if (cpu != *pvcpu) {
 				fbsdrun_deletecpu(vcpu);
 			}
 		}
@@ -758,8 +758,8 @@ vmexit_smccc(struct vmctx *ctx, struct vm_exit *vme, int *pvcpu)
 }
 
 static int
-vmexit_hyp(struct vmctx *ctx __unused, struct vm_exit *vme __unused,
-    int *pvcpu __unused)
+vmexit_hyp(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
+    struct vm_exit *vme __unused)
 {
 	uint64_t esr, exception;
 	int error;
@@ -1004,7 +1004,7 @@ vmexit_pause(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
 }
 
 static int
-vmexit_mtrap(struct vmctx *ctx __unused, struct vcpu *vcpu,
+vmexit_mtrap(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
     struct vm_exit *vme)
 {
 
@@ -1015,7 +1015,9 @@ vmexit_mtrap(struct vmctx *ctx __unused, struct vcpu *vcpu,
 #ifdef BHYVE_SNAPSHOT
 	checkpoint_cpu_suspend(vcpu_id(vcpu));
 #endif
+#if 0 /* XXX-MJ */
 	gdb_cpu_mtrap(vcpu);
+#endif
 #ifdef BHYVE_SNAPSHOT
 	checkpoint_cpu_resume(vcpu_id(vcpu));
 #endif
@@ -1085,11 +1087,11 @@ static pthread_mutex_t resetcpu_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t resetcpu_cond = PTHREAD_COND_INITIALIZER;
 
 static int
-vm_do_suspend(struct vmctx *ctx, int vcpu, enum vm_suspend_how how)
+vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu, enum vm_suspend_how how)
 {
-	fbsdrun_deletecpu(vcpu);
+	fbsdrun_deletecpu(vcpu_id(vcpu));
 
-	if (vcpu != BSP) {
+	if (vcpu_id(vcpu) != BSP) {
 		pthread_mutex_lock(&resetcpu_mtx);
 		pthread_cond_signal(&resetcpu_cond);
 		pthread_mutex_unlock(&resetcpu_mtx);
@@ -1121,9 +1123,9 @@ vm_do_suspend(struct vmctx *ctx, int vcpu, enum vm_suspend_how how)
 }
 
 static int
-vmexit_suspend(struct vmctx *ctx, struct vm_exit *vme, int *pvcpu)
+vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 {
-	return (vm_do_suspend(ctx, *pvcpu, vme->u.suspended.how));
+	return (vm_do_suspend(ctx, vcpu, vme->u.suspended.how));
 }
 
 static int
@@ -1148,11 +1150,12 @@ vmexit_debug(struct vmctx *ctx __unused, struct vcpu *vcpu,
 
 #ifdef __amd64__
 static int
-vmexit_breakpoint(struct vmctx *ctx __unused, struct vcpu *vcpu,
-    struct vm_exit *vme)
+vmexit_breakpoint(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
+    struct vm_exit *vme __unused)
 {
-
+#if 0 /* XXX-MJ */
 	gdb_cpu_breakpoint(vcpu, vme);
+#endif
 	return (VMEXIT_CONTINUE);
 }
 
@@ -1317,7 +1320,7 @@ fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp)
 	else
 		err = vm_set_x2apic_state(vcpu, X2APIC_DISABLED);
 
-	vm_set_capability(ctx, cpu, VM_CAP_ENABLE_INVPCID, 1);
+	vm_set_capability(vcpu, VM_CAP_ENABLE_INVPCID, 1);
 
 	if (err) {
 		fprintf(stderr, "Unable to set x2apic state (%d)\n", err);
@@ -1404,12 +1407,12 @@ do_open(const char *vmname)
 static void
 spinup_vcpu(struct vcpu_info *vi, bool bsp)
 {
-	//int error;
-
 	if (!bsp) {
 		fbsdrun_set_capabilities(vi->vcpu, false);
 
-#if 0
+#ifdef __amd64__
+		int error;
+
 		/*
 		 * Enable the 'unrestricted guest' mode for APs.
 		 *
@@ -1746,8 +1749,8 @@ main(int argc, char *argv[])
 #endif
 
 	init_mem(guest_ncpus);
-	init_uart(ctx);
 #ifdef __aarch64__
+	init_uart(ctx);
 {
 	const char *bootrom = NULL;
 
@@ -1902,8 +1905,10 @@ main(int argc, char *argv[])
 		fwctl_init();
 	}
 
+#ifdef __aarch64__
 	error = fdt_build(ctx, guest_ncpus);
 	assert(error == 0);
+#endif
 
 #ifdef __amd64__
 	if (lpc_bootrom())

@@ -506,8 +506,8 @@ pci_msix_pba_bar(struct pci_devinst *pi)
 }
 
 static int
-pci_emul_io(struct vmctx *ctx __unused, struct pci_devinst *pdi, int dir, uint64_t addr,
-    int size, uint64_t *val)
+pci_emul_io(struct pci_devinst *pdi, int dir, uint64_t addr, int size,
+    uint64_t *val)
 {
 	struct pci_devemu *pe = pdi->pi_d;
 	uint64_t offset;
@@ -531,25 +531,28 @@ pci_emul_io(struct vmctx *ctx __unused, struct pci_devinst *pdi, int dir, uint64
 	return (-1);
 }
 
+#ifdef __aarch64__
 static int
 pci_emul_io_mem_handler(struct vcpu *vcpu __unused, int dir,
     uint64_t addr, int size, uint64_t *val, void *arg1, long arg2 __unused)
 {
 	struct pci_devinst *pdi = arg1;
 
-	return (pci_emul_io(ctx, pdi, dir, addr, size, val));
+	return (pci_emul_io(pdi, dir, addr, size, val));
 }
+#endif
 
 #ifdef __amd64__
 static int
-pci_emul_io_handler(struct vmctx *ctx, int in, int port,
+pci_emul_io_handler(struct vmctx *ctx __unused, int in, int port,
     int bytes, uint32_t *eax, void *arg)
 {
 	struct pci_devinst *pdi = arg;
 	uint64_t val;
 	int ret;
 
-	ret = pci_emul_io(ctx, pdi, in ? MEM_F_READ : MEM_F_WRITE, port,
+	val = *eax;
+	ret = pci_emul_io(pdi, in ? MEM_F_READ : MEM_F_WRITE, port,
 	    bytes, &val);
 	if (ret != 0)
 		return (ret);
@@ -1443,7 +1446,7 @@ init_pci(struct vmctx *ctx)
 		errx(EX_OSERR, "Invalid lowmem limit");
 
 	pci_emul_iobase = PCI_EMUL_IOBASE;
-#ifdef PCI_EMUL_MEMBASE32
+#ifdef PCI_EMUL_MEMBASE64
 	pci_emul_membase32 = PCI_EMUL_MEMBASE32;
 	pci_emul_membase64 = PCI_EMUL_MEMBASE64;
 #else

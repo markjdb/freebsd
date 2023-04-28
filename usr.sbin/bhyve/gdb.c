@@ -38,7 +38,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <machine/atomic.h>
-//#include <machine/specialreg.h>
+#ifdef __amd64__
+#include <machine/specialreg.h>
+#endif
 #include <machine/vmm.h>
 #include <netinet/in.h>
 #include <assert.h>
@@ -302,7 +304,7 @@ debug(const char *fmt, ...)
 
 static void	remove_all_sw_breakpoints(void);
 
-#if 0
+#ifdef __amd64__
 static int
 guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 {
@@ -341,7 +343,7 @@ guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 		paging->paging_mode = PAGING_MODE_PAE;
 	return (0);
 }
-#endif /* 0 */
+#endif
 
 /*
  * Map a guest virtual address to a physical address (for a given vcpu).
@@ -352,10 +354,10 @@ guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 static int
 guest_vaddr2paddr(struct vcpu *vcpu, uint64_t vaddr, uint64_t *paddr)
 {
-	//struct vm_guest_paging paging;
+	struct vm_guest_paging paging;
 	int fault;
 
-#if 0
+#ifdef __amd64__
 	if (guest_paging_info(vcpu, &paging) == -1)
 		return (-1);
 #endif
@@ -847,7 +849,7 @@ gdb_cpu_add(struct vcpu *vcpu)
 	vcpus[vcpuid] = vcpu;
 	CPU_SET(vcpuid, &vcpus_active);
 	if (!TAILQ_EMPTY(&breakpoints)) {
-#if 0
+#ifdef __amd64__
 		vm_set_capability(vcpu, VM_CAP_BPT_EXIT, 1);
 		debug("$vCPU %d enabled breakpoint exits\n", vcpu);
 #endif
@@ -875,7 +877,6 @@ static void
 gdb_cpu_resume(struct vcpu *vcpu)
 {
 	struct vcpu_state *vs;
-	//int error;
 
 	vs = &vcpu_state[vcpu_id(vcpu)];
 
@@ -886,8 +887,8 @@ gdb_cpu_resume(struct vcpu *vcpu)
 	assert(vs->hit_swbreak == false);
 	assert(vs->stepped == false);
 	if (vs->stepping) {
-#if 0
-		error = vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 1);
+#ifdef __amd64__
+		int error = vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 1);
 		assert(error == 0);
 #endif
 		printf("%s\n", __func__);

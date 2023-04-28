@@ -1,3 +1,5 @@
+/* XXX-MJ missing copyright header */
+
 #ifndef _VGIC_V3_REG_H_
 #define _VGIC_V3_REG_H_
 

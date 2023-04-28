@@ -203,7 +203,7 @@ uart_toggle_intr(struct uart_softc *sc)
 }
 
 static void
-uart_drain(int fd, enum ev_type ev, void *arg)
+uart_drain(int fd __unused, enum ev_type ev, void *arg)
 {
 	struct uart_softc *sc;
 	bool loopback;
@@ -228,7 +228,7 @@ uart_drain(int fd, enum ev_type ev, void *arg)
 }
 
 void
-uart_write(struct uart_softc *sc, int offset, uint8_t value)
+uart_write(struct uart_softc *sc, int offset, uint32_t value /* XXX-MJ was uint8_t */)
 {
 	int fifosz;
 	uint8_t msr;
@@ -345,7 +345,7 @@ done:
 	pthread_mutex_unlock(&sc->mtx);
 }
 
-uint8_t
+uint32_t /* XXX-MJ was uint8_t */
 uart_read(struct uart_softc *sc, int offset)
 {
 	uint8_t iir, intr_reason, reg;

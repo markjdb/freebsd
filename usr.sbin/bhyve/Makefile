@@ -76,8 +76,6 @@ SRCS+=	\
 .if ${MACHINE_CPUARCH} == "amd64"
 SRCS+=	\
 	atkbdc.c		\
-	consport.c		\
-	dbgport.c		\
 	fwctl.c			\
 	inout.c			\
 	ioapic.c		\
