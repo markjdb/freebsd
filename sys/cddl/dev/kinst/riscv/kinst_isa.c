@@ -3,7 +3,6 @@
  *
  * Copyright 2023 Christos Margiolis <christos@FreeBSD.org>
  */
-
 #include <sys/param.h>
 
 #include <sys/dtrace.h>
@@ -73,10 +72,6 @@ kinst_c_regoff(struct trapframe *frame, int n)
 
 #undef _MATCH_REG
 
-/*
- * Emulate instructions that cannot be copied to the trampoline without
- * modification (i.e instructions that use or modify PC).
- */
 static int
 kinst_emulate(struct trapframe *frame, struct kinst_probe *kp)
 {
@@ -267,7 +262,7 @@ kinst_trampoline_populate(struct kinst_probe *kp, uint8_t *tramp)
 	 * responsible for detecting this special case and perform the "jump"
 	 * manually.
 	 *
-	 * Add NOP after a compressed instruction for padding.
+	 * Add a NOP after a compressed instruction for padding.
 	 */
 	if (ilen == INSN_C_SIZE)
 		memcpy(&tramp[ilen], &nop, INSN_C_SIZE);
@@ -306,7 +301,7 @@ kinst_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch)
 		return (0);
 
 	cpu = &solaris_cpu[curcpu];
-	cpu->cpu_dtrace_caller = addr;	/* XXX is this wrong? */
+	cpu->cpu_dtrace_caller = addr;
 	dtrace_probe(kp->kp_id, 0, 0, 0, 0, 0);
 	cpu->cpu_dtrace_caller = 0;
 
@@ -364,7 +359,8 @@ kinst_instr_dissect(struct kinst_probe *kp, int instrsize)
 	kpmd->emulate = 0;
 
 	/*
-	 * TODO explain
+	 * The following instructions use PC-relative addressing and need to be
+	 * emulated in software.
 	 */
 	if (kpmd->instlen == INSN_SIZE) {
 		switch (instr & 0x7f) {
@@ -424,17 +420,10 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 		return (0);
 
 	n = 0;
-	/*
-	 * Parse instructions byte-by-byte to be able to determine their size.
-	 */
 	while (instr < limit) {
 		instrsize = dtrace_instr_size(instr);
 		off = (int)(instr - (uint8_t *)symval->value);
 		if (pd->kpd_off != -1 && off != pd->kpd_off)
-			goto cont;
-
-		/* FIXME */
-		if (off >= 4436 && off <= 4450)
 			goto cont;
 
 		/*
@@ -495,7 +484,7 @@ kinst_md_deinit(void)
 	CPU_FOREACH(cpu) {
 		tramp = DPCPU_ID_GET(cpu, intr_tramp);
 		if (tramp != NULL) {
-			kinst_trampoline_dealloc(DPCPU_ID_GET(cpu, intr_tramp));
+			kinst_trampoline_dealloc(tramp);
 			DPCPU_ID_SET(cpu, intr_tramp, NULL);
 		}
 	}
