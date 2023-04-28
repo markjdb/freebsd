@@ -51,8 +51,6 @@ extern "C" {
 
 #include <sys/param.h>
 #include <sys/stdint.h>
-#include <sys/types.h>
-
 #ifdef _KERNEL
 #include <sys/endian.h>
 #endif
@@ -73,6 +71,7 @@ typedef int processorid_t;
 #include <sys/ioccom.h>
 #include <sys/cred.h>
 #include <sys/proc.h>
+#include <sys/types.h>
 #include <sys/ucred.h>
 #endif
 typedef int model_t;
@@ -2430,6 +2429,10 @@ extern void dtrace_helpers_destroy(proc_t *);
 
 #if defined(__i386) || defined(__amd64) || defined (__riscv)
 extern int dtrace_instr_size(uint8_t *instr);
+#endif
+
+#if defined(__i386) || defined(__amd64)
+extern int dtrace_dis_get_byte(void *p);
 #endif
 
 #endif	/* _ASM */
