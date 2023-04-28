@@ -306,7 +306,6 @@ vm_get_guestmem_from_ctx(struct vmctx *ctx, char **guest_baseaddr,
 	return (0);
 }
 
-#if 0
 int
 vm_munmap_memseg(struct vmctx *ctx, vm_paddr_t gpa, size_t len)
 {
@@ -319,7 +318,6 @@ vm_munmap_memseg(struct vmctx *ctx, vm_paddr_t gpa, size_t len)
 	error = ioctl(ctx->fd, VM_MUNMAP_MEMSEG, &munmap);
 	return (error);
 }
-#endif
 
 int
 vm_mmap_getnext(struct vmctx *ctx, vm_paddr_t *gpa, int *segid,
