@@ -34,6 +34,8 @@
 #include "pte.h"
 #include "pmap.h"
 
+struct vcpu;
+
 enum vm_suspend_how {
 	VM_SUSPEND_NONE,
 	VM_SUSPEND_RESET,

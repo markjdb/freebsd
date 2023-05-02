@@ -270,5 +270,10 @@ qemu_loader_finish(struct qemu_loader *const loader)
 		++i;
 	}
 
+	/* XXX-MJ */
+#ifdef __amd64__
 	return (qemu_fwcfg_add_file(loader->fwcfg_name, len, data));
+#else
+	return (0);
+#endif
 }

@@ -36,8 +36,8 @@
 #define	VCPU_DECL	struct vcpu *vcpu
 #define	VCPU_ARGS	vcpu
 #else
-#define	VCPU_DECL	void *vm, int vcpuid
-#define	VCPU_ARGS	vm, vcpuid
+#define	VCPU_DECL	struct vcpu *vcpu
+#define	VCPU_ARGS	vcpu
 #endif
 
 /*

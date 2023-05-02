@@ -382,6 +382,8 @@ pci_config_read_reg(const struct pcisel *const host_sel, nvlist_t *nvl,
 		return (-1);
 	}
 
+	/* XXX-MJ avoid compiling pci_passthru.c for now */
+#ifdef __amd64__
 	if (config == NULL) {
 		return def;
 	} else if (host_sel != NULL && strcmp(config, "host") == 0) {
@@ -389,6 +391,11 @@ pci_config_read_reg(const struct pcisel *const host_sel, nvlist_t *nvl,
 	} else {
 		return strtol(config, NULL, 16);
 	}
+#else
+	(void)config;
+	(void)host_sel;
+	return (def);
+#endif
 }
 
 static int

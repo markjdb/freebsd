@@ -354,13 +354,13 @@ guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 static int
 guest_vaddr2paddr(struct vcpu *vcpu, uint64_t vaddr, uint64_t *paddr)
 {
-	struct vm_guest_paging paging;
 	int fault;
 
 #ifdef __amd64__
+	struct vm_guest_paging paging;
+
 	if (guest_paging_info(vcpu, &paging) == -1)
 		return (-1);
-#endif
 
 	/*
 	 * Always use PROT_READ.  We really care if the VA is
@@ -369,6 +369,10 @@ guest_vaddr2paddr(struct vcpu *vcpu, uint64_t vaddr, uint64_t *paddr)
 	if (vm_gla2gpa_nofault(vcpu, &paging, vaddr, PROT_READ, paddr,
 	    &fault) == -1)
 		return (-1);
+#else
+	if (vm_gla2gpa_nofault(vcpu, vaddr, PROT_READ, paddr, &fault) == -1)
+		return (-1);
+#endif
 	if (fault)
 		return (0);
 	return (1);

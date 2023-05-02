@@ -825,16 +825,16 @@ vm_raise_msi(struct vmctx *ctx, uint64_t addr, uint64_t msg, int bus, int slot,
 }
 
 int
-vm_inject_exception(struct vmctx *ctx, int vcpu, uint64_t esr, uint64_t far)
+vm_inject_exception(struct vcpu *vcpu, uint64_t esr, uint64_t far)
 {
 	struct vm_exception vmexc;
 
 	bzero(&vmexc, sizeof(vmexc));
-	vmexc.cpuid = vcpu;
+	vmexc.cpuid = vcpu_id(vcpu);
 	vmexc.esr = esr;
 	vmexc.far = far;
 
-	return (ioctl(ctx->fd, VM_INJECT_EXCEPTION, &vmexc));
+	return (vcpu_ioctl(vcpu, VM_INJECT_EXCEPTION, &vmexc));
 }
 #elif defined(__amd64__)
 int
@@ -1533,18 +1533,18 @@ vm_gla2gpa_nofault(struct vcpu *vcpu, struct vm_guest_paging *paging,
 }
 #else
 int
-vm_gla2gpa_nofault(struct vmctx *ctx, int vcpu,
-    uint64_t gla, int prot, uint64_t *gpa, int *fault)
+vm_gla2gpa_nofault(struct vcpu *vcpu, uint64_t gla, int prot, uint64_t *gpa,
+    int *fault)
 {
 	struct vm_gla2gpa gg;
 	int error;
 
 	bzero(&gg, sizeof(struct vm_gla2gpa));
-	gg.vcpuid = vcpu;
+	gg.vcpuid = vcpu_id(vcpu);
 	gg.prot = prot;
 	gg.gla = gla;
 
-	error = ioctl(ctx->fd, VM_GLA2GPA_NOFAULT, &gg);
+	error = vcpu_ioctl(vcpu, VM_GLA2GPA_NOFAULT, &gg);
 	if (error == 0) {
 		*fault = gg.fault;
 		*gpa = gg.gpa;

@@ -141,8 +141,8 @@ int	vm_gla2gpa_nofault(struct vcpu *vcpu,
 		   struct vm_guest_paging *paging, uint64_t gla, int prot,
 		   uint64_t *gpa, int *fault);
 #else
-int	vm_gla2gpa_nofault(struct vmctx *ctx, int vcpu, uint64_t gla,
-		   int prot, uint64_t *gpa, int *fault);
+int	vm_gla2gpa_nofault(struct vcpu *vcpu, uint64_t gla, int prot, uint64_t *gpa,
+		   int *fault);
 #endif
 uint32_t vm_get_lowmem_limit(struct vmctx *ctx);
 void	vm_set_lowmem_limit(struct vmctx *ctx, uint32_t limit);
@@ -175,8 +175,7 @@ int	vm_assert_irq(struct vmctx *ctx, uint32_t irq);
 int	vm_deassert_irq(struct vmctx *ctx, uint32_t irq);
 int	vm_raise_msi(struct vmctx *ctx, uint64_t addr, uint64_t msg, int bus,
     int slot, int func);
-int	vm_inject_exception(struct vmctx *ctx, int vcpu, uint64_t esr,
-    uint64_t far);
+int	vm_inject_exception(struct vcpu *vcpu, uint64_t esr, uint64_t far);
 #endif
 #ifdef __amd64__
 int	vm_apicid2vcpu(struct vmctx *ctx, int apicid);

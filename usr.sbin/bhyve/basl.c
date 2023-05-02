@@ -167,8 +167,10 @@ basl_finish_install_guest_tables(struct basl_table *const table, uint32_t *const
 	memcpy(gva, table->data, table->len);
 
 	/* Cause guest bios to copy the ACPI table into guest memory. */
+#ifdef __amd64__
 	BASL_EXEC(
 	    qemu_fwcfg_add_file(table->fwcfg_name, table->len, table->data));
+#endif
 	BASL_EXEC(qemu_loader_alloc(basl_loader, table->fwcfg_name,
 	    table->alignment, QEMU_LOADER_ALLOC_HIGH));
 

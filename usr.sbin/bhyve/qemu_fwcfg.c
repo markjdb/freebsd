@@ -393,6 +393,13 @@ int
 qemu_fwcfg_init(struct vmctx *const ctx)
 {
 	int error;
+	bool usefwcfg;
+
+#ifdef __amd64__
+	usefwcfg = strcmp(lpc_fwcfg(), "qemu");
+#else
+	usefwcfg = true;
+#endif
 
 	/*
 	 * Bhyve supports fwctl (bhyve) and fwcfg (qemu) as firmware interfaces.
@@ -400,7 +407,7 @@ qemu_fwcfg_init(struct vmctx *const ctx)
 	 * interfaces at the same time to the guest. Therefore, only create acpi
 	 * tables and register io ports for fwcfg, if it's used.
 	 */
-	if (strcmp(lpc_fwcfg(), "qemu") == 0) {
+	if (usefwcfg) {
 		error = acpi_device_create(&fwcfg_sc.acpi_dev, &fwcfg_sc, ctx,
 		    &qemu_fwcfg_acpi_device_emul);
 		if (error) {

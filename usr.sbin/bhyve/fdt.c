@@ -257,9 +257,9 @@ add_cpus(void *fdt, int ncpu)
 	fdt_end_node(fdt);
 }
 
-int fdt_build(struct vmctx *ctx, int ncpu);
+int fdt_build(struct vmctx *ctx, struct vcpu *bsp, int ncpu);
 int
-fdt_build(struct vmctx *ctx, int ncpu)
+fdt_build(struct vmctx *ctx, struct vcpu *bsp, int ncpu)
 {
 	void *fdt;
 	const char *bootargs;
@@ -320,7 +320,7 @@ fdt_build(struct vmctx *ctx, int ncpu)
 
 	fdt_finish(fdt);
 
-	error = vm_set_register(ctx, 0, VM_REG_GUEST_X0, FDT_BASE);
+	error = vm_set_register(bsp, VM_REG_GUEST_X0, FDT_BASE);
 	assert(error == 0);
 
 	return (0);

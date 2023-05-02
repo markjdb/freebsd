@@ -51,6 +51,7 @@ SRCS=	\
 	pci_uart.c		\
 	pci_xhci.c		\
 	post.c			\
+	qemu_loader.c		\
 	smbiostbl.c		\
 	sockstream.c		\
 	uart_backend.c		\
@@ -90,15 +91,13 @@ SRCS+=	\
 	ps2kbd.c		\
 	ps2mouse.c		\
 	qemu_fwcfg.c		\
-	qemu_loader.c		\
 	rfb.c			\
 	rtc.c			\
 	task_switch.c		\
 	uart_emul.c		\
 	xmsr.c			\
 	spinup_ap.c		\
-	vga.c			\
-
+	vga.c
 .endif
 
 .if ${MK_BHYVE_SNAPSHOT} != "no"

@@ -34,8 +34,8 @@ mmio_uart_intr_deassert(void *arg)
 }
 
 static int
-mmio_uart_mem_handler(struct vmctx *ctx __unused, int vcpu __unused, int dir,
-    uint64_t addr, int size __unused, uint64_t *val, void *arg1, long arg2)
+mmio_uart_mem_handler(struct vcpu *vcpu __unused, int dir, uint64_t addr,
+    int size __unused, uint64_t *val, void *arg1, long arg2)
 {
 	struct uart_softc *sc = arg1;
 	long reg;

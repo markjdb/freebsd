@@ -125,7 +125,7 @@ __FBSDID("$FreeBSD$");
 #include "rtc.h"
 #include "vmgenc.h"
 
-int fdt_build(struct vmctx *ctx, int ncpu);
+int fdt_build(struct vmctx *ctx, struct vcpu *bsp, int ncpu);
 
 #define GUEST_NIO_PORT		0x488	/* guest upcalls via i/o port */
 
@@ -713,16 +713,16 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 		}
 
 		/* Set the context ID */
-		error = vm_set_register(ctx, newcpu, VM_REG_GUEST_X0,
+		error = vm_set_register(vcpu_info[newcpu].vcpu, VM_REG_GUEST_X0,
 		    vme->u.smccc_call.args[2]);
 		assert(error == 0);
 
 		/* Set the start program counter */
-		error = vm_set_register(ctx, newcpu, VM_REG_GUEST_PC,
+		error = vm_set_register(vcpu_info[newcpu].vcpu, VM_REG_GUEST_PC,
 		    vme->u.smccc_call.args[1]);
 		assert(error == 0);
 
-		vm_resume_cpu(ctx, newcpu);
+		vm_resume_cpu(vcpu_info[newcpu].vcpu);
 		CPU_SET_ATOMIC(newcpu, &running_cpumask);
 
 		smccc_rv = PSCI_RETVAL_SUCCESS;
@@ -739,11 +739,11 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 			how = VM_SUSPEND_RESET;
 		/* Stop the other CPUs */
 		for (int cpu = 0; cpu < guest_ncpus; cpu++) {
-			if (cpu != *pvcpu) {
-				fbsdrun_deletecpu(vcpu);
+			if (cpu != vcpu_id(vcpu)) {
+				fbsdrun_deletecpu(vcpu_id(vcpu));
 			}
 		}
-		vm_do_suspend(ctx, *pvcpu, how);
+		vm_do_suspend(ctx, vcpu, how);
 		/* Shouldn't return */
 		assert(false);
 		break;
@@ -751,14 +751,14 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 		break;
 	}
 
-	error = vm_set_register(ctx, *pvcpu, VM_REG_GUEST_X0, smccc_rv);
+	error = vm_set_register(vcpu, VM_REG_GUEST_X0, smccc_rv);
 	assert(error == 0);
 
 	return (VMEXIT_CONTINUE);
 }
 
 static int
-vmexit_hyp(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
+vmexit_hyp(struct vmctx *ctx __unused, struct vcpu *vcpu,
     struct vm_exit *vme __unused)
 {
 	uint64_t esr, exception;
@@ -792,7 +792,7 @@ printf("%s: %lx\n", __func__, vme->u.hyp.esr_el2);
 			else
 				/* Inject an external data abort */
 				esr |= ISS_DATA_DFSC_EXT;
-			error = vm_inject_exception(ctx, *pvcpu, esr,
+			error = vm_inject_exception(vcpu, esr,
 			    vme->u.hyp.far_el2);
 			assert(error == 0);
 			return (VMEXIT_CONTINUE);
@@ -1284,6 +1284,8 @@ fbsdrun_set_capabilities(struct vcpu *vcpu, bool bsp)
 {
 	int err, tmp;
 
+	(void)bsp;
+
 	if (get_config_bool_default("x86.vmexit_on_hlt", false)) {
 		err = vm_get_capability(vcpu, VM_CAP_HALT_EXIT, &tmp);
 		if (err < 0) {
@@ -1511,7 +1513,9 @@ main(int argc, char *argv[])
 	int max_vcpus, memflags;
 	struct vcpu *bsp;
 	struct vmctx *ctx;
+#ifdef __amd64__
 	struct qemu_fwcfg_item *e820_fwcfg_item;
+#endif
 	uint64_t rip;
 	size_t memsize;
 	const char *optstr, *value, *vmname;
@@ -1761,7 +1765,7 @@ main(int argc, char *argv[])
 	error = bootcode_load(ctx, bootrom, &rip);
 	assert(error == 0);
 }
-	error = vm_set_register(ctx, BSP, VM_REG_GUEST_PC, rip);
+	error = vm_set_register(vcpu_info[BSP].vcpu, VM_REG_GUEST_PC, rip);
 	assert(error == 0);
 	error = vm_attach_vgic(ctx, 0x2f000000UL, 0x10000UL, 0x2f100000UL,
 	    0x20000UL);
@@ -1777,7 +1781,6 @@ main(int argc, char *argv[])
 
 	rtc_init(ctx);
 	sci_init(ctx);
-#endif
 
 	if (qemu_fwcfg_init(ctx) != 0) {
 		fprintf(stderr, "qemu fwcfg initialization error");
@@ -1789,6 +1792,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "Could not add qemu fwcfg opt/bhyve/hw.ncpu");
 		exit(4);
 	}
+#endif
 
 	if (e820_init(ctx) != 0) {
 		fprintf(stderr, "Unable to setup E820");
@@ -1889,6 +1893,7 @@ main(int argc, char *argv[])
 		assert(error == 0);
 	}
 
+#ifdef __amd64__
 	e820_fwcfg_item = e820_get_fwcfg_item();
 	if (e820_fwcfg_item == NULL) {
 	    fprintf(stderr, "invalid e820 table");
@@ -1904,9 +1909,10 @@ main(int argc, char *argv[])
 	if (lpc_bootrom() && strcmp(lpc_fwcfg(), "bhyve") == 0) {
 		fwctl_init();
 	}
+#endif
 
 #ifdef __aarch64__
-	error = fdt_build(ctx, guest_ncpus);
+	error = fdt_build(ctx, vcpu_info[BSP].vcpu, guest_ncpus);
 	assert(error == 0);
 #endif
 
