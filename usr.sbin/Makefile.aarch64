@@ -4,4 +4,6 @@
 SUBDIR+=	acpi
 .endif
 SUBDIR+=	ofwdump
+.if ${MK_BHYVE} != "no"
 SUBDIR+=	bhyve
+.endif
