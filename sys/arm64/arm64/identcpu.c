@@ -105,6 +105,9 @@ static char cpu_model[64];
 SYSCTL_STRING(_hw, HW_MODEL, model, CTLFLAG_RD,
 	cpu_model, sizeof(cpu_model), "Machine model");
 
+#define	MAX_CACHES	8	/* Maximum number of caches supported
+				   architecturally. */
+
 /*
  * Per-CPU affinity as provided in MPIDR_EL1
  * Indexed by CPU number in logical order selected by the system.
@@ -117,6 +120,32 @@ SYSCTL_STRING(_hw, HW_MODEL, model, CTLFLAG_RD,
  */
 uint64_t __cpu_affinity[MAXCPU];
 static u_int cpu_aff_levels;
+
+struct cpu_desc {
+	uint64_t	mpidr;
+	uint64_t	id_aa64afr0;
+	uint64_t	id_aa64afr1;
+	uint64_t	id_aa64dfr0;
+	uint64_t	id_aa64dfr1;
+	uint64_t	id_aa64isar0;
+	uint64_t	id_aa64isar1;
+	uint64_t	id_aa64isar2;
+	uint64_t	id_aa64mmfr0;
+	uint64_t	id_aa64mmfr1;
+	uint64_t	id_aa64mmfr2;
+	uint64_t	id_aa64pfr0;
+	uint64_t	id_aa64pfr1;
+	uint64_t	id_aa64zfr0;
+	uint64_t	ctr;
+#ifdef COMPAT_FREEBSD32
+	uint64_t	id_isar5;
+	uint64_t	mvfr0;
+	uint64_t	mvfr1;
+#endif
+	uint64_t	clidr;
+	uint32_t	ccsidr[MAX_CACHES][2]; /* 2 possible types. */
+	bool		have_sve;
+};
 
 static struct cpu_desc cpu_desc[MAXCPU];
 static struct cpu_desc kern_cpu_desc;
@@ -1666,38 +1695,6 @@ user_mrs_handler(vm_offset_t va, uint32_t insn, struct trapframe *frame,
 	return (1);
 }
 
-bool
-extract_user_id_field(u_int reg, u_int field_shift, uint8_t *val)
-{
-	uint64_t value;
-	int i;
-
-	for (i = 0; i < nitems(user_regs); i++) {
-		if (user_regs[i].reg == reg) {
-			value = CPU_DESC_FIELD(user_cpu_desc, i);
-			*val = value >> field_shift;
-			return (true);
-		}
-	}
-
-	return (false);
-}
-
-bool
-get_kernel_reg(u_int reg, uint64_t *val)
-{
-	int i;
-
-	for (i = 0; i < nitems(user_regs); i++) {
-		if (user_regs[i].reg == reg) {
-			*val = CPU_DESC_FIELD(kern_cpu_desc, i);
-			return (true);
-		}
-	}
-
-	return (false);
-}
-
 /*
  * Compares two field values that may be signed or unsigned.
  * Returns:
@@ -1753,6 +1750,59 @@ update_lower_register(uint64_t val, uint64_t new_val, u_int shift,
 	return (val);
 }
 
+bool
+extract_user_id_field(u_int reg, u_int field_shift, uint8_t *val)
+{
+	uint64_t value;
+	int i;
+
+	for (i = 0; i < nitems(user_regs); i++) {
+		if (user_regs[i].reg == reg) {
+			value = CPU_DESC_FIELD(user_cpu_desc, i);
+			*val = value >> field_shift;
+			return (true);
+		}
+	}
+
+	return (false);
+}
+
+bool
+get_kernel_reg(u_int reg, uint64_t *val)
+{
+	int i;
+
+	for (i = 0; i < nitems(user_regs); i++) {
+		if (user_regs[i].reg == reg) {
+			*val = CPU_DESC_FIELD(kern_cpu_desc, i);
+			return (true);
+		}
+	}
+
+	return (false);
+}
+
+bool
+get_kernel_reg_masked(u_int reg, uint64_t *valp, uint64_t mask)
+{
+	struct mrs_field *fields;
+	uint64_t val;
+
+	for (int i = 0; i < nitems(user_regs); i++) {
+		if (user_regs[i].reg == reg) {
+			val = CPU_DESC_FIELD(kern_cpu_desc, i);
+			fields = user_regs[i].fields;
+			for (int j = 0; fields[j].type != 0; j++) {
+				*valp = update_lower_register(*valp, val,
+				    fields[j].shift, 4, fields[j].sign);
+			}
+			return (true);
+		}
+	}
+
+	return (false);
+}
+
 void
 update_special_regs(u_int cpu)
 {
@@ -1802,27 +1852,6 @@ update_special_regs(u_int cpu)
 
 		CPU_DESC_FIELD(kern_cpu_desc, i) = kern_reg;
 		CPU_DESC_FIELD(user_cpu_desc, i) = user_reg;
-	}
-}
-
-void
-update_cpu_desc(struct cpu_desc *desc)
-{
-	struct mrs_field *fields;
-	uint64_t desc_val, kern_val;
-	int i, j;
-
-	for (i = 0; i < nitems(user_regs); i++) {
-		kern_val = CPU_DESC_FIELD(kern_cpu_desc, i);
-		desc_val = CPU_DESC_FIELD(*desc, i);
-
-		fields = user_regs[i].fields;
-		for (j = 0; fields[j].type != 0; j++) {
-			desc_val = update_lower_register(desc_val, kern_val,
-			    fields[j].shift, 4, fields[j].sign);
-		}
-
-		CPU_DESC_FIELD(*desc, i) = desc_val;
 	}
 }
 

@@ -173,16 +173,28 @@ static int vmm_ipinum;
 SYSCTL_INT(_hw_vmm, OID_AUTO, ipinum, CTLFLAG_RD, &vmm_ipinum, 0,
     "IPI vector used for vcpu notifications");
 
-static struct cpu_desc vmm_desc = {
-	.id_aa64afr0 = 0,
-	.id_aa64afr1 = 0,
+struct vmm_regs {
+	uint64_t	id_aa64afr0;
+	uint64_t	id_aa64afr1;
+	uint64_t	id_aa64dfr0;
+	uint64_t	id_aa64dfr1;
+	uint64_t	id_aa64isar0;
+	uint64_t	id_aa64isar1;
+	uint64_t	id_aa64isar2;
+	uint64_t	id_aa64mmfr0;
+	uint64_t	id_aa64mmfr1;
+	uint64_t	id_aa64mmfr2;
+	uint64_t	id_aa64pfr0;
+	uint64_t	id_aa64pfr1;
+};
+
+static const struct vmm_regs vmm_arch_regs_masks = {
 	.id_aa64dfr0 =
-	    (0xful << ID_AA64DFR0_CTX_CMPs_SHIFT) |
-	    (0xful << ID_AA64DFR0_WRPs_SHIFT) |
-	    (0xful << ID_AA64DFR0_BRPs_SHIFT) |
+	    ID_AA64DFR0_CTX_CMPs_MASK |
+	    ID_AA64DFR0_WRPs_MASK |
+	    ID_AA64DFR0_BRPs_MASK |
 	    ID_AA64DFR0_PMUVer_3 |
 	    ID_AA64DFR0_DebugVer_8,
-	.id_aa64dfr1 = 0,
 	.id_aa64isar0 =
 	    ID_AA64ISAR0_TLB_TLBIOSR |
 	    ID_AA64ISAR0_SHA3_IMPL |
@@ -192,7 +204,6 @@ static struct cpu_desc vmm_desc = {
 	    ID_AA64ISAR0_SHA2_512 |
 	    ID_AA64ISAR0_SHA1_BASE |
 	    ID_AA64ISAR0_AES_PMULL,
-	.id_aa64isar1 = 0,
 	.id_aa64mmfr0 =
 	    ID_AA64MMFR0_TGran4_IMPL |
 	    ID_AA64MMFR0_TGran64_IMPL |
@@ -203,7 +214,6 @@ static struct cpu_desc vmm_desc = {
 	    ID_AA64MMFR1_SpecSEI_IMPL |
 	    ID_AA64MMFR1_PAN_ATS1E1 |
 	    ID_AA64MMFR1_HAFDBS_AF,
-	.id_aa64mmfr2 = 0,
 	.id_aa64pfr0 =
 	    ID_AA64PFR0_GIC_CPUIF_NONE |
 	    ID_AA64PFR0_AdvSIMD_HP |
@@ -212,8 +222,10 @@ static struct cpu_desc vmm_desc = {
 	    ID_AA64PFR0_EL2_64 |
 	    ID_AA64PFR0_EL1_64 |
 	    ID_AA64PFR0_EL0_64,
-	.id_aa64pfr1 = 0,
 };
+
+/* Host registers masked by vmm_arch_regs_masks. */
+static struct vmm_regs vmm_arch_regs;
 
 u_int vm_maxcpu;
 SYSCTL_UINT(_hw_vmm, OID_AUTO, maxcpu, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
@@ -228,6 +240,30 @@ static void vcpu_notify_event_locked(struct vcpu *vcpu, bool lapic_intr);
  * is a safe value for now.
  */
 #define	VM_MAXCPU	MIN(0xffff - 1, CPU_SETSIZE)
+
+static int
+vmm_regs_init(struct vmm_regs *regs, const struct vmm_regs *masks)
+{
+#define	_FETCH_KERN_REG(reg, field) do {				\
+	regs->field = vmm_arch_regs_masks.field;			\
+	if (!get_kernel_reg_masked(reg, &regs->field, masks->field))	\
+		regs->field = 0;					\
+} while (0)
+	_FETCH_KERN_REG(ID_AA64AFR0_EL1, id_aa64afr0);
+	_FETCH_KERN_REG(ID_AA64AFR1_EL1, id_aa64afr1);
+	_FETCH_KERN_REG(ID_AA64DFR0_EL1, id_aa64dfr0);
+	_FETCH_KERN_REG(ID_AA64DFR1_EL1, id_aa64dfr1);
+	_FETCH_KERN_REG(ID_AA64ISAR0_EL1, id_aa64isar0);
+	_FETCH_KERN_REG(ID_AA64ISAR1_EL1, id_aa64isar1);
+	_FETCH_KERN_REG(ID_AA64ISAR2_EL1, id_aa64isar2);
+	_FETCH_KERN_REG(ID_AA64MMFR0_EL1, id_aa64mmfr0);
+	_FETCH_KERN_REG(ID_AA64MMFR1_EL1, id_aa64mmfr1);
+	_FETCH_KERN_REG(ID_AA64MMFR2_EL1, id_aa64mmfr2);
+	_FETCH_KERN_REG(ID_AA64PFR0_EL1, id_aa64pfr0);
+	_FETCH_KERN_REG(ID_AA64PFR1_EL1, id_aa64pfr1);
+#undef _FETCH_KERN_REG
+	return (0);
+}
 
 static void
 vcpu_cleanup(struct vcpu *vcpu, bool destroy)
@@ -278,7 +314,7 @@ vm_exitinfo(struct vcpu *vcpu)
 static int
 vmm_init(void)
 {
-	update_cpu_desc(&vmm_desc);
+	int error;
 
 	vm_maxcpu = mp_ncpus;
 	TUNABLE_INT_FETCH("hw.vmm.maxcpu", &vm_maxcpu);
@@ -289,6 +325,15 @@ vmm_init(void)
 	}
 	if (vm_maxcpu == 0)
 		vm_maxcpu = 1;
+
+#if 0
+	error = vmm_mem_init();
+	if (error)
+		return (error);
+#endif
+	error = vmm_regs_init(&vmm_arch_regs, &vmm_arch_regs_masks);
+	if (error != 0)
+		return (error);
 
 	return (vmmops_modinit(0));
 }
@@ -858,7 +903,7 @@ vmm_reg_wi(struct vcpu *vcpu, uint64_t wval, void *arg)
 #include <sys/queue.h>
 #include <sys/linker.h>
 
-struct vmm_special_reg vmm_special_regs[] = {
+static const struct vmm_special_reg vmm_special_regs[] = {
 #define	SPECIAL_REG(_reg, _read, _write)				\
 	{								\
 		.esr_iss = ((_reg ## _op0) << ISS_MSR_OP0_SHIFT) |	\
@@ -871,7 +916,7 @@ struct vmm_special_reg vmm_special_regs[] = {
 		.reg_write = (_write),					\
 		.arg = NULL,						\
 	}
-#define	ID_SPECIAL_REG(_reg, _name)						\
+#define	ID_SPECIAL_REG(_reg, _name)					\
 	{								\
 		.esr_iss = ((_reg ## _op0) << ISS_MSR_OP0_SHIFT) |	\
 		    ((_reg ## _op1) << ISS_MSR_OP1_SHIFT) |		\
@@ -881,7 +926,7 @@ struct vmm_special_reg vmm_special_regs[] = {
 		.esr_mask = ISS_MSR_REG_MASK,				\
 		.reg_read = vmm_reg_read_arg,				\
 		.reg_write = vmm_reg_wi,				\
-		.arg = &(vmm_desc._name),				\
+		.arg = &(vmm_arch_regs._name),				\
 	}
 
 	/* ID registers */
