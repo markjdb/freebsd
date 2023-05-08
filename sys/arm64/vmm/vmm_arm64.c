@@ -219,7 +219,7 @@ vmm_vtcr_el2_sl(u_int levels)
 }
 
 int
-vmmops_modinit(int ipinum)
+vmmops_modinit(int ipinum __unused)
 {
 	struct vmm_init_regs el2_regs;
 	vm_offset_t next_hyp_va;
