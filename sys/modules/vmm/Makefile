@@ -18,6 +18,8 @@ SRCS+=	vmm.c		\
 	vmm_stat.c
 
 .if ${MACHINE_CPUARCH} == "aarch64"
+DPSRCS+=	assym.inc
+
 # TODO: Add the new EL2 code
 SRCS+=	vmm_arm64.c \
 	vmm_reset.c \
@@ -39,7 +41,7 @@ CLEANFILES+=	vmm_hyp_blob.elf vmm_hyp_blob.bin
 
 CFLAGS.vmm_hyp_exception.S += -fpie
 CFLAGS.vmm_hyp.c += -fpie
-vmm_hyp_exception.o:	vmm_hyp_exception.S
+vmm_hyp_exception.o:	vmm_hyp_exception.S assym.inc
 vmm_hyp.o: vmm_hyp.c
 
 vmm_hyp_blob.elf.full:	vmm_hyp_exception.o vmm_hyp.o
