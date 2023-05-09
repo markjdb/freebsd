@@ -2689,6 +2689,8 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 
 		guard = (entry->eflags & MAP_ENTRY_GUARD) != 0;
 
+		kve->kve_vm_psind = MAP_ENTRY_SPLIT_BOUNDARY_INDEX(entry);
+
 		last_timestamp = map->timestamp;
 		vm_map_unlock_read(map);
 

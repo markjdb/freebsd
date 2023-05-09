@@ -542,7 +542,7 @@ struct kinfo_ovmentry {
 };
 
 #if defined(__amd64__) || defined(__i386__)
-#define	KINFO_VMENTRY_SIZE	1160
+#define	KINFO_VMENTRY_SIZE	1168
 #endif
 
 struct kinfo_vmentry {
@@ -560,6 +560,7 @@ struct kinfo_vmentry {
 	int	 kve_ref_count;			/* VM obj ref count. */
 	int	 kve_shadow_count;		/* VM obj shadow count. */
 	int	 kve_vn_type;			/* Vnode type. */
+	int	 kve_vm_psind;			/* Mapping page size index. */
 	uint64_t kve_vn_size;			/* File size. */
 	uint32_t kve_vn_rdev_freebsd11;		/* Device id if device. */
 	uint16_t kve_vn_mode;			/* File mode. */
