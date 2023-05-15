@@ -326,7 +326,8 @@ The reported process is stopped by a SIGSTOP/SIGTSTP signal.
 The reported process is in the process of exiting (but not yet a zombie).
 .El
 .It Dv PROC_REAP_KILL
-Request to deliver a signal to some subset of the descendants of the reaper.
+Request to deliver a signal to some subset of the descendants of the reaper
+of the calling process; the reaper may be the calling process itself.
 The
 .Fa data
 parameter must point to a
