@@ -155,9 +155,6 @@ static struct trapframe frame0;
 char		machine[] = "powerpc";
 SYSCTL_STRING(_hw, HW_MACHINE, machine, CTLFLAG_RD | CTLFLAG_CAPRD, machine, 0, "");
 
-static void	cpu_startup(void *);
-SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
-
 SYSCTL_INT(_machdep, CPU_CACHELINE, cacheline_size,
 	   CTLFLAG_RD, &cacheline_size, 0, "");
 
@@ -239,6 +236,7 @@ cpu_startup(void *dummy)
 	bufinit();
 	vm_pager_bufferinit();
 }
+SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
 
 extern vm_offset_t	__startkernel, __endkernel;
 extern unsigned char	__bss_start[];
