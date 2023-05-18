@@ -239,14 +239,20 @@ pbuf_zsecond_create(const char *name, int max)
 	return (zone);
 }
 
+static vm_offset_t pbuf_kva;
+static vm_size_t pbuf_kva_size;
+
 static void
 pbuf_prealloc(void *arg __unused)
 {
+	/* See the comment in pbuf_init(). */
+	pbuf_kva = kva_alloc(nswbuf_max * ptoa(PBUF_PAGES));
+	if (pbuf_kva != 0)
+		pbuf_kva_size = nswbuf_max * ptoa(PBUF_PAGES);
 
 	uma_prealloc(pbuf_zone, nswbuf_max);
 	nswbuf_max = -1;
 }
-
 SYSINIT(pbuf, SI_SUB_KTHREAD_BUF, SI_ORDER_ANY, pbuf_prealloc, NULL);
 
 /*
@@ -505,9 +511,23 @@ pbuf_init(void *mem, int size, int flags)
 
 	TSENTER();
 
-	bp->b_kvabase = (void *)kva_alloc(ptoa(PBUF_PAGES));
-	if (bp->b_kvabase == NULL)
+	if (pbuf_kva_size != 0) {
+		/*
+		 * Allocate KVA using a bump allocator rather than calling
+		 * kva_alloc() for each buf.  This is a micro-optimization which
+		 * marginally improves boot times, and avoids needing to
+		 * allocate vmem boundary tags for each buf.
+		 */
+		bp->b_kvabase = (void *)pbuf_kva;
+		pbuf_kva += ptoa(PBUF_PAGES);
+		pbuf_kva_size -= ptoa(PBUF_PAGES);
+	} else {
+		bp->b_kvabase = (void *)kva_alloc(ptoa(PBUF_PAGES));
+	}
+	if (bp->b_kvabase == NULL) {
+		printf("pbuf_init: failed to alloc KVA\n");
 		return (ENOMEM);
+	}
 	bp->b_kvasize = ptoa(PBUF_PAGES);
 	BUF_LOCKINIT(bp, pbuf_wmesg);
 	LIST_INIT(&bp->b_dep);
