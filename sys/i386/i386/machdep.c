@@ -158,9 +158,6 @@ register_t init386(int first);
 void dblfault_handler(void);
 void identify_cpu(void);
 
-static void cpu_startup(void *);
-SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
-
 /* Intel ICH registers */
 #define ICH_PMBASE	0x400
 #define ICH_SMI_EN	ICH_PMBASE + 0x30
@@ -295,6 +292,7 @@ cpu_startup(void *dummy)
 	vm_pager_bufferinit();
 	cpu_setregs();
 }
+SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
 
 void
 cpu_setregs(void)

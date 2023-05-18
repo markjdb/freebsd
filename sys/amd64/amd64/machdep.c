@@ -162,9 +162,6 @@ CTASSERT(PC_PTI_STACK_SZ * sizeof(register_t) >= 2 * sizeof(struct pti_frame) -
 
 extern u_int64_t hammer_time(u_int64_t, u_int64_t);
 
-static void cpu_startup(void *);
-SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
-
 /* Probe 8254 PIT and TSC. */
 static void native_clock_source_init(void);
 
@@ -308,6 +305,7 @@ cpu_startup(void *dummy)
 
 	cpu_setregs();
 }
+SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
 
 static void
 late_ifunc_resolve(void *dummy __unused)
