@@ -62,6 +62,7 @@
 #include "io/vgic.h"
 #include "io/vgic_v3.h"
 #include "io/vtimer.h"
+#include "vmm_stat.h"
 
 #define	HANDLED		1
 #define	UNHANDLED	0
@@ -750,26 +751,33 @@ handle_el1_sync_excp(struct hypctx *hypctx, struct vm_exit *vme_ret,
 
 	switch(esr_ec) {
 	case EXCP_UNKNOWN:
-		eprintf("Unknown exception from guest\n");
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_UNKNOWN, 1);
 		arm64_print_hyp_regs(vme_ret);
 		vme_ret->exitcode = VM_EXITCODE_HYP;
 		break;
 	case EXCP_TRAP_WFI_WFE:
-		if ((hypctx->tf.tf_esr & 0x3) == 0) /* WFI */
+		if ((hypctx->tf.tf_esr & 0x3) == 0) { /* WFI */
+			vmm_stat_incr(hypctx->vcpu, VMEXIT_WFI, 1);
 			vme_ret->exitcode = VM_EXITCODE_WFI;
-		else
+		} else {
+			vmm_stat_incr(hypctx->vcpu, VMEXIT_WFE, 1);
 			vme_ret->exitcode = VM_EXITCODE_HYP;
+		}
 		break;
 	case EXCP_HVC:
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_HVC, 1);
 		vme_ret->exitcode = VM_EXITCODE_HVC;
 		break;
 	case EXCP_MSR:
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_MSR, 1);
 		arm64_gen_reg_emul_data(esr_iss, vme_ret);
 		vme_ret->exitcode = VM_EXITCODE_REG_EMUL;
 		break;
 
 	case EXCP_INSN_ABORT_L:
 	case EXCP_DATA_ABORT_L:
+		vmm_stat_incr(hypctx->vcpu, esr_ec == EXCP_DATA_ABORT_L ?
+		    VMEXIT_DATA_ABORT : VMEXIT_INSN_ABORT, 1);
 		switch (hypctx->tf.tf_esr & ISS_DATA_DFSC_MASK) {
 		case ISS_DATA_DFSC_TF_L0:
 		case ISS_DATA_DFSC_TF_L1:
@@ -814,8 +822,6 @@ handle_el1_sync_excp(struct hypctx *hypctx, struct vm_exit *vme_ret,
 			}
 			break;
 		default:
-			eprintf(
-			    "Unsupported data/instruction fault from guest\n");
 			arm64_print_hyp_regs(vme_ret);
 			vme_ret->exitcode = VM_EXITCODE_HYP;
 			break;
@@ -824,8 +830,7 @@ handle_el1_sync_excp(struct hypctx *hypctx, struct vm_exit *vme_ret,
 		break;
 
 	default:
-		eprintf("Unsupported synchronous exception from guest: 0x%x\n",
-		    esr_ec);
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_UNHANDLED_SYNC, 1);
 		arm64_print_hyp_regs(vme_ret);
 		vme_ret->exitcode = VM_EXITCODE_HYP;
 		break;
@@ -850,6 +855,8 @@ arm64_handle_world_switch(struct hypctx *hypctx, int excp_type,
 	case EXCP_TYPE_EL1_IRQ:
 	case EXCP_TYPE_EL1_FIQ:
 		/* The host kernel will handle IRQs and FIQs. */
+		vmm_stat_incr(hypctx->vcpu,
+		    excp_type == EXCP_TYPE_EL1_IRQ ? VMEXIT_IRQ : VMEXIT_FIQ,1);
 		vme->exitcode = VM_EXITCODE_BOGUS;
 		handled = UNHANDLED;
 		break;
@@ -859,13 +866,13 @@ arm64_handle_world_switch(struct hypctx *hypctx, int excp_type,
 	case EXCP_TYPE_EL2_IRQ:
 	case EXCP_TYPE_EL2_FIQ:
 	case EXCP_TYPE_EL2_ERROR:
-		eprintf("Unhandled exception type: %s\n", __STRING(excp_type));
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_UNHANDLED_EL2, 1);
 		vme->exitcode = VM_EXITCODE_BOGUS;
 		handled = UNHANDLED;
 		break;
 
 	default:
-		eprintf("Unknown exception type: %d\n", excp_type);
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_UNHANDLED, 1);
 		vme->exitcode = VM_EXITCODE_BOGUS;
 		handled = UNHANDLED;
 		break;
@@ -1052,6 +1059,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 		PCPU_SET(curvmpmap, NULL);
 		intr_restore(daif);
 
+		vmm_stat_incr(vcpu, VMEXIT_COUNT, 1);
 		if (excp_type == EXCP_TYPE_MAINT_IRQ)
 			continue;
 

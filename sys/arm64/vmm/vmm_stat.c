@@ -1,5 +1,7 @@
-/*
- * Copyright (C) 2015 Mihai Carabas <mihai.carabas@gmail.com>
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -11,10 +13,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY NETAPP, INC ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL NETAPP, INC OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -60,7 +62,7 @@ vmm_stat_register(void *arg)
 		return;
 
 	if (vst_num_elems + vst->nelems >= MAX_VMM_STAT_ELEMS) {
-		printf("Cannot accomodate vmm stat type \"%s\"!\n", vst->desc);
+		printf("Cannot accommodate vmm stat type \"%s\"!\n", vst->desc);
 		return;
 	}
 
@@ -148,23 +150,16 @@ vmm_stat_desc_copy(int index, char *buf, int bufsize)
 }
 
 /* global statistics */
-VMM_STAT(VCPU_MIGRATIONS, "vcpu migration across host cpus");
 VMM_STAT(VMEXIT_COUNT, "total number of vm exits");
-VMM_STAT(VMEXIT_EXTINT, "vm exits due to external interrupt");
-VMM_STAT(VMEXIT_HLT, "number of times hlt was intercepted");
-VMM_STAT(VMEXIT_CR_ACCESS, "number of times %cr access was intercepted");
-VMM_STAT(VMEXIT_RDMSR, "number of times rdmsr was intercepted");
-VMM_STAT(VMEXIT_WRMSR, "number of times wrmsr was intercepted");
-VMM_STAT(VMEXIT_MTRAP, "number of monitor trap exits");
-VMM_STAT(VMEXIT_PAUSE, "number of times pause was intercepted");
-VMM_STAT(VMEXIT_INTR_WINDOW, "vm exits due to interrupt window opening");
-VMM_STAT(VMEXIT_NMI_WINDOW, "vm exits due to nmi window opening");
-VMM_STAT(VMEXIT_INOUT, "number of times in/out was intercepted");
-VMM_STAT(VMEXIT_CPUID, "number of times cpuid was intercepted");
-VMM_STAT(VMEXIT_NESTED_FAULT, "vm exits due to nested page fault");
-VMM_STAT(VMEXIT_INST_EMUL, "vm exits for instruction emulation");
-VMM_STAT(VMEXIT_UNKNOWN, "number of vm exits for unknown reason");
-VMM_STAT(VMEXIT_ASTPENDING, "number of times astpending at exit");
-VMM_STAT(VMEXIT_USERSPACE, "number of vm exits handled in userspace");
-VMM_STAT(VMEXIT_RENDEZVOUS, "number of times rendezvous pending at exit");
-VMM_STAT(VMEXIT_EXCEPTION, "number of vm exits due to exceptions");
+VMM_STAT(VMEXIT_UNKNOWN, "number of vmexits for the unknown exception");
+VMM_STAT(VMEXIT_WFI, "number of times wfi was intercepted");
+VMM_STAT(VMEXIT_WFE, "number of times wfe was intercepted");
+VMM_STAT(VMEXIT_HVC, "number of times hvc was intercepted");
+VMM_STAT(VMEXIT_MSR, "number of times msr/mrs was intercepted");
+VMM_STAT(VMEXIT_DATA_ABORT, "number of vmexits for a data abort");
+VMM_STAT(VMEXIT_INSN_ABORT, "number of vmexits for an instruction abort");
+VMM_STAT(VMEXIT_UNHANDLED_SYNC, "number of vmexits for an unhandled synchronous exception");
+VMM_STAT(VMEXIT_IRQ, "number of vmexits for an irq");
+VMM_STAT(VMEXIT_FIQ, "number of vmexits for an interrupt");
+VMM_STAT(VMEXIT_UNHANDLED_EL2, "number of vmexits for an unhandled EL2 exception");
+VMM_STAT(VMEXIT_UNHANDLED, "number of vmexits for an unhandled exception");

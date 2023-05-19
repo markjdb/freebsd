@@ -1,5 +1,7 @@
-/*
- * Copyright (C) 2015 Mihai Carabas <mihai.carabas@gmail.com>
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,11 +12,14 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -22,6 +27,8 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
 #ifndef _VMM_STAT_H_
@@ -33,12 +40,11 @@ struct vm;
 
 enum vmm_stat_scope {
 	VMM_STAT_SCOPE_ANY,
-	VMM_STAT_SCOPE_INTEL,		/* Intel VMX specific statistic */
-	VMM_STAT_SCOPE_AMD,		/* AMD SVM specific statistic */
 };
 
 struct vmm_stat_type;
-typedef void (*vmm_stat_func_t)(struct vcpu *vcpu, struct vmm_stat_type *stat);
+typedef void (*vmm_stat_func_t)(struct vcpu *vcpu,
+    struct vmm_stat_type *stat);
 
 struct vmm_stat_type {
 	int	index;			/* position in the stats buffer */
@@ -64,10 +70,6 @@ void	vmm_stat_register(void *arg);
 
 #define	VMM_STAT(type, desc)		\
 	VMM_STAT_DEFINE(type, 1, desc, VMM_STAT_SCOPE_ANY)
-#define	VMM_STAT_INTEL(type, desc)	\
-	VMM_STAT_DEFINE(type, 1, desc, VMM_STAT_SCOPE_INTEL)
-#define	VMM_STAT_AMD(type, desc)	\
-	VMM_STAT_DEFINE(type, 1, desc, VMM_STAT_SCOPE_AMD)
 
 #define	VMM_STAT_FUNC(type, desc, func)	\
 	VMM_STAT_FDEFINE(type, 1, desc, func, VMM_STAT_SCOPE_ANY)
@@ -84,8 +86,8 @@ int	vmm_stat_copy(struct vcpu *vcpu, int index, int count,
 int	vmm_stat_desc_copy(int index, char *buf, int buflen);
 
 static void __inline
-vmm_stat_array_incr(struct vcpu *vcpu, struct vmm_stat_type *vst,
-		    int statidx, uint64_t x)
+vmm_stat_array_incr(struct vcpu *vcpu, struct vmm_stat_type *vst, int statidx,
+    uint64_t x)
 {
 #ifdef VMM_KEEP_STATS
 	uint64_t *stats;
@@ -98,8 +100,8 @@ vmm_stat_array_incr(struct vcpu *vcpu, struct vmm_stat_type *vst,
 }
 
 static void __inline
-vmm_stat_array_set(struct vcpu *vcpu, struct vmm_stat_type *vst,
-		   int statidx, uint64_t val)
+vmm_stat_array_set(struct vcpu *vcpu, struct vmm_stat_type *vst, int statidx,
+    uint64_t val)
 {
 #ifdef VMM_KEEP_STATS
 	uint64_t *stats;
@@ -129,24 +131,17 @@ vmm_stat_set(struct vcpu *vcpu, struct vmm_stat_type *vst, uint64_t val)
 #endif
 }
 
-VMM_STAT_DECLARE(VCPU_MIGRATIONS);
 VMM_STAT_DECLARE(VMEXIT_COUNT);
-VMM_STAT_DECLARE(VMEXIT_EXTINT);
-VMM_STAT_DECLARE(VMEXIT_HLT);
-VMM_STAT_DECLARE(VMEXIT_CR_ACCESS);
-VMM_STAT_DECLARE(VMEXIT_RDMSR);
-VMM_STAT_DECLARE(VMEXIT_WRMSR);
-VMM_STAT_DECLARE(VMEXIT_MTRAP);
-VMM_STAT_DECLARE(VMEXIT_PAUSE);
-VMM_STAT_DECLARE(VMEXIT_INTR_WINDOW);
-VMM_STAT_DECLARE(VMEXIT_NMI_WINDOW);
-VMM_STAT_DECLARE(VMEXIT_INOUT);
-VMM_STAT_DECLARE(VMEXIT_CPUID);
-VMM_STAT_DECLARE(VMEXIT_NESTED_FAULT);
-VMM_STAT_DECLARE(VMEXIT_INST_EMUL);
 VMM_STAT_DECLARE(VMEXIT_UNKNOWN);
-VMM_STAT_DECLARE(VMEXIT_ASTPENDING);
-VMM_STAT_DECLARE(VMEXIT_USERSPACE);
-VMM_STAT_DECLARE(VMEXIT_RENDEZVOUS);
-VMM_STAT_DECLARE(VMEXIT_EXCEPTION);
+VMM_STAT_DECLARE(VMEXIT_WFI);
+VMM_STAT_DECLARE(VMEXIT_WFE);
+VMM_STAT_DECLARE(VMEXIT_HVC);
+VMM_STAT_DECLARE(VMEXIT_MSR);
+VMM_STAT_DECLARE(VMEXIT_DATA_ABORT);
+VMM_STAT_DECLARE(VMEXIT_INSN_ABORT);
+VMM_STAT_DECLARE(VMEXIT_UNHANDLED_SYNC);
+VMM_STAT_DECLARE(VMEXIT_IRQ);
+VMM_STAT_DECLARE(VMEXIT_FIQ);
+VMM_STAT_DECLARE(VMEXIT_UNHANDLED_EL2);
+VMM_STAT_DECLARE(VMEXIT_UNHANDLED);
 #endif
