@@ -120,7 +120,7 @@ static int process_states[nitems(procstatenames)];
 
 static int cpu_states[CPUSTATES];
 static const char *cpustatenames[] = {
-	"user", "nice", "system", "interrupt", "idle", NULL
+	"user", "nice", "system", "interrupt", "idle", "VM", NULL
 };
 
 /* these are for detailing the memory statistics */
