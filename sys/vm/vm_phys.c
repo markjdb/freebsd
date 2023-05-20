@@ -1262,7 +1262,7 @@ vm_page_t
 vm_phys_scan_contig(int domain, u_long npages, vm_paddr_t low, vm_paddr_t high,
     u_long alignment, vm_paddr_t boundary, int options)
 {
-	vm_paddr_t pa_end;
+	vm_paddr_t pa_end, pa_start;
 	vm_page_t m_end, m_run, m_start;
 	struct vm_phys_seg *seg;
 	int segind;
@@ -1280,16 +1280,11 @@ vm_phys_scan_contig(int domain, u_long npages, vm_paddr_t low, vm_paddr_t high,
 			break;
 		if (low >= seg->end)
 			continue;
-		if (low <= seg->start)
-			m_start = seg->first_page;
-		else
-			m_start = &seg->first_page[atop(low - seg->start)];
-		if (high < seg->end)
-			pa_end = high;
-		else
-			pa_end = seg->end;
-		if (pa_end - VM_PAGE_TO_PHYS(m_start) < ptoa(npages))
+		pa_start = low <= seg->start ? seg->start : low;
+		pa_end = high <= seg->end ? high : seg->end;
+		if (pa_end - pa_start < ptoa(npages))
 			continue;
+		m_start = &seg->first_page[atop(pa_start - seg->start)];
 		m_end = &seg->first_page[atop(pa_end - seg->start)];
 		m_run = vm_page_scan_contig(npages, m_start, m_end,
 		    alignment, boundary, options);
