@@ -1856,6 +1856,8 @@ vm_run(struct vcpu *vcpu)
 	if (CPU_ISSET(vcpuid, &vm->suspended_cpus))
 		return (EINVAL);
 
+	curthread->td_pflags2 |= TDP2_VMRUN;
+
 	pmap = vmspace_pmap(vm->vmspace);
 	vme = &vcpu->exitinfo;
 	evinfo.rptr = &vm->rendezvous_req_cpus;
@@ -1935,6 +1937,7 @@ restart:
 	if (error == 0 && retu == false)
 		goto restart;
 
+	curthread->td_pflags2 &= ~TDP2_VMRUN;
 	vmm_stat_incr(vcpu, VMEXIT_USERSPACE, 1);
 	VMM_CTR2(vcpu, "retu %d/%d", error, vme->exitcode);
 

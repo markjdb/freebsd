@@ -747,7 +747,7 @@ linprocfs_dostat(PFS_FILL_ARGS)
 	sbuf_printf(sb, "cpu %lu %lu %lu %lu",
 	    T2J(cp_time[CP_USER]),
 	    T2J(cp_time[CP_NICE]),
-	    T2J(cp_time[CP_SYS]),
+	    T2J(cp_time[CP_SYS] + cp_time[CP_VM]),
 	    T2J(cp_time[CP_IDLE]));
 
 	/* Print interrupt stats if available */
@@ -764,7 +764,7 @@ linprocfs_dostat(PFS_FILL_ARGS)
 		sbuf_printf(sb, "cpu%d %lu %lu %lu %lu", i,
 		    T2J(cp[CP_USER]),
 		    T2J(cp[CP_NICE]),
-		    T2J(cp[CP_SYS]),
+		    T2J(cp[CP_SYS] + cp_time[CP_VM]),
 		    T2J(cp[CP_IDLE]));
 
 		if (has_intr) {
