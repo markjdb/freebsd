@@ -19,6 +19,7 @@ ATF_TESTS_SH=	arp \
 		fibs \
 		fibs_test \
 		forward \
+		jail_bind \
 		lpm \
 		output \
 		redirect
