@@ -1154,6 +1154,19 @@ max_order(vm_page_t m)
 	    VM_NFREEORDER - 1));
 }
 
+static vm_page_t
+vm_phys_enqueue_contig_chunk(struct vm_freelist *fl, vm_page_t m, int order)
+{
+	int npages;
+
+	KASSERT(order >= 0 && order < VM_NFREEORDER,
+	    ("%s: invalid order %d", __func__, order));
+
+	npages = 1 << order;
+	vm_freelist_add(fl, m, order, 1);
+	return (m + npages);
+}
+
 /*
  * Free a contiguous, arbitrarily sized set of physical pages, without
  * merging across set boundaries.
@@ -1182,16 +1195,14 @@ vm_phys_enqueue_contig(vm_page_t m, u_long npages)
 		KASSERT(seg == &vm_phys_segs[m->segind],
 		    ("%s: page range [%p,%p) spans multiple segments",
 		    __func__, m_end - npages, m));
-		vm_freelist_add(fl, m, order, 1);
-		m += 1 << order;
+		m = vm_phys_enqueue_contig_chunk(fl, m, order);
 	}
 	/* Free blocks of maximum size. */
 	while (m + (1 << order) <= m_end) {
 		KASSERT(seg == &vm_phys_segs[m->segind],
 		    ("%s: page range [%p,%p) spans multiple segments",
 		    __func__, m_end - npages, m));
-		vm_freelist_add(fl, m, order, 1);
-		m += 1 << order;
+		m = vm_phys_enqueue_contig_chunk(fl, m, order);
 	}
 	/* Free blocks of diminishing size. */
 	while (m < m_end) {
@@ -1199,8 +1210,7 @@ vm_phys_enqueue_contig(vm_page_t m, u_long npages)
 		    ("%s: page range [%p,%p) spans multiple segments",
 		    __func__, m_end - npages, m));
 		order = flsl(m_end - m) - 1;
-		vm_freelist_add(fl, m, order, 1);
-		m += 1 << order;
+		m = vm_phys_enqueue_contig_chunk(fl, m, order);
 	}
 }
 
