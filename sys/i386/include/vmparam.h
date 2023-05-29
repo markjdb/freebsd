@@ -93,7 +93,7 @@
 /*
  * Create up to three free page lists: VM_FREELIST_DMA32 is for physical pages
  * that have physical addresses below 4G but are not accessible by ISA DMA,
- * and VM_FREELIST_ISADMA is for physical pages that are accessible by ISA
+ * and VM_FREELIST_LOWMEM is for physical pages that are accessible by ISA
  * DMA.
  */
 #define	VM_NFREELIST		3
