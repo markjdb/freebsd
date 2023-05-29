@@ -42,6 +42,8 @@
 
 #ifdef _KERNEL
 
+#include <vm/_vm_phys.h>
+
 extern vm_paddr_t phys_avail[];
 
 /* Domains must be dense (non-sparse) and zero-based. */
@@ -79,7 +81,7 @@ void vm_phys_register_domains(int ndomains, struct mem_affinity *affinity,
     int *locality);
 vm_page_t vm_phys_scan_contig(int domain, u_long npages, vm_paddr_t low,
     vm_paddr_t high, u_long alignment, vm_paddr_t boundary, int options);
-bool vm_phys_unfree_page(vm_page_t m);
+bool vm_phys_unfree_page(vm_paddr_t pa);
 int vm_phys_mem_affinity(int f, int t);
 void vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end);
 vm_paddr_t vm_phys_early_alloc(int domain, size_t alloc_size);
@@ -104,6 +106,20 @@ vm_phys_domain(vm_paddr_t pa)
 #else
 	return (0);
 #endif
+}
+
+static inline struct vm_phys_seg *
+vm_phys_seg(vm_paddr_t pa)
+{
+	struct vm_phys_seg *seg;
+	int segind;
+
+	for (segind = 0; segind < vm_phys_nsegs; segind++) {
+		seg = &vm_phys_segs[segind];
+		if (pa >= seg->start && pa < seg->end)
+			return (seg);
+	}
+	return (NULL);
 }
 
 #endif	/* _KERNEL */

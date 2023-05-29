@@ -333,9 +333,9 @@ vm_page_blacklist_add(vm_paddr_t pa, bool verbose)
 	if (m == NULL)
 		return (true); /* page does not exist, no failure */
 
-	vmd = vm_pagequeue_domain(m);
+	vmd = VM_DOMAIN(vm_phys_domain(pa));
 	vm_domain_free_lock(vmd);
-	found = vm_phys_unfree_page(m);
+	found = vm_phys_unfree_page(pa);
 	vm_domain_free_unlock(vmd);
 	if (found) {
 		vm_domain_freecnt_inc(vmd, -1);
@@ -765,9 +765,12 @@ vm_page_startup(vm_offset_t vaddr)
 	vm_cnt.v_page_count = 0;
 	for (segind = 0; segind < vm_phys_nsegs; segind++) {
 		seg = &vm_phys_segs[segind];
+
+#ifndef VM_FREEPOOL_LAZYINIT
 		for (m = seg->first_page, pa = seg->start; pa < seg->end;
 		    m++, pa += PAGE_SIZE)
 			vm_page_init_page(m, pa, segind, VM_FREEPOOL_DEFAULT);
+#endif
 
 		/*
 		 * Add the segment's pages that are covered by one of
@@ -785,6 +788,10 @@ vm_page_startup(vm_offset_t vaddr)
 				continue;
 
 			m = seg->first_page + atop(startp - seg->start);
+#ifdef VM_FREEPOOL_LAZYINIT
+			vm_page_init_page(m, startp, segind,
+			    VM_FREEPOOL_LAZYINIT);
+#endif
 			vmd = VM_DOMAIN(seg->domain);
 			vm_domain_free_lock(vmd);
 			vm_phys_enqueue_contig(m, pagecount);
