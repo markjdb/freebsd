@@ -64,7 +64,6 @@
 
 #include "vmm_ktr.h"
 #include "vmm_stat.h"
-#include "vmm_mem.h"
 #include "arm64.h"
 #include "mmu.h"
 
@@ -290,12 +289,6 @@ vmm_init(void)
 	}
 	if (vm_maxcpu == 0)
 		vm_maxcpu = 1;
-
-#if 0
-	error = vmm_mem_init();
-	if (error)
-		return (error);
-#endif
 
 	return (vmmops_modinit(0));
 }
@@ -588,25 +581,6 @@ void
 vm_unlock_memsegs(struct vm *vm)
 {
 	sx_unlock(&vm->mem_segs_lock);
-}
-
-int
-vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa)
-{
-	vm_object_t obj;
-
-	if ((obj = vmm_mmio_alloc(vm->vmspace, gpa, len, hpa)) == NULL)
-		return (ENOMEM);
-	else
-		return (0);
-}
-
-int
-vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len)
-{
-
-	vmm_mmio_free(vm->vmspace, gpa, len);
-	return (0);
 }
 
 /*

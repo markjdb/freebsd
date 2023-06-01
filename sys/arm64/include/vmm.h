@@ -137,11 +137,6 @@ int vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t off,
     size_t len, int prot, int flags);
 int vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem);
 void vm_free_memseg(struct vm *vm, int ident);
-int vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa);
-int vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len);
-int vmm_map_gpa(struct vm *vm, vm_offset_t va, vm_paddr_t gpa, int pages,
-    vm_page_t *ma);
-void vmm_unmap_gpa(struct vm *vm, vm_offset_t va, size_t pages, vm_page_t *ma);
 
 /*
  * APIs that inspect the guest memory map require only a *single* vcpu to
