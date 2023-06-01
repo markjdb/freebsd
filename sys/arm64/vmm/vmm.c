@@ -173,6 +173,8 @@ static int vmm_ipinum;
 SYSCTL_INT(_hw_vmm, OID_AUTO, ipinum, CTLFLAG_RD, &vmm_ipinum, 0,
     "IPI vector used for vcpu notifications");
 
+static struct cpu_desc *vmm_desc;
+#if 0
 static struct cpu_desc vmm_desc = {
 	.id_aa64afr0 = 0,
 	.id_aa64afr1 = 0,
@@ -214,6 +216,7 @@ static struct cpu_desc vmm_desc = {
 	    ID_AA64PFR0_EL0_64,
 	.id_aa64pfr1 = 0,
 };
+#endif
 
 u_int vm_maxcpu;
 SYSCTL_UINT(_hw_vmm, OID_AUTO, maxcpu, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
@@ -278,7 +281,45 @@ vm_exitinfo(struct vcpu *vcpu)
 static int
 vmm_init(void)
 {
-	update_cpu_desc(&vmm_desc);
+	vmm_desc = cpu_desc_alloc(CPU_DESC_MIN);
+
+	cpu_desc_update(vmm_desc, ID_AA64DFR0_EL1,
+	    (0xful << ID_AA64DFR0_CTX_CMPs_SHIFT) |
+	    (0xful << ID_AA64DFR0_WRPs_SHIFT) |
+	    (0xful << ID_AA64DFR0_BRPs_SHIFT) |
+	    ID_AA64DFR0_PMUVer_3 |
+	    ID_AA64DFR0_DebugVer_8, false);
+
+	cpu_desc_update(vmm_desc, ID_AA64ISAR0_EL1,
+	    ID_AA64ISAR0_TLB_TLBIOSR |
+	    ID_AA64ISAR0_SHA3_IMPL |
+	    ID_AA64ISAR0_RDM_IMPL |
+	    ID_AA64ISAR0_Atomic_IMPL |
+	    ID_AA64ISAR0_CRC32_BASE |
+	    ID_AA64ISAR0_SHA2_512 |
+	    ID_AA64ISAR0_SHA1_BASE |
+	    ID_AA64ISAR0_AES_PMULL, false);
+
+	cpu_desc_update(vmm_desc, ID_AA64MMFR0_EL1,
+	    ID_AA64MMFR0_TGran4_IMPL |
+	    ID_AA64MMFR0_TGran64_IMPL |
+	    ID_AA64MMFR0_TGran16_IMPL |
+	    ID_AA64MMFR0_ASIDBits_16 |
+	    ID_AA64MMFR0_PARange_4P, false);
+
+	cpu_desc_update(vmm_desc, ID_AA64MMFR1_EL1,
+	    ID_AA64MMFR1_SpecSEI_IMPL |
+	    ID_AA64MMFR1_PAN_ATS1E1 |
+	    ID_AA64MMFR1_HAFDBS_AF, false);
+
+	cpu_desc_update(vmm_desc, ID_AA64PFR0_EL1,
+	    ID_AA64PFR0_GIC_CPUIF_NONE |
+	    ID_AA64PFR0_AdvSIMD_HP |
+	    ID_AA64PFR0_FP_HP |
+	    ID_AA64PFR0_EL3_64 |
+	    ID_AA64PFR0_EL2_64 |
+	    ID_AA64PFR0_EL1_64 |
+	    ID_AA64PFR0_EL0_64, false);
 
 	vm_maxcpu = mp_ncpus;
 	TUNABLE_INT_FETCH("hw.vmm.maxcpu", &vm_maxcpu);
@@ -844,7 +885,12 @@ vmm_reg_raz(struct vcpu *vcpu, uint64_t *rval, void *arg)
 static int
 vmm_reg_read_arg(struct vcpu *vcpu, uint64_t *rval, void *arg)
 {
-	*rval = *(uint64_t *)arg;
+	uint64_t reg;
+	bool rv __diagused;
+
+	reg = (uint64_t)arg;
+	rv = cpu_desc_get(vmm_desc, reg, rval);
+	MPASS(rv == true);
 	return (0);
 }
 
@@ -871,7 +917,7 @@ struct vmm_special_reg vmm_special_regs[] = {
 		.reg_write = (_write),					\
 		.arg = NULL,						\
 	}
-#define	ID_SPECIAL_REG(_reg, _name)						\
+#define	ID_SPECIAL_REG(_reg)						\
 	{								\
 		.esr_iss = ((_reg ## _op0) << ISS_MSR_OP0_SHIFT) |	\
 		    ((_reg ## _op1) << ISS_MSR_OP1_SHIFT) |		\
@@ -881,21 +927,21 @@ struct vmm_special_reg vmm_special_regs[] = {
 		.esr_mask = ISS_MSR_REG_MASK,				\
 		.reg_read = vmm_reg_read_arg,				\
 		.reg_write = vmm_reg_wi,				\
-		.arg = &(vmm_desc._name),				\
+		.arg = (void *)(_reg),					\
 	}
 
 	/* ID registers */
-	ID_SPECIAL_REG(ID_AA64PFR0_EL1, id_aa64pfr0),
-	ID_SPECIAL_REG(ID_AA64PFR1_EL1, id_aa64pfr1),
+	ID_SPECIAL_REG(ID_AA64PFR0_EL1),
+	ID_SPECIAL_REG(ID_AA64PFR1_EL1),
 
-	ID_SPECIAL_REG(ID_AA64DFR0_EL1, id_aa64dfr0),
-	ID_SPECIAL_REG(ID_AA64DFR1_EL1, id_aa64dfr1),
+	ID_SPECIAL_REG(ID_AA64DFR0_EL1),
+	ID_SPECIAL_REG(ID_AA64DFR1_EL1),
 
-	ID_SPECIAL_REG(ID_AA64ISAR0_EL1, id_aa64isar0),
-	ID_SPECIAL_REG(ID_AA64ISAR1_EL1, id_aa64isar1),
+	ID_SPECIAL_REG(ID_AA64ISAR0_EL1),
+	ID_SPECIAL_REG(ID_AA64ISAR1_EL1),
 
-	ID_SPECIAL_REG(ID_AA64MMFR0_EL1, id_aa64mmfr0),
-	ID_SPECIAL_REG(ID_AA64MMFR1_EL1, id_aa64mmfr1),
+	ID_SPECIAL_REG(ID_AA64MMFR0_EL1),
+	ID_SPECIAL_REG(ID_AA64MMFR1_EL1),
 
 	/*
 	 * All other ID registers are read as zero.

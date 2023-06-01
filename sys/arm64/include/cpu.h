@@ -183,35 +183,7 @@
 #define	CPU_MATCH_ERRATA_CAVIUM_THUNDERX_1_1	0
 #endif
 
-#define	MAX_CACHES	8	/* Maximum number of caches supported
-				   architecturally. */
-
-struct cpu_desc {
-	uint64_t	mpidr;
-	uint64_t	id_aa64afr0;
-	uint64_t	id_aa64afr1;
-	uint64_t	id_aa64dfr0;
-	uint64_t	id_aa64dfr1;
-	uint64_t	id_aa64isar0;
-	uint64_t	id_aa64isar1;
-	uint64_t	id_aa64isar2;
-	uint64_t	id_aa64mmfr0;
-	uint64_t	id_aa64mmfr1;
-	uint64_t	id_aa64mmfr2;
-	uint64_t	id_aa64pfr0;
-	uint64_t	id_aa64pfr1;
-	uint64_t	id_aa64zfr0;
-	uint64_t	ctr;
-#ifdef COMPAT_FREEBSD32
-	uint64_t	id_isar5;
-	uint64_t	mvfr0;
-	uint64_t	mvfr1;
-#endif
-	uint64_t	clidr;
-	uint32_t	ccsidr[MAX_CACHES][2]; /* 2 possible types. */
-	bool		have_sve;
-};
-
+struct cpu_desc;
 
 extern char btext[];
 extern char etext[];
@@ -241,9 +213,15 @@ void	ptrauth_mp_start(uint64_t);
 
 /* Functions to read the sanitised view of the special registers */
 void	update_special_regs(u_int);
-void	update_cpu_desc(struct cpu_desc *desc);
+//void	update_cpu_desc(struct cpu_desc *desc);
 bool	extract_user_id_field(u_int, u_int, uint8_t *);
 bool	get_kernel_reg(u_int, uint64_t *);
+
+#define	CPU_DESC_MIN		(1<<0)	/* Minimise the ID registers until */
+					/* they are set with cpu_desc_set */
+struct cpu_desc *cpu_desc_alloc(int);
+bool	cpu_desc_update(struct cpu_desc *, u_int, uint64_t, bool);
+bool	cpu_desc_get(struct cpu_desc *, u_int, uint64_t *);
 
 #define	CPU_AFFINITY(cpu)	__cpu_affinity[(cpu)]
 #define	CPU_CURRENT_SOCKET				\

@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
+#include <sys/malloc.h>
 #include <sys/pcpu.h>
 #include <sys/sbuf.h>
 #include <sys/smp.h>
@@ -105,6 +106,9 @@ static char cpu_model[64];
 SYSCTL_STRING(_hw, HW_MODEL, model, CTLFLAG_RD,
 	cpu_model, sizeof(cpu_model), "Machine model");
 
+#define	MAX_CACHES	8	/* Maximum number of caches supported
+				   architecturally. */
+
 /*
  * Per-CPU affinity as provided in MPIDR_EL1
  * Indexed by CPU number in logical order selected by the system.
@@ -117,6 +121,32 @@ SYSCTL_STRING(_hw, HW_MODEL, model, CTLFLAG_RD,
  */
 uint64_t __cpu_affinity[MAXCPU];
 static u_int cpu_aff_levels;
+
+struct cpu_desc {
+	uint64_t	mpidr;
+	uint64_t	id_aa64afr0;
+	uint64_t	id_aa64afr1;
+	uint64_t	id_aa64dfr0;
+	uint64_t	id_aa64dfr1;
+	uint64_t	id_aa64isar0;
+	uint64_t	id_aa64isar1;
+	uint64_t	id_aa64isar2;
+	uint64_t	id_aa64mmfr0;
+	uint64_t	id_aa64mmfr1;
+	uint64_t	id_aa64mmfr2;
+	uint64_t	id_aa64pfr0;
+	uint64_t	id_aa64pfr1;
+	uint64_t	id_aa64zfr0;
+	uint64_t	ctr;
+#ifdef COMPAT_FREEBSD32
+	uint64_t	id_isar5;
+	uint64_t	mvfr0;
+	uint64_t	mvfr1;
+#endif
+	uint64_t	clidr;
+	uint32_t	ccsidr[MAX_CACHES][2]; /* 2 possible types. */
+	bool		have_sve;
+};
 
 static struct cpu_desc cpu_desc[MAXCPU];
 static struct cpu_desc kern_cpu_desc;
@@ -1572,10 +1602,15 @@ struct mrs_user_reg {
 		.fields = field_name##_fields,				\
 	}
 static struct mrs_user_reg user_regs[] = {
+	USER_REG(ID_AA64AFR0_EL1, id_aa64afr0),
+	USER_REG(ID_AA64AFR1_EL1, id_aa64afr1),
+
 	USER_REG(ID_AA64DFR0_EL1, id_aa64dfr0),
+	USER_REG(ID_AA64DFR1_EL1, id_aa64dfr1),
 
 	USER_REG(ID_AA64ISAR0_EL1, id_aa64isar0),
 	USER_REG(ID_AA64ISAR1_EL1, id_aa64isar1),
+	USER_REG(ID_AA64ISAR2_EL1, id_aa64isar2),
 
 	USER_REG(ID_AA64MMFR0_EL1, id_aa64mmfr0),
 	USER_REG(ID_AA64MMFR1_EL1, id_aa64mmfr1),
@@ -1583,6 +1618,9 @@ static struct mrs_user_reg user_regs[] = {
 
 	USER_REG(ID_AA64PFR0_EL1, id_aa64pfr0),
 	USER_REG(ID_AA64PFR1_EL1, id_aa64pfr1),
+
+	USER_REG(ID_AA64ZFR0_EL1, id_aa64zfr0),
+
 #ifdef COMPAT_FREEBSD32
 	USER_REG(ID_ISAR5_EL1, id_isar5),
 
@@ -1686,16 +1724,7 @@ extract_user_id_field(u_int reg, u_int field_shift, uint8_t *val)
 bool
 get_kernel_reg(u_int reg, uint64_t *val)
 {
-	int i;
-
-	for (i = 0; i < nitems(user_regs); i++) {
-		if (user_regs[i].reg == reg) {
-			*val = CPU_DESC_FIELD(kern_cpu_desc, i);
-			return (true);
-		}
-	}
-
-	return (false);
+	return (cpu_desc_get(&kern_cpu_desc, reg, val));
 }
 
 /*
@@ -1733,7 +1762,7 @@ mrs_field_cmp(uint64_t a, uint64_t b, u_int shift, int width, bool sign)
 }
 
 static uint64_t
-update_lower_register(uint64_t val, uint64_t new_val, u_int shift,
+update_lower_register_field(uint64_t val, uint64_t new_val, u_int shift,
     int width, bool sign)
 {
 	uint64_t mask;
@@ -1748,6 +1777,17 @@ update_lower_register(uint64_t val, uint64_t new_val, u_int shift,
 		mask = (1ul << width) - 1;
 		val &= ~(mask << shift);
 		val |= new_val & (mask << shift);
+	}
+
+	return (val);
+}
+
+static uint64_t
+update_lower_register(struct mrs_field *fields, uint64_t val, uint64_t new_val)
+{
+	for (int i = 0; fields[i].type != 0; i++) {
+		val = update_lower_register_field(val, new_val,
+		    fields[i].shift, 4, fields[i].sign);
 	}
 
 	return (val);
@@ -1790,13 +1830,13 @@ update_special_regs(u_int cpu)
 				    fields[j].shift;
 				break;
 			case MRS_LOWER:
-				user_reg = update_lower_register(user_reg,
+				user_reg = update_lower_register_field(user_reg,
 				    value, fields[j].shift, 4, fields[j].sign);
 				break;
 			default:
 				panic("Invalid field type: %d", fields[j].type);
 			}
-			kern_reg = update_lower_register(kern_reg, value,
+			kern_reg = update_lower_register_field(kern_reg, value,
 			    fields[j].shift, 4, fields[j].sign);
 		}
 
@@ -1805,25 +1845,65 @@ update_special_regs(u_int cpu)
 	}
 }
 
-void
-update_cpu_desc(struct cpu_desc *desc)
+struct cpu_desc *
+cpu_desc_alloc(int flags)
 {
-	struct mrs_field *fields;
-	uint64_t desc_val, kern_val;
-	int i, j;
+	struct cpu_desc *desc;
 
-	for (i = 0; i < nitems(user_regs); i++) {
-		kern_val = CPU_DESC_FIELD(kern_cpu_desc, i);
-		desc_val = CPU_DESC_FIELD(*desc, i);
+	/* Only CPU_DESC_MIN is implemented */
+	MPASS(flags == CPU_DESC_MIN);
 
-		fields = user_regs[i].fields;
-		for (j = 0; fields[j].type != 0; j++) {
-			desc_val = update_lower_register(desc_val, kern_val,
-			    fields[j].shift, 4, fields[j].sign);
+	/* XXX: Add M_IDENTCPU */
+	desc = malloc(sizeof(*desc), M_DEVBUF, M_WAITOK | M_ZERO);
+
+	desc->id_aa64pfr0 = ID_AA64PFR0_AdvSIMD_NONE | ID_AA64PFR0_FP_NONE |
+	    ID_AA64PFR0_EL1_64 | ID_AA64PFR0_EL0_64;
+	desc->id_aa64dfr0 = ID_AA64DFR0_DebugVer_8;
+
+	return (desc);
+}
+
+bool
+cpu_desc_update(struct cpu_desc *desc, u_int reg, uint64_t val,
+    bool use_existing)
+{
+	int regid;
+	bool found;
+
+	found = false;
+	for (regid = 0; regid < nitems(user_regs); regid++) {
+		if (user_regs[regid].reg == reg) {
+			found = true;
+			break;
 		}
-
-		CPU_DESC_FIELD(*desc, i) = desc_val;
 	}
+	if (!found)
+		return (false);
+
+	/* Keep the existing value */
+	if (use_existing)
+		val = update_lower_register(user_regs[regid].fields, val,
+		    CPU_DESC_FIELD(*desc, regid));
+
+	/* Use the kernel value */
+	val = update_lower_register(user_regs[regid].fields, val,
+	    CPU_DESC_FIELD(kern_cpu_desc, regid));
+
+	CPU_DESC_FIELD(*desc, regid) = val;
+	return (true);
+}
+
+bool
+cpu_desc_get(struct cpu_desc *desc, u_int reg, uint64_t *val)
+{
+	for (int i = 0; i < nitems(user_regs); i++) {
+		if (user_regs[i].reg == reg) {
+			*val = CPU_DESC_FIELD(*desc, i);
+			return (true);
+		}
+	}
+
+	return (false);
 }
 
 /* HWCAP */
