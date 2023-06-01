@@ -1681,7 +1681,7 @@ vm_handle_paging(struct vcpu *vcpu, bool *retu)
 }
 
 int
-vm_run(struct vcpu *vcpu, struct vm_exit *vme_user)
+vm_run(struct vcpu *vcpu)
 {
 	struct vm *vm = vcpu->vm;
 	struct vm_eventinfo evinfo;
@@ -1763,7 +1763,5 @@ restart:
 	if (error == 0 && retu == false)
 		goto restart;
 
-	/* copy the exit information */
-	*vme_user = *vme;
 	return (error);
 }

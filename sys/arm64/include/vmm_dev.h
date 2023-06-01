@@ -64,8 +64,9 @@ struct vm_register_set {
 
 struct vm_run {
 	int		cpuid;
-	uint64_t	pc;
-	struct vm_exit	vm_exit;
+	cpuset_t	*cpuset;	/* CPU set storage */
+	size_t		cpusetsize;
+	struct vm_exit	*vm_exit;
 
 };
 

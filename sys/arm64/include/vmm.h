@@ -165,7 +165,7 @@ int vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
     uint16_t threads, uint16_t maxcpus);
 int vm_get_register(struct vcpu *vcpu, int reg, uint64_t *retval);
 int vm_set_register(struct vcpu *vcpu, int reg, uint64_t val);
-int vm_run(struct vcpu *vcpu, struct vm_exit *vme_user);
+int vm_run(struct vcpu *vcpu);
 int vm_suspend(struct vm *vm, enum vm_suspend_how how);
 void* vm_get_cookie(struct vm *vm);
 int vcpu_vcpuid(struct vcpu *vcpu);

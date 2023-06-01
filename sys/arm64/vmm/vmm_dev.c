@@ -484,10 +484,21 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	}
 
 	switch(cmd) {
-	case VM_RUN:
+	case VM_RUN: {
+		struct vm_exit *vme;
+
 		vmrun = (struct vm_run *)data;
-		error = vm_run(vcpu, &vmrun->vm_exit);
+		vme = vm_exitinfo(vcpu);
+
+		error = vm_run(vcpu);
+		if (error != 0)
+			break;
+
+		error = copyout(vme, vmrun->vm_exit, sizeof(*vme));
+		if (error != 0)
+			break;
 		break;
+	}
 	case VM_SUSPEND:
 		vmsuspend = (struct vm_suspend *)data;
 		error = vm_suspend(sc->vm, vmsuspend->how);
