@@ -673,9 +673,10 @@ smccc_affinity_info(uint64_t target_affinity, uint32_t lowest_affinity_level)
 }
 
 static int
-vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
+vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 {
 	struct vcpu *newvcpu;
+	struct vm_exit *vme;
 	uint64_t newcpu, smccc_rv;
 	enum vm_suspend_how how;
 	int error;
@@ -683,6 +684,7 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 	/* Return the Unknown Function Identifier  by default */
 	smccc_rv = SMCCC_RET_NOT_SUPPORTED;
 
+	vme = vmrun->vm_exit;
 	switch (vme->u.smccc_call.func_id) {
 	case PSCI_FNID_VERSION:
 		/* We implement PSCI 1.0 */
@@ -752,12 +754,13 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vme)
 }
 
 static int
-vmexit_hyp(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_exit *vme)
+vmexit_hyp(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_run *vmrun)
 {
+	struct vm_exit *vme;
 	uint64_t esr, exception;
 	int error;
 
-printf("%s: %lx\n", __func__, vme->u.hyp.esr_el2);
+	vme = vmrun->vm_exit;
 	exception = ESR_ELx_EXCEPTION(vme->u.hyp.esr_el2);
 	switch(exception) {
 	case EXCP_INSN_ABORT_L:
