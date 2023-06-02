@@ -217,6 +217,8 @@ void	update_special_regs(u_int);
 bool	extract_user_id_field(u_int, u_int, uint8_t *);
 bool	get_kernel_reg(u_int, uint64_t *);
 
+void	cpu_desc_init(void);
+
 #define	CPU_DESC_MIN		(1<<0)	/* Minimise the ID registers until */
 					/* they are set with cpu_desc_set */
 struct cpu_desc *cpu_desc_alloc(int);
