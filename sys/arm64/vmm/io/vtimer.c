@@ -273,10 +273,10 @@ vtimer_schedule_irq(struct hypctx *hypctx, bool phys)
 		diff = timer->cntx_cval_el0 - cntpct_el0;
 		time = diff * SBT_1S / tmr_frq;
 		if (phys)
-			callout_reset_sbt(&timer->callout, time, 0,
+			callout_reset_sbt_curcpu(&timer->callout, time, 0,
 			    vtimer_inject_irq_callout_phys, hypctx, 0);
 		else
-			callout_reset_sbt(&timer->callout, time, 0,
+			callout_reset_sbt_curcpu(&timer->callout, time, 0,
 			    vtimer_inject_irq_callout_virt, hypctx, 0);
 	}
 }
