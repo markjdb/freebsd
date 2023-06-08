@@ -541,8 +541,8 @@ vgic_v3_cpuinit(device_t dev, struct hypctx *hypctx)
 	 * ICH_VMCR_EL2_VENG0: virtual Group 0 interrupts enabled.
 	 * ICH_VMCR_EL2_VENG1: virtual Group 1 interrupts enabled.
 	 */
-	hypctx->vgic_v3_regs.ich_vmcr_el2 = \
-	    (virt_features.min_prio << ICH_VMCR_EL2_VPMR_SHIFT) | \
+	hypctx->vgic_v3_regs.ich_vmcr_el2 =
+	    (virt_features.min_prio << ICH_VMCR_EL2_VPMR_SHIFT) |
 	    ICH_VMCR_EL2_VBPR1_NO_PREEMPTION | ICH_VMCR_EL2_VBPR0_NO_PREEMPTION;
 	hypctx->vgic_v3_regs.ich_vmcr_el2 &= ~ICH_VMCR_EL2_VEOIM;
 	hypctx->vgic_v3_regs.ich_vmcr_el2 |= ICH_VMCR_EL2_VENG0 |
