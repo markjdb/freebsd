@@ -72,7 +72,9 @@ uint8_t
 dtrace_fuword8_nocheck(void *addr)
 */
 ENTRY(dtrace_fuword8_nocheck)
+	ENTER_USER_ACCESS(w6, x7)
 	ldrb	w0, [x0]
+	EXIT_USER_ACCESS(w6)
 	RET
 END(dtrace_fuword8_nocheck)
 
@@ -81,7 +83,9 @@ uint16_t
 dtrace_fuword16_nocheck(void *addr)
 */
 ENTRY(dtrace_fuword16_nocheck)
+	ENTER_USER_ACCESS(w6, x7)
 	ldrh	w0, [x0]
+	EXIT_USER_ACCESS(w6)
 	RET
 END(dtrace_fuword16_nocheck)
 
@@ -90,7 +94,9 @@ uint32_t
 dtrace_fuword32_nocheck(void *addr)
 */
 ENTRY(dtrace_fuword32_nocheck)
+	ENTER_USER_ACCESS(w6, x7)
 	ldr	w0, [x0]
+	EXIT_USER_ACCESS(w6)
 	RET
 END(dtrace_fuword32_nocheck)
 
@@ -99,7 +105,9 @@ uint64_t
 dtrace_fuword64_nocheck(void *addr)
 */
 ENTRY(dtrace_fuword64_nocheck)
+	ENTER_USER_ACCESS(w6, x7)
 	ldr	x0, [x0]
+	EXIT_USER_ACCESS(w6)
 	RET
 END(dtrace_fuword64_nocheck)
 
@@ -108,6 +116,7 @@ void
 dtrace_copy(uintptr_t uaddr, uintptr_t kaddr, size_t size)
 */
 ENTRY(dtrace_copy)
+	ENTER_USER_ACCESS(w6, x7)
 	cbz	x2, 2f		/* If len == 0 then skip loop */
 1:
 	ldrb	w4, [x0], #1	/* Load from uaddr */
@@ -115,6 +124,7 @@ ENTRY(dtrace_copy)
 	sub	x2, x2, #1	/* len-- */
 	cbnz	x2, 1b
 2:
+	EXIT_USER_ACCESS(w6)
 	RET
 END(dtrace_copy)
 
@@ -125,6 +135,7 @@ dtrace_copystr(uintptr_t uaddr, uintptr_t kaddr, size_t size,
 XXX: Check for flags?
 */
 ENTRY(dtrace_copystr)
+	ENTER_USER_ACCESS(w6, x7)
 	cbz     x2, 2f          /* If len == 0 then skip loop */
  
 1:	ldrb    w4, [x0], #1    /* Load from uaddr */
@@ -133,6 +144,7 @@ ENTRY(dtrace_copystr)
 	sub     x2, x2, #1      /* len-- */
 	cbnz    x2, 1b
 2:
+	EXIT_USER_ACCESS(w6)
 	RET
 END(dtrace_copystr)
 
