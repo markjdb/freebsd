@@ -525,7 +525,7 @@ static void
 vm_cleanup(struct vm *vm, bool destroy)
 {
 	struct mem_map *mm;
-	pmap_t pmap;
+	pmap_t pmap __diagused;
 	int i;
 
 	if (destroy) {
