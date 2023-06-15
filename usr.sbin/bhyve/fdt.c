@@ -129,9 +129,10 @@ add_timer(void *fdt, uint32_t gic_phandle)
 }
 
 static void
-add_uart(void *fdt)
+add_uart(void *fdt, uint32_t gic_phandle)
 {
 	void *prop;
+	void *interrupts;
 	uint32_t clk_phandle;
 
 	fdt_begin_node(fdt, "uart-clock");
@@ -147,6 +148,12 @@ add_uart(void *fdt)
 	fdt_property(fdt, "compatible", UART_COMPAT, sizeof(UART_COMPAT));
 #undef UART_COMPAT
 	set_single_reg(fdt, 0x10000, 0x1000);
+	fdt_property_u32(fdt, "interrupt-parent", gic_phandle);
+	fdt_property_placeholder(fdt, "interrupts", 3 * sizeof(uint32_t),
+	    &interrupts);
+	SET_PROP_U32(interrupts, 0, GIC_SPI);
+	SET_PROP_U32(interrupts, 1, 0);
+	SET_PROP_U32(interrupts, 2, IRQ_TYPE_LEVEL_HIGH);
 	fdt_property_placeholder(fdt, "clocks", 2 * sizeof(uint32_t), &prop);
 	SET_PROP_U32(prop, 0, clk_phandle);
 	SET_PROP_U32(prop, 1, clk_phandle);
@@ -308,7 +315,7 @@ fdt_build(struct vmctx *ctx, struct vcpu *bsp, int ncpu)
 
 	add_timer(fdt, gic_phandle);
 
-	add_uart(fdt);
+	add_uart(fdt, gic_phandle);
 
 	add_pcie(fdt, gic_phandle);
 
