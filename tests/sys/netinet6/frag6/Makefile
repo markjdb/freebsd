@@ -29,6 +29,9 @@ ATF_TESTS_SH=			\
 				frag6_19 \
 				frag6_20
 
+# XXX-MJ not sure why this doesn't work, but these tests are very fragile.
+TEST_METADATA+=	is_exclusive=true
+
 ${PACKAGE}FILES+=		frag6.subr
 ${PACKAGE}FILES+=		sniffer.py
 ${PACKAGE}FILES+=		frag6_01.py
