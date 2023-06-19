@@ -53,6 +53,7 @@ SRCS=	\
 	qemu_loader.c		\
 	smbiostbl.c		\
 	sockstream.c		\
+	uart_backend.c		\
 	usb_emul.c		\
 	usb_mouse.c		\
 	virtio.c		\
