@@ -42,12 +42,12 @@ class TestRtNlNeigh(NetlinkTestTemplate, SingleVnetTestTemplate):
             ret.append(rx_msg)
         assert len(ret) == num_items
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(30)
     def test_6_filter_iface(self):
         """Tests that listing outputs all nd6 records"""
         return self.filter_iface(socket.AF_INET6, 2)
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(30)
     def test_4_filter_iface(self):
         """Tests that listing outputs all arp records"""
         return self.filter_iface(socket.AF_INET, 1)

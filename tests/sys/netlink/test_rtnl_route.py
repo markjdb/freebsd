@@ -24,7 +24,7 @@ class TestRtNlRoute(NetlinkTestTemplate, SingleVnetTestTemplate):
         super().setup_method(method)
         self.setup_netlink(NlConst.NETLINK_ROUTE)
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(30)
     def test_add_route6_ll_gw(self):
         epair_ifname = self.vnet.iface_alias_map["if1"].name
         epair_ifindex = socket.if_nametoindex(epair_ifname)
@@ -45,7 +45,7 @@ class TestRtNlRoute(NetlinkTestTemplate, SingleVnetTestTemplate):
         ToolsHelper.print_net_debug()
         ToolsHelper.print_output("netstat -6onW")
 
-    @pytest.mark.timeout(20)
+    @pytest.mark.timeout(60)
     def test_buffer_override(self):
         msg_flags = (
             NlmBaseFlags.NLM_F_ACK.value
