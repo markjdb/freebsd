@@ -71,6 +71,10 @@ __FBSDID("$FreeBSD$");
 
 #include "linker_if.h"
 
+#ifdef DDB_CTF
+#include <ddb/db_ctf.h>
+#endif
+
 #define MAXSEGS 4
 
 typedef struct elf_file {
@@ -499,6 +503,16 @@ link_elf_init(void* arg)
 
 	(void)link_elf_link_common_finish(linker_kernel_file);
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;
+
+#ifdef DDB_CTF
+	/* Check if ddb already loaded kernel CTF data. */
+	linker_ctf_t *lc = db_ctf_fetch_kctf();
+	if (lc != NULL) {
+		ef->ctftab = __DECONST(uint8_t *, lc->ctftab);
+		ef->ctfcnt = lc->ctfcnt;
+	}
+#endif
+
 	TAILQ_INIT(&set_pcpu_list);
 #ifdef VIMAGE
 	TAILQ_INIT(&set_vnet_list);

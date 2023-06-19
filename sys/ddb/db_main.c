@@ -32,9 +32,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cons.h>
-#include <sys/linker.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
+#include <sys/linker.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/reboot.h>
@@ -46,6 +46,7 @@ __FBSDID("$FreeBSD$");
 
 #include <ddb/ddb.h>
 #include <ddb/db_command.h>
+#include <ddb/db_ctf.h>
 #include <ddb/db_sym.h>
 
 struct db_private {
@@ -228,6 +229,7 @@ db_init(void)
 		ksymtab_private.relbase = ksymtab_relbase;
 		db_add_symbol_table((char *)ksymtab,
 		    (char *)(ksymtab + ksymtab_size), "elf", (char *)&ksymtab_private);
+		db_ctf_init_kctf(ksymtab, kstrtab, ksymtab_size);
 	}
 	db_add_symbol_table(NULL, NULL, "kld", NULL);
 	return (1);	/* We're the default debugger. */
