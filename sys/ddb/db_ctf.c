@@ -39,91 +39,6 @@
 #include <ddb/ddb.h>
 #include <ddb/db_ctf.h>
 
-struct db_ctf {
-	linker_ctf_t lc;
-	char *modname;
-	LIST_ENTRY(db_ctf) link;
-};
-
-static LIST_HEAD(, db_ctf) ctf_table = SLIST_HEAD_INITIALIZER(ctf_table);
-static struct mtx db_ctf_mtx;
-MTX_SYSINIT(db_ctf, &db_ctf_mtx, "ddb module CTF data registry", MTX_DEF);
-
-static MALLOC_DEFINE(M_DBCTF, "ddb ctf", "ddb module ctf data");
-
-/* Used to register kernel CTF data before SUB_KLD. */
-static struct db_ctf kctf;
-
-static struct db_ctf *
-db_ctf_lookup(const char *modname)
-{
-	struct db_ctf *dcp;
-
-	LIST_FOREACH (dcp, &ctf_table, link) {
-		if (dcp->modname != NULL && strcmp(modname, dcp->modname) == 0)
-			break;
-	}
-
-	return (dcp);
-}
-
-int
-db_ctf_register(linker_file_t mod)
-{
-	struct db_ctf *dcp;
-	char *modname = mod->filename;
-
-	mtx_lock(&db_ctf_mtx);
-	if (db_ctf_lookup(modname) != NULL) {
-		mtx_unlock(&db_ctf_mtx);
-		printf("%s: ddb CTF data for module %s already loaded!\n",
-		    __func__, modname);
-
-		return (EINVAL);
-	}
-	mtx_unlock(&db_ctf_mtx);
-
-	dcp = malloc(sizeof(struct db_ctf), M_DBCTF, M_WAITOK);
-	if (linker_ctf_get(mod, &dcp->lc) != 0) {
-		free(dcp, M_DBCTF);
-		return (EINVAL);
-	}
-	dcp->modname = strdup(modname, M_DBCTF);
-
-	mtx_lock(&db_ctf_mtx);
-	LIST_INSERT_HEAD(&ctf_table, dcp, link);
-	mtx_unlock(&db_ctf_mtx);
-
-	return (0);
-}
-
-int
-db_ctf_unregister(linker_file_t mod)
-{
-	struct db_ctf *dcp;
-	char *modname = mod->filename;
-
-	mtx_lock(&db_ctf_mtx);
-	dcp = db_ctf_lookup(modname);
-	if (dcp == NULL) {
-		mtx_unlock(&db_ctf_mtx);
-		printf("%s: ddb CTF data for module %s already loaded!\n",
-		    __func__, modname);
-
-		return (EINVAL);
-	}
-	mtx_unlock(&db_ctf_mtx);
-
-	mtx_lock(&db_ctf_mtx);
-	LIST_REMOVE(dcp, link);
-	mtx_unlock(&db_ctf_mtx);
-
-	free(dcp->modname, M_TEMP);
-	free(dcp, M_DBCTF);
-
-	return (0);
-}
-
 static const ctf_header_t *
 db_ctf_fetch_cth(linker_ctf_t *lc)
 {
@@ -181,7 +96,7 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 struct ctf_type_v3 *
 db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth(sd->lc);
+	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
 	const uint8_t *ctfstart = (const uint8_t *)hp + sizeof(ctf_header_t);
 
 	uint32_t typeoff = hp->cth_typeoff;
@@ -260,7 +175,7 @@ db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 const char *
 db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth(sd->lc);
+	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
 	uint32_t stroff = hp->cth_stroff + off;
 
 	if (stroff >= (hp->cth_stroff + hp->cth_strlen)) {
@@ -285,18 +200,18 @@ db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 		return (NULL);
 	}
 
-	symtab = sd->lc->symtab;
-	symtab_end = symtab + sd->lc->nsym;
+	symtab = sd->lc.symtab;
+	symtab_end = symtab + sd->lc.nsym;
 
-	objtoff = sym_to_objtoff(sd->lc, sd->sym, symtab, symtab_end);
+	objtoff = sym_to_objtoff(&sd->lc, sd->sym, symtab, symtab_end);
 	/* Sanity check - should not happen */
 	if (objtoff == DB_CTF_OBJTOFF_INVALID) {
-		db_printf("Could not find CTF object offset.");
+		db_printf("Could not find CTF object offset.\n");
 		return (NULL);
 	}
 
 	typeid = *(
-	    const uint32_t *)(sd->lc->ctftab + sizeof(ctf_header_t) + objtoff);
+	    const uint32_t *)(sd->lc.ctftab + sizeof(ctf_header_t) + objtoff);
 
 	return db_ctf_typeid_to_type(sd, typeid);
 }
@@ -305,7 +220,7 @@ int
 db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd)
 {
 	db_expr_t off;
-	struct db_ctf *dcp;
+	int error;
 
 	sd->sym = __DECONST(Elf_Sym *,
 	    db_search_symbol(addr, DB_STGY_ANY, &off));
@@ -313,64 +228,12 @@ db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd)
 		return (ENOENT);
 	}
 
-	dcp = db_ctf_lookup(linker_kernel_file->filename);
-	if (dcp == NULL) {
-		return (ENOENT);
+	/* XXX-MJ what if the address belongs to a KLD? */
+	error = linker_ctf_get(linker_kernel_file, &sd->lc);
+	if (error != 0) {
+		db_printf("failed to look up CTF info\n");
+		return (error);
 	}
-
-	sd->lc = &dcp->lc;
 
 	return (0);
-}
-
-void
-db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,
-    vm_offset_t ksymtab_size)
-{
-	const ctf_header_t *hp;
-	uint8_t *ctf_start;
-	size_t size;
-	void *mod;
-
-	mod = preload_search_by_type("ddb_kctf");
-	if (mod == NULL) {
-		return;
-	}
-
-	ctf_start = preload_fetch_addr(mod);
-	size = preload_fetch_size(mod);
-	bzero(&kctf.lc, sizeof(kctf.lc));
-	hp = (const ctf_header_t *)ctf_start;
-
-	/* Sanity check. */
-	if (hp->cth_magic != CTF_MAGIC) {
-		printf("%s: bad kernel CTF magic value\n", __func__);
-		return;
-	}
-
-	if (hp->cth_version != CTF_VERSION_3) {
-		printf("%s: CTF V2 data encountered\n", __func__);
-		return;
-	}
-
-	/* We only deal with uncompressed data */
-	if (hp->cth_flags & CTF_F_COMPRESS) {
-		printf("%s: kernel CTF data is compressed\n", __func__);
-		return;
-	}
-
-	kctf.lc.ctftab = ctf_start;
-	kctf.lc.ctfcnt = size;
-	kctf.lc.symtab = (const Elf_Sym *)ksymtab;
-	kctf.lc.nsym = ksymtab_size / sizeof(Elf_Sym);
-	kctf.lc.strtab = (const char *)kstrtab;
-	kctf.modname = "kernel";
-
-	LIST_INSERT_HEAD(&ctf_table, &kctf, link);
-}
-
-linker_ctf_t *
-db_ctf_fetch_kctf(void)
-{
-	return (kctf.modname != NULL ? &kctf.lc : NULL);
 }

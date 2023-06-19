@@ -32,8 +32,8 @@
 #include <sys/ctf.h>
 #include <sys/linker.h>
 
-#include <ddb/db_sym.h>
 #include <ddb/ddb.h>
+#include <ddb/db_sym.h>
 
 #define DB_CTF_OBJTOFF_INVALID 0xffffffff
 
@@ -41,10 +41,11 @@ int db_ctf_register(linker_file_t module);
 int db_ctf_unregister(linker_file_t module);
 
 struct db_ctf_sym_data {
-	linker_ctf_t *lc;
+	linker_ctf_t lc;
 	Elf_Sym *sym;
 };
 
+struct db_ctf_sym_data;
 typedef struct db_ctf_sym_data *db_ctf_sym_data_t;
 
 struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
@@ -52,8 +53,5 @@ struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd,
     uint32_t typeid);
 const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
 int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd);
-void db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,
-    vm_offset_t ksymtab_size);
-linker_ctf_t *db_ctf_fetch_kctf(void);
 
 #endif /* !_DDB_DB_CTF_H_ */

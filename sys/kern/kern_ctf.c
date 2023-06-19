@@ -29,6 +29,7 @@
  */
 
 #include <sys/ctf.h>
+#include <sys/kdb.h>
 
 /*
  * Note this file is included by both link_elf.c and link_elf_obj.c.
@@ -87,6 +88,9 @@ link_elf_ctf_get(linker_file_t lf, linker_ctf_t *lc)
 		lc->typlenp = &ef->typlen;
 		return (0);
 	}
+
+	if (panicstr != NULL || kdb_active)
+		return (ENXIO);
 
 	/*
 	 * We need to try reading the CTF data. Flag no CTF data present
