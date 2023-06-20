@@ -147,6 +147,8 @@ CFLAGS+= -DBHYVE_SNAPSHOT
 CFLAGS+=-DGDB_LOG
 .endif
 
+CFLAGS+= -O0
+
 # Disable thread safety analysis since it only finds very simple bugs and
 # yields many false positives.
 NO_WTHREAD_SAFETY=
