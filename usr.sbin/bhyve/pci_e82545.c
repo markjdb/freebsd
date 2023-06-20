@@ -2354,6 +2354,7 @@ e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (mac != NULL) {
 		err = net_parsemac(mac, sc->esc_mac.octet);
 		if (err) {
+			printf("%s:%d\n", __func__, __LINE__);
 			free(sc);
 			return (err);
 		}
@@ -2362,6 +2363,7 @@ e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	err = netbe_init(&sc->esc_be, nvl, e82545_rx_callback, sc);
 	if (err) {
+		printf("%s:%d\n", __func__, __LINE__);
 		free(sc);
 		return (err);
 	}
