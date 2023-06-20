@@ -35,7 +35,6 @@ SRCS=	\
 	net_backends.c		\
 	net_utils.c		\
 	pci_ahci.c		\
-	pci_e82545.c		\
 	pci_emul.c		\
 	pci_hda.c		\
 	pci_hostbridge.c	\
@@ -85,6 +84,7 @@ SRCS+=	\
 	ioapic.c		\
 	kernemu_dev.c		\
 	mptbl.c			\
+	pci_e82545.c		\
 	pci_fbuf.c		\
 	pci_irq.c		\
 	pci_lpc.c		\
