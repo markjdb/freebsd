@@ -223,8 +223,6 @@ static cpuset_t cpumask;
 static cpuset_t running_cpumask;
 #endif
 
-static int vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu,
-    enum vm_suspend_how how);
 static void vm_loop(struct vmctx *ctx, struct vcpu *vcpu);
 
 static struct vcpu_info {
@@ -724,15 +722,7 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 			how = VM_SUSPEND_POWEROFF;
 		else
 			how = VM_SUSPEND_RESET;
-		/* Stop the other CPUs */
-		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++) {
-			if (vcpuid != vcpu_id(vcpu)) {
-				fbsdrun_deletecpu(vcpuid);
-			}
-		}
-		vm_do_suspend(ctx, vcpu, how);
-		/* Shouldn't return */
-		assert(false);
+		vm_suspend(ctx, how);
 		break;
 	default:
 		break;
@@ -1064,9 +1054,14 @@ fail:
 }
 
 static int
-vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu, enum vm_suspend_how how)
+vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 {
+	struct vm_exit *vme;
+	enum vm_suspend_how how;
 	int vcpuid = vcpu_id(vcpu);
+
+	vme = vmrun->vm_exit;
+	how = vme->u.suspended.how;
 
 	fbsdrun_deletecpu(vcpuid);
 
@@ -1086,17 +1081,6 @@ vm_do_suspend(struct vmctx *ctx, struct vcpu *vcpu, enum vm_suspend_how how)
 		exit(100);
 	}
 	return (0);	/* NOTREACHED */
-}
-
-static int
-vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
-{
-	struct vm_exit *vme;
-	enum vm_suspend_how how;
-
-	vme = vmrun->vm_exit;
-	how = vme->u.suspended.how;
-	return (vm_do_suspend(ctx, vcpu, how));
 }
 
 static int
