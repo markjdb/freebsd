@@ -385,6 +385,7 @@ basl_finish(void)
 	return (0);
 }
 
+#ifdef __amd64__
 static int
 basl_init_rsdt(struct vmctx *const ctx)
 {
@@ -397,6 +398,7 @@ basl_init_rsdt(struct vmctx *const ctx)
 
 	return (0);
 }
+#endif
 
 static int
 basl_init_xsdt(struct vmctx *const ctx)
@@ -414,7 +416,9 @@ basl_init_xsdt(struct vmctx *const ctx)
 int
 basl_init(struct vmctx *const ctx)
 {
+#ifdef __amd64__
 	BASL_EXEC(basl_init_rsdt(ctx));
+#endif
 	BASL_EXEC(basl_init_xsdt(ctx));
 	BASL_EXEC(
 	    qemu_loader_create(&basl_loader, QEMU_FWCFG_FILE_TABLE_LOADER));
@@ -695,8 +699,10 @@ basl_table_register_to_rsdt(struct basl_table *table)
 
 	header = (const ACPI_TABLE_HEADER *)table->data;
 
+#ifdef __amd64__
 	BASL_EXEC(basl_table_append_pointer(rsdt, header->Signature,
 	    ACPI_RSDT_ENTRY_SIZE));
+#endif
 	BASL_EXEC(basl_table_append_pointer(xsdt, header->Signature,
 	    ACPI_XSDT_ENTRY_SIZE));
 
