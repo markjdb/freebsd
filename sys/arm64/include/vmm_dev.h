@@ -150,6 +150,11 @@ struct vm_irq {
 	uint32_t irq;
 };
 
+struct vm_intinfo {
+	int	vcpuid;
+	uint8_t	spare[16];
+};
+
 struct vm_cpu_topology {
 	uint16_t	sockets;
 	uint16_t	cores;
@@ -193,6 +198,8 @@ enum {
 	IOCNUM_DEASSERT_IRQ = 81,
 	IOCNUM_RAISE_MSI = 82,
 	IOCNUM_INJECT_EXCEPTION = 83,
+	IOCNUM_GET_INTINFO = 84,
+	IOCNUM_SET_INTINFO = 85,
 
 	/* vm_cpuset */
 	IOCNUM_ACTIVATE_CPU = 90,
@@ -243,6 +250,10 @@ enum {
 	_IOW('v', IOCNUM_RAISE_MSI, struct vm_msi)
 #define	VM_INJECT_EXCEPTION	\
 	_IOW('v', IOCNUM_INJECT_EXCEPTION, struct vm_exception)
+#define	VM_SET_INTINFO	\
+	_IOW('v', IOCNUM_SET_INTINFO, struct vm_intinfo)
+#define	VM_GET_INTINFO	\
+	_IOWR('v', IOCNUM_GET_INTINFO, struct vm_intinfo)
 #define VM_SET_TOPOLOGY \
 	_IOW('v', IOCNUM_SET_TOPOLOGY, struct vm_cpu_topology)
 #define VM_GET_TOPOLOGY \
