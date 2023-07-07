@@ -195,11 +195,9 @@ void vm_exit_debug(struct vcpu *vcpu, uint64_t pc);
 void vm_exit_rendezvous(struct vcpu *vcpu, uint64_t pc);
 void vm_exit_astpending(struct vcpu *vcpu, uint64_t pc);
 
-#ifdef _SYS__CPUSET_H_
 cpuset_t vm_active_cpus(struct vm *vm);
 cpuset_t vm_debug_cpus(struct vm *vm);
 cpuset_t vm_suspended_cpus(struct vm *vm);
-#endif	/* _SYS__CPUSET_H_ */
 
 static __inline bool
 virt_enabled(void)
