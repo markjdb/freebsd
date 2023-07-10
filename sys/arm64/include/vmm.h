@@ -27,6 +27,7 @@
 #ifndef _VMM_H_
 #define	_VMM_H_
 
+#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/cpuset.h>
 #include <vm/vm.h>
@@ -195,11 +196,9 @@ void vm_exit_debug(struct vcpu *vcpu, uint64_t pc);
 void vm_exit_rendezvous(struct vcpu *vcpu, uint64_t pc);
 void vm_exit_astpending(struct vcpu *vcpu, uint64_t pc);
 
-#ifdef _SYS__CPUSET_H_
 cpuset_t vm_active_cpus(struct vm *vm);
 cpuset_t vm_debug_cpus(struct vm *vm);
 cpuset_t vm_suspended_cpus(struct vm *vm);
-#endif	/* _SYS__CPUSET_H_ */
 
 static __inline bool
 virt_enabled(void)
@@ -293,6 +292,7 @@ struct vre {
 
 /*
  * Identifiers for optional vmm capabilities
+ * XXX-MJ these all look bogus
  */
 enum vm_cap_type {
 	VM_CAP_HALT_EXIT,

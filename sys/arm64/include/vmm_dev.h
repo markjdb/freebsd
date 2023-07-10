@@ -42,6 +42,11 @@ struct vm_memmap {
 };
 #define	VM_MEMMAP_F_WIRED	0x01
 
+struct vm_munmap {
+	vm_paddr_t	gpa;
+	size_t		len;
+};
+
 #define	VM_MEMSEG_NAME(m)	((m)->name[0] != '\0' ? (m)->name : NULL)
 struct vm_memseg {
 	int		segid;
@@ -107,6 +112,12 @@ struct vm_suspend {
 	enum vm_suspend_how how;
 };
 
+struct vm_gpa_pte {
+	uint64_t	gpa;				/* in */
+	uint64_t	pte[4];				/* out */
+	int		ptenum;
+};
+
 struct vm_gla2gpa {
 	int		vcpuid;		/* inputs */
 	int 		prot;		/* PROT_READ or PROT_WRITE */
@@ -151,8 +162,9 @@ struct vm_irq {
 };
 
 struct vm_intinfo {
-	int	vcpuid;
-	uint8_t	spare[16];
+	int		vcpuid;
+	uint64_t	info1;
+	uint64_t	info2;
 };
 
 struct vm_cpu_topology {
@@ -172,12 +184,14 @@ enum {
 	IOCNUM_REINIT = 5,
 
 	/* memory apis */
-	IOCNUM_GET_GPA_PMAP = 12,
+	IOCNUM_GET_GPA_PMAP = 11,
+	IOCNUM_GLA2GPA = 12,
 	IOCNUM_GLA2GPA_NOFAULT = 13,
 	IOCNUM_ALLOC_MEMSEG = 14,
 	IOCNUM_GET_MEMSEG = 15,
 	IOCNUM_MMAP_MEMSEG = 16,
 	IOCNUM_MMAP_GETNEXT = 17,
+	IOCNUM_MUNMAP_MEMSEG = 18,
 
 	/* register/state accessors */
 	IOCNUM_SET_REGISTER = 20,
@@ -200,6 +214,7 @@ enum {
 	IOCNUM_INJECT_EXCEPTION = 83,
 	IOCNUM_GET_INTINFO = 84,
 	IOCNUM_SET_INTINFO = 85,
+	IOCNUM_RESTART_INSTRUCTION = 86,
 
 	/* vm_cpuset */
 	IOCNUM_ACTIVATE_CPU = 90,
@@ -210,6 +225,10 @@ enum {
 	/* vm_attach_vgic */
 	IOCNUM_GET_VGIC_VERSION = 110,
 	IOCNUM_ATTACH_VGIC = 111,
+
+	/* checkpoint */
+	IOCNUM_SNAPSHOT_REQ = 130,
+	IOCNUM_RESTORE_TIME = 131,
 };
 
 #define	VM_RUN		\
@@ -226,6 +245,8 @@ enum {
 	_IOW('v', IOCNUM_MMAP_MEMSEG, struct vm_memmap)
 #define	VM_MMAP_GETNEXT	\
 	_IOWR('v', IOCNUM_MMAP_GETNEXT, struct vm_memmap)
+#define	VM_MUNMAP_MEMSEG	\
+	_IOW('v', IOCNUM_MUNMAP_MEMSEG, struct vm_munmap)
 #define	VM_SET_REGISTER \
 	_IOW('v', IOCNUM_SET_REGISTER, struct vm_register)
 #define	VM_GET_REGISTER \
@@ -258,6 +279,10 @@ enum {
 	_IOW('v', IOCNUM_SET_TOPOLOGY, struct vm_cpu_topology)
 #define VM_GET_TOPOLOGY \
 	_IOR('v', IOCNUM_GET_TOPOLOGY, struct vm_cpu_topology)
+#define	VM_GET_GPA_PMAP \
+	_IOWR('v', IOCNUM_GET_GPA_PMAP, struct vm_gpa_pte)
+#define	VM_GLA2GPA	\
+	_IOWR('v', IOCNUM_GLA2GPA, struct vm_gla2gpa)
 #define	VM_GLA2GPA_NOFAULT \
 	_IOWR('v', IOCNUM_GLA2GPA_NOFAULT, struct vm_gla2gpa)
 #define	VM_ACTIVATE_CPU	\
@@ -272,4 +297,10 @@ enum {
 	_IOR('v', IOCNUM_GET_VGIC_VERSION, struct vm_vgic_version)
 #define	VM_ATTACH_VGIC	\
 	_IOW('v', IOCNUM_ATTACH_VGIC, struct vm_vgic_descr)
+#define	VM_RESTART_INSTRUCTION \
+	_IOW('v', IOCNUM_RESTART_INSTRUCTION, int)
+#define VM_SNAPSHOT_REQ \
+	_IOWR('v', IOCNUM_SNAPSHOT_REQ, struct vm_snapshot_meta)
+#define VM_RESTORE_TIME \
+	_IOWR('v', IOCNUM_RESTORE_TIME, int)
 #endif
