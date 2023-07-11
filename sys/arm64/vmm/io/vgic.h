@@ -23,6 +23,9 @@
  * SUCH DAMAGE.
  */
 
+#ifndef _VGIC_H_
+#define	_VGIC_H_
+
 struct hyp;
 struct hypctx;
 struct vm_vgic_descr;
@@ -42,3 +45,5 @@ int vgic_inject_irq(struct hyp *hyp, int vcpuid, uint32_t irqid, bool level);
 int vgic_inject_msi(struct hyp *hyp, uint64_t msg, uint64_t addr);
 void vgic_flush_hwstate(struct hypctx *hypctx);
 void vgic_sync_hwstate(struct hypctx *hypctx);
+
+#endif /* _VGIC_H_ */
