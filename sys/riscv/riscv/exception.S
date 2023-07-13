@@ -88,16 +88,14 @@
 
 .if \mode == 1
 	/* Store kernel sp */
-	li	t1, TF_SIZE
-	add	t0, sp, t1
+	addi	t0, sp, TF_SIZE
 	sd	t0, (TF_SP)(sp)
 .else
 	/* Store user sp */
 	csrr	t0, sscratch
 	sd	t0, (TF_SP)(sp)
 .endif
-	li	t0, 0
-	csrw	sscratch, t0
+	csrwi	sscratch, 0
 	csrr	t0, sepc
 	sd	t0, (TF_SEPC)(sp)
 	csrr	t0, sstatus
@@ -117,16 +115,14 @@
 	ld	t0, (TF_SSTATUS)(sp)
 .if \mode == 0
 	/* Ensure user interrupts will be enabled on eret */
-	li	t1, SSTATUS_SPIE
-	or	t0, t0, t1
+	ori	t0, t0, SSTATUS_SPIE
 .else
 	/*
 	 * Disable interrupts for supervisor mode exceptions.
 	 * For user mode exceptions we have already done this
 	 * in do_ast.
 	 */
-	li	t1, ~SSTATUS_SIE
-	and	t0, t0, t1
+	andi	t0, t0, ~SSTATUS_SIE
 .endif
 	csrw	sstatus, t0
 
