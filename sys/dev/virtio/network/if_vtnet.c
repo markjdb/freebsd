@@ -1534,6 +1534,16 @@ vtnet_rx_alloc_buf(struct vtnet_softc *sc, int nbufs, struct mbuf **m_tailp)
 		}
 
 		m->m_len = size;
+#ifndef __NO_STRICT_ALIGNMENT
+		/*
+		 * Ensure that headers following the Ethernet header are
+		 * aligned.  Our IP/TCP/UDP implementations assume this.
+		 */
+		if (((uintptr_t)m->m_data & 0x3) == 0) {
+			m->m_len -= 2;
+			m->m_data += 2;
+		}
+#endif
 		if (m_head != NULL) {
 			m_tail->m_next = m;
 			m_tail = m;
@@ -3258,12 +3268,16 @@ vtnet_init_rx_queues(struct vtnet_softc *sc)
 	device_t dev;
 	if_t ifp;
 	struct vtnet_rxq *rxq;
-	int i, clustersz, error;
+	int i, clustersz, error, mtu;
 
 	dev = sc->vtnet_dev;
 	ifp = sc->vtnet_ifp;
 
-	clustersz = vtnet_rx_cluster_size(sc, if_getmtu(ifp));
+	mtu = if_getmtu(ifp);
+#ifndef __NO_STRICT_ALIGNMENT
+	mtu += 2;
+#endif
+	clustersz = vtnet_rx_cluster_size(sc, mtu);
 	sc->vtnet_rx_clustersz = clustersz;
 
 	if (sc->vtnet_flags & VTNET_FLAG_LRO_NOMRG) {
