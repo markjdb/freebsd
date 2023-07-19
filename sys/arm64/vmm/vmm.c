@@ -908,7 +908,7 @@ static const struct vmm_special_reg vmm_special_regs[] = {
 		.reg_write = (_write),					\
 		.arg = NULL,						\
 	}
-#define	ID_SPECIAL_REG(_reg, _name)						\
+#define	ID_SPECIAL_REG(_reg, _name)					\
 	{								\
 		.esr_iss = ((_reg ## _op0) << ISS_MSR_OP0_SHIFT) |	\
 		    ((_reg ## _op1) << ISS_MSR_OP1_SHIFT) |		\

@@ -48,7 +48,7 @@ enum vm_suspend_how {
  * Identifiers for architecturally defined registers.
  */
 enum vm_reg_name {
-	VM_REG_GUEST_X0,
+	VM_REG_GUEST_X0 = 0,
 	VM_REG_GUEST_X1,
 	VM_REG_GUEST_X2,
 	VM_REG_GUEST_X3,
