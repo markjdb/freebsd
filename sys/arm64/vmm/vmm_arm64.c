@@ -396,7 +396,7 @@ vmmops_modinit(int ipinum)
 		 * Check there is memory before the vmm code to add.
 		 *
 		 * Reserve the L2 block at address 0 so NULL dereference will
-		 * raise an exception
+		 * raise an exception.
 		 */
 		if (vmm_base > L2_SIZE)
 			vmem_add(el2_mem_alloc, L2_SIZE, vmm_base - L2_SIZE,
