@@ -35,14 +35,12 @@
 struct hyp;
 struct hypctx;
 
-struct vtimer
-{
+struct vtimer {
 	uint64_t	cnthctl_el2;
 	uint64_t	cntvoff_el2;
 };
 
-struct vtimer_timer
-{
+struct vtimer_timer {
 	struct callout	callout;
 	struct mtx	mtx;
 
@@ -59,8 +57,7 @@ struct vtimer_timer
 	uint64_t	cntx_ctl_el0;
 };
 
-struct vtimer_cpu
-{
+struct vtimer_cpu {
 	struct vtimer_timer phys_timer;
 	struct vtimer_timer virt_timer;
 
