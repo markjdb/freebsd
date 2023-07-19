@@ -475,7 +475,9 @@ vmmops_init(struct vm *vm, pmap_t pmap)
 	vtimer_vminit(hyp);
 	vgic_vminit(hyp);
 
-	vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK, &vm_addr);
+	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK,
+	    &vm_addr);
+	MPASS(err == 0);
 	MPASS((vm_addr & PAGE_MASK) == 0);
 	hyp->el2_addr = vm_addr;
 
@@ -518,7 +520,9 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	vtimer_cpuinit(hypctx);
 	vgic_cpuinit(hypctx);
 
-	vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK, &vm_addr);
+	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK,
+	    &vm_addr);
+	MPASS(err == 0);
 	MPASS((vm_addr & PAGE_MASK) == 0);
 	hypctx->el2_addr = vm_addr;
 
