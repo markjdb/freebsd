@@ -2176,10 +2176,18 @@ vgic_v3_attach(device_t dev)
 	return (0);
 }
 
+static int
+vgic_v3_detach(device_t dev)
+{
+	vgic_dev = NULL;
+	return (0);
+}
+
 static device_method_t vgic_v3_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		vgic_v3_probe),
 	DEVMETHOD(device_attach,	vgic_v3_attach),
+	DEVMETHOD(device_detach,	vgic_v3_detach),
 
 	/* VGIC interface */
 	DEVMETHOD(vgic_init,		vgic_v3_init),
