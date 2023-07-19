@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (C) 2015 Mihai Carabas <mihai.carabas@gmail.com>
  * All rights reserved.
  *
@@ -230,17 +232,18 @@ vmmops_modinit(int ipinum)
 	bool rv __diagused;
 
 	if (!virt_enabled()) {
-		printf("arm_init: Processor doesn't have support for virtualization.\n");
+		printf(
+		    "vmm: Processor doesn't have support for virtualization\n");
 		return (ENXIO);
 	}
 
 	if (!vgic_present()) {
-		printf("arm_init: No vgic found\n");
+		printf("vmm: No vgic found\n");
 		return (ENODEV);
 	}
 
 	if (!get_kernel_reg(ID_AA64MMFR0_EL1, &id_aa64mmfr0_el1)) {
-		printf("arm_init: Unable to read ID_AA64MMFR0_EL1\n");
+		printf("vmm: Unable to read ID_AA64MMFR0_EL1\n");
 		return (ENXIO);
 	}
 	pa_range_field = ID_AA64MMFR0_PARange_VAL(id_aa64mmfr0_el1);
@@ -252,7 +255,7 @@ vmmops_modinit(int ipinum)
 	vmm_pmap_levels = 3;
 	switch (pa_range_field) {
 	case ID_AA64MMFR0_PARange_4G:
-		printf("arm_init: Not enough physical address bits\n");
+		printf("vmm: Not enough physical address bits\n");
 		return (ENXIO);
 	case ID_AA64MMFR0_PARange_64G:
 		vmm_virt_bits = 36;
@@ -269,7 +272,7 @@ vmmops_modinit(int ipinum)
 
 	/* Initialise the EL2 MMU */
 	if (!vmmpmap_init()) {
-		printf("arm_init: Failed to init the EL2 MMU\n");
+		printf("vmm: Failed to init the EL2 MMU\n");
 		return (ENOMEM);
 	}
 
@@ -279,19 +282,19 @@ vmmops_modinit(int ipinum)
 	pmap_stage2_invalidate_range = vmm_pmap_invalidate_range;
 	pmap_stage2_invalidate_all = vmm_pmap_invalidate_all;
 
-	/* Create the vmem allocator */
+	/* Create an allocator for the virtual address space used by EL2. */
 	el2_mem_alloc = vmem_create("VMM EL2", 0, 0, PAGE_SIZE, 0, M_WAITOK);
 
 	/* Create the mappings for the hypervisor translation table. */
-	hyp_code_len = roundup2(&vmm_hyp_code_end - &vmm_hyp_code, PAGE_SIZE);
+	hyp_code_len = round_page(&vmm_hyp_code_end - &vmm_hyp_code);
 
 	/* We need an physical identity mapping for when we activate the MMU */
 	hyp_code_base = vmm_base = vtophys(&vmm_hyp_code);
-	rv = vmmpmap_enter(vmm_base, hyp_code_len, vtophys(&vmm_hyp_code),
+	rv = vmmpmap_enter(vmm_base, hyp_code_len, vmm_base,
 	    VM_PROT_READ | VM_PROT_EXECUTE);
 	MPASS(rv);
 
-	next_hyp_va = roundup2(vtophys(&vmm_hyp_code) + hyp_code_len, L2_SIZE);
+	next_hyp_va = roundup2(vmm_base + hyp_code_len, L2_SIZE);
 
 	/* Create a per-CPU hypervisor stack */
 	CPU_FOREACH(cpu) {
@@ -299,8 +302,8 @@ vmmops_modinit(int ipinum)
 		stack_hyp_va[cpu] = next_hyp_va;
 
 		for (i = 0; i < VMM_STACK_PAGES; i++) {
-			rv = vmmpmap_enter(stack_hyp_va[cpu] + (i * PAGE_SIZE),
-			    PAGE_SIZE, vtophys(stack[cpu] + (i * PAGE_SIZE)),
+			rv = vmmpmap_enter(stack_hyp_va[cpu] + ptoa(i),
+			    PAGE_SIZE, vtophys(stack[cpu] + ptoa(i)),
 			    VM_PROT_READ | VM_PROT_WRITE);
 			MPASS(rv);
 		}
@@ -409,7 +412,6 @@ vmmops_modinit(int ipinum)
 		vmem_add(el2_mem_alloc, next_hyp_va,
 		    HYP_VM_MAX_ADDRESS - next_hyp_va, M_WAITOK);
 
-
 	daif = intr_disable();
 	cnthctl_el2 = vmm_call_hyp(HYP_READ_REGISTER, HYP_REG_CNTHCTL);
 	intr_restore(daif);
@@ -462,7 +464,7 @@ vmmops_init(struct vm *vm, pmap_t pmap)
 	size = sizeof(struct hyp) +
 	    sizeof(struct hypctx *) * vm_get_maxcpus(vm);
 	/* Ensure this is the only data on the page */
-	size = roundup2(size, PAGE_SIZE);
+	size = round_page(size);
 	hyp = malloc_aligned(size, PAGE_SIZE, M_HYP, M_WAITOK | M_ZERO);
 	MPASS(((vm_offset_t)hyp & PAGE_MASK) == 0);
 
@@ -498,7 +500,7 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	 */
 	size = sizeof(struct hypctx);
 	/* Ensure this is the only data on the page */
-	size = roundup2(size, PAGE_SIZE);
+	size = round_page(size);
 	hypctx = malloc_aligned(size, PAGE_SIZE, M_HYP, M_WAITOK | M_ZERO);
 	MPASS(((vm_offset_t)hyp & PAGE_MASK) == 0);
 
@@ -1028,8 +1030,7 @@ vmmops_cleanup(void *vmi)
 	smp_rendezvous(NULL, arm_pcpu_vmcleanup, NULL, hyp);
 
 	/* Unmap the VM hyp struct from the hyp mode translation table */
-	vmmpmap_remove(hyp->el2_addr, roundup2(sizeof(*hyp), PAGE_SIZE),
-	    true);
+	vmmpmap_remove(hyp->el2_addr, round_page(sizeof(*hyp)), true);
 
 	free(hyp, M_HYP);
 }
