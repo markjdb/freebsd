@@ -1042,66 +1042,8 @@ static void *
 hypctx_regptr(struct hypctx *hypctx, int reg)
 {
 	switch (reg) {
-	case VM_REG_GUEST_X0:
-		return (&hypctx->tf.tf_x[0]);
-	case VM_REG_GUEST_X1:
-		return (&hypctx->tf.tf_x[1]);
-	case VM_REG_GUEST_X2:
-		return (&hypctx->tf.tf_x[2]);
-	case VM_REG_GUEST_X3:
-		return (&hypctx->tf.tf_x[3]);
-	case VM_REG_GUEST_X4:
-		return (&hypctx->tf.tf_x[4]);
-	case VM_REG_GUEST_X5:
-		return (&hypctx->tf.tf_x[5]);
-	case VM_REG_GUEST_X6:
-		return (&hypctx->tf.tf_x[6]);
-	case VM_REG_GUEST_X7:
-		return (&hypctx->tf.tf_x[7]);
-	case VM_REG_GUEST_X8:
-		return (&hypctx->tf.tf_x[8]);
-	case VM_REG_GUEST_X9:
-		return (&hypctx->tf.tf_x[9]);
-	case VM_REG_GUEST_X10:
-		return (&hypctx->tf.tf_x[10]);
-	case VM_REG_GUEST_X11:
-		return (&hypctx->tf.tf_x[11]);
-	case VM_REG_GUEST_X12:
-		return (&hypctx->tf.tf_x[12]);
-	case VM_REG_GUEST_X13:
-		return (&hypctx->tf.tf_x[13]);
-	case VM_REG_GUEST_X14:
-		return (&hypctx->tf.tf_x[14]);
-	case VM_REG_GUEST_X15:
-		return (&hypctx->tf.tf_x[15]);
-	case VM_REG_GUEST_X16:
-		return (&hypctx->tf.tf_x[16]);
-	case VM_REG_GUEST_X17:
-		return (&hypctx->tf.tf_x[17]);
-	case VM_REG_GUEST_X18:
-		return (&hypctx->tf.tf_x[18]);
-	case VM_REG_GUEST_X19:
-		return (&hypctx->tf.tf_x[19]);
-	case VM_REG_GUEST_X20:
-		return (&hypctx->tf.tf_x[20]);
-	case VM_REG_GUEST_X21:
-		return (&hypctx->tf.tf_x[21]);
-	case VM_REG_GUEST_X22:
-		return (&hypctx->tf.tf_x[22]);
-	case VM_REG_GUEST_X23:
-		return (&hypctx->tf.tf_x[23]);
-	case VM_REG_GUEST_X24:
-		return (&hypctx->tf.tf_x[24]);
-	case VM_REG_GUEST_X25:
-		return (&hypctx->tf.tf_x[25]);
-	case VM_REG_GUEST_X26:
-		return (&hypctx->tf.tf_x[26]);
-	case VM_REG_GUEST_X27:
-		return (&hypctx->tf.tf_x[27]);
-	case VM_REG_GUEST_X28:
-		return (&hypctx->tf.tf_x[28]);
-	case VM_REG_GUEST_X29:
-		return (&hypctx->tf.tf_x[29]);
+	case VM_REG_GUEST_X0 ... VM_REG_GUEST_X29:
+		return (&hypctx->tf.tf_x[reg]);
 	case VM_REG_GUEST_LR:
 		return (&hypctx->tf.tf_lr);
 	case VM_REG_GUEST_SP:

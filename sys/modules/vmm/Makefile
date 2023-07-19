@@ -17,6 +17,8 @@ SRCS+=	vmm.c		\
 	vmm_stat.c
 
 .if ${MACHINE_CPUARCH} == "aarch64"
+DPSRCS+=	assym.inc
+
 # TODO: Add the new EL2 code
 SRCS+=	vmm_arm64.c \
 	vmm_reset.c \
