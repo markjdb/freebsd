@@ -434,22 +434,23 @@ vmmops_modcleanup(void)
 
 	smp_rendezvous(NULL, arm_teardown_vectors, NULL, NULL);
 
-#ifdef INVARIANTS
 	CPU_FOREACH(cpu) {
 		vmmpmap_remove(stack_hyp_va[cpu], VMM_STACK_PAGES * PAGE_SIZE,
 		    false);
 	}
 
 	vmmpmap_remove(hyp_code_base, hyp_code_len, false);
-#endif
 
 	vtimer_cleanup();
 
 	vmmpmap_fini();
-	for (cpu = 0; cpu < nitems(stack); cpu++)
+
+	CPU_FOREACH(cpu)
 		free(stack[cpu], M_HYP);
 
 	pmap_clean_stage2_tlbi = NULL;
+	pmap_stage2_invalidate_range = NULL;
+	pmap_stage2_invalidate_all = NULL;
 
 	return (0);
 }
