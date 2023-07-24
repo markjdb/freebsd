@@ -1713,16 +1713,17 @@ main(int argc, char *argv[])
 #ifdef __aarch64__
 {
 	const char *bootrom = NULL;
+	vm_paddr_t pc;
 
 	bootrom = get_config_value("bootrom");
 	if (bootrom == NULL)
 		bootrom = "/root/u-boot.bin";
 
-	error = bootcode_load(ctx, bootrom, &rip);
+	error = bootcode_load(ctx, bootrom, &pc);
+	assert(error == 0);
+	error = vm_set_register(bsp, VM_REG_GUEST_PC, pc);
 	assert(error == 0);
 }
-	error = vm_set_register(bsp, VM_REG_GUEST_PC, rip);
-	assert(error == 0);
 	error = vm_attach_vgic(ctx, 0x2f000000UL, 0x10000UL, 0x2f100000UL,
 	    0x20000UL);
 	assert(error == 0);
