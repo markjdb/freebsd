@@ -1074,8 +1074,10 @@ vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 		exit(1);
 	case VM_SUSPEND_HALT:
 		exit(2);
+#ifdef __amd64__
 	case VM_SUSPEND_TRIPLEFAULT:
 		exit(3);
+#endif
 	default:
 		fprintf(stderr, "vmexit_suspend: invalid reason %d\n", how);
 		exit(100);
