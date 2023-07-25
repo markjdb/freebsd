@@ -24,21 +24,22 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/cpuset.h>
 #include <sys/kernel.h>
-#include <sys/module.h>
-#include <sys/sysctl.h>
-#include <sys/malloc.h>
-#include <sys/pcpu.h>
+#include <sys/linker.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
+#include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/pcpu.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
-#include <sys/cpuset.h>
+#include <sys/sysctl.h>
 
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -233,7 +234,7 @@ SYSCTL_UINT(_hw_vmm, OID_AUTO, maxcpu, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
 
 static void vm_free_memmap(struct vm *vm, int ident);
 static bool sysmem_mapping(struct vm *vm, struct mem_map *mm);
-static void vcpu_notify_event_locked(struct vcpu *vcpu, bool lapic_intr);
+static void vcpu_notify_event_locked(struct vcpu *vcpu);
 
 /*
  * Upper limit on vm_maxcpu. We could increase this to 28 bits, but this
@@ -520,7 +521,7 @@ static void
 vm_cleanup(struct vm *vm, bool destroy)
 {
 	struct mem_map *mm;
-	pmap_t pmap;
+	pmap_t pmap __diagused;
 	int i;
 
 	if (destroy) {
@@ -894,11 +895,7 @@ vmm_reg_wi(struct vcpu *vcpu, uint64_t wval, void *arg)
 	return (0);
 }
 
-
-#include <sys/queue.h>
-#include <sys/linker.h>
-
-struct vmm_special_reg vmm_special_regs[] = {
+static const struct vmm_special_reg vmm_special_regs[] = {
 #define	SPECIAL_REG(_reg, _read, _write)				\
 	{								\
 		.esr_iss = ((_reg ## _op0) << ISS_MSR_OP0_SHIFT) |	\
@@ -1146,7 +1143,7 @@ vm_suspend(struct vm *vm, enum vm_suspend_how how)
 	 */
 	for (i = 0; i < vm->maxcpus; i++) {
 		if (CPU_ISSET(i, &vm->active_cpus))
-			vcpu_notify_event(vm_vcpu(vm, i), false);
+			vcpu_notify_event(vm_vcpu(vm, i));
 	}
 
 	return (0);
@@ -1199,14 +1196,14 @@ vm_suspend_cpu(struct vm *vm, struct vcpu *vcpu)
 		vm->debug_cpus = vm->active_cpus;
 		for (int i = 0; i < vm->maxcpus; i++) {
 			if (CPU_ISSET(i, &vm->active_cpus))
-				vcpu_notify_event(vm_vcpu(vm, i), false);
+				vcpu_notify_event(vm_vcpu(vm, i));
 		}
 	} else {
 		if (!CPU_ISSET(vcpu->vcpuid, &vm->active_cpus))
 			return (EINVAL);
 
 		CPU_SET_ATOMIC(vcpu->vcpuid, &vm->debug_cpus);
-		vcpu_notify_event(vcpu, false);
+		vcpu_notify_event(vcpu);
 	}
 	return (0);
 }
@@ -1270,24 +1267,15 @@ vcpu_stats(struct vcpu *vcpu)
  *   to the host_cpu to cause the vcpu to trap into the hypervisor.
  */
 static void
-vcpu_notify_event_locked(struct vcpu *vcpu, bool lapic_intr)
+vcpu_notify_event_locked(struct vcpu *vcpu)
 {
 	int hostcpu;
 
-	KASSERT(lapic_intr == false, ("%s: lapic_intr != false", __func__));
 	hostcpu = vcpu->hostcpu;
 	if (vcpu->state == VCPU_RUNNING) {
 		KASSERT(hostcpu != NOCPU, ("vcpu running on invalid hostcpu"));
 		if (hostcpu != curcpu) {
-#if 0
-			if (lapic_intr) {
-				vlapic_post_intr(vcpu->vlapic, hostcpu,
-				    vmm_ipinum);
-			} else
-#endif
-			{
-				ipi_cpu(hostcpu, vmm_ipinum);
-			}
+			ipi_cpu(hostcpu, vmm_ipinum);
 		} else {
 			/*
 			 * If the 'vcpu' is running on 'curcpu' then it must
@@ -1305,10 +1293,10 @@ vcpu_notify_event_locked(struct vcpu *vcpu, bool lapic_intr)
 }
 
 void
-vcpu_notify_event(struct vcpu *vcpu, bool lapic_intr)
+vcpu_notify_event(struct vcpu *vcpu)
 {
 	vcpu_lock(vcpu);
-	vcpu_notify_event_locked(vcpu, lapic_intr);
+	vcpu_notify_event_locked(vcpu);
 	vcpu_unlock(vcpu);
 }
 
@@ -1362,7 +1350,7 @@ vcpu_set_state_locked(struct vcpu *vcpu, enum vcpu_state newstate,
 	 */
 	if (from_idle) {
 		while (vcpu->state != VCPU_IDLE) {
-			vcpu_notify_event_locked(vcpu, false);
+			vcpu_notify_event_locked(vcpu);
 			msleep_spin(&vcpu->state, &vcpu->mtx, "vmstat", hz);
 		}
 	} else {

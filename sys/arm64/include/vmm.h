@@ -41,7 +41,6 @@ enum vm_suspend_how {
 	VM_SUSPEND_RESET,
 	VM_SUSPEND_POWEROFF,
 	VM_SUSPEND_HALT,
-	VM_SUSPEND_TRIPLEFAULT,
 	VM_SUSPEND_LAST
 };
 
@@ -246,7 +245,7 @@ vcpu_should_yield(struct vcpu *vcpu)
 #endif
 
 void *vcpu_stats(struct vcpu *vcpu);
-void vcpu_notify_event(struct vcpu *vcpu, bool lapic_intr);
+void vcpu_notify_event(struct vcpu *vcpu);
 
 enum vm_reg_name vm_segment_name(int seg_encoding);
 
@@ -307,21 +306,6 @@ enum vm_exitcode {
 	VM_EXITCODE_SMCCC,
 	VM_EXITCODE_DEBUG,
 	VM_EXITCODE_MAX
-};
-
-enum task_switch_reason {
-	TSR_CALL,
-	TSR_IRET,
-	TSR_JMP,
-	TSR_IDT_GATE,	/* task gate in IDT */
-};
-
-struct vm_task_switch {
-	uint16_t	tsssel;		/* new TSS selector */
-	int		ext;		/* task switch due to external event */
-	uint32_t	errcode;
-	int		errcode_valid;	/* push 'errcode' on the new stack */
-	enum task_switch_reason reason;
 };
 
 struct vm_exit {

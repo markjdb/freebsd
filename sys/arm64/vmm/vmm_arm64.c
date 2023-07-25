@@ -67,8 +67,6 @@
 #define	HANDLED		1
 #define	UNHANDLED	0
 
-#define	UNUSED		0
-
 /* Number of bits in an EL2 virtual address */
 #define	EL2_VIRT_BITS	48
 CTASSERT((1ul << EL2_VIRT_BITS) >= HYP_VM_MAX_ADDRESS);
@@ -382,7 +380,7 @@ vmmops_modinit(int ipinum)
 	smp_rendezvous(NULL, arm_setup_vectors, NULL, &el2_regs);
 
 	/* Add memory to the vmem allocator (checking there is space) */
-	if (vmm_base > L2_SIZE) {
+	if (vmm_base > (L2_SIZE + PAGE_SIZE)) {
 		/*
 		 * Ensure there is an L2 block before the vmm code to check
 		 * for buffer overflows on earlier data. Include the PAGE_SIZE
@@ -398,7 +396,7 @@ vmmops_modinit(int ipinum)
 		 * raise an exception
 		 */
 		if (vmm_base > L2_SIZE)
-			vmem_add(el2_mem_alloc, L2_SIZE, next_hyp_va - L2_SIZE,
+			vmem_add(el2_mem_alloc, L2_SIZE, vmm_base - L2_SIZE,
 			    M_WAITOK);
 	}
 
@@ -456,7 +454,6 @@ vmmops_init(struct vm *vm, pmap_t pmap)
 	vmem_addr_t vm_addr;
 	vm_size_t size;
 	bool rv __diagused;
-	int err __diagused;
 
 	/*
 	 * Allocate space for the common hyp struct and
@@ -475,10 +472,7 @@ vmmops_init(struct vm *vm, pmap_t pmap)
 	vtimer_vminit(hyp);
 	vgic_vminit(hyp);
 
-	/* XXX: Can this fail? */
-	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK,
-	    &vm_addr);
-	MPASS(err == 0);
+	vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK, &vm_addr);
 	MPASS((vm_addr & PAGE_MASK) == 0);
 	hyp->el2_addr = vm_addr;
 
@@ -497,7 +491,6 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	vmem_addr_t vm_addr;
 	vm_size_t size;
 	bool rv __diagused;
-	int err __diagused;
 
 	/*
 	 * Allocate space for the common hyp struct and
@@ -520,13 +513,9 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	reset_vm_el2_regs(hypctx);
 
 	vtimer_cpuinit(hypctx);
-
 	vgic_cpuinit(hypctx);
 
-	/* XXX: Can this fail? */
-	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK,
-	    &vm_addr);
-	MPASS(err == 0);
+	vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK, &vm_addr);
 	MPASS((vm_addr & PAGE_MASK) == 0);
 	hypctx->el2_addr = vm_addr;
 
@@ -579,87 +568,6 @@ vmm_pmap_invalidate_all(uint64_t vttbr)
 	vmm_call_hyp(HYP_S2_TLBI_ALL, vttbr);
 }
 
-static enum vm_reg_name
-get_vm_reg_name(uint32_t reg_nr, uint32_t mode __attribute__((unused)))
-{
-	switch(reg_nr) {
-		case 0:
-			return VM_REG_GUEST_X0;
-		case 1:
-			return VM_REG_GUEST_X1;
-		case 2:
-			return VM_REG_GUEST_X2;
-		case 3:
-			return VM_REG_GUEST_X3;
-		case 4:
-			return VM_REG_GUEST_X4;
-		case 5:
-			return VM_REG_GUEST_X5;
-		case 6:
-			return VM_REG_GUEST_X6;
-		case 7:
-			return VM_REG_GUEST_X7;
-		case 8:
-			return VM_REG_GUEST_X8;
-		case 9:
-			return VM_REG_GUEST_X9;
-		case 10:
-			return VM_REG_GUEST_X10;
-		case 11:
-			return VM_REG_GUEST_X11;
-		case 12:
-			return VM_REG_GUEST_X12;
-		case 13:
-			return VM_REG_GUEST_X13;
-		case 14:
-			return VM_REG_GUEST_X14;
-		case 15:
-			return VM_REG_GUEST_X15;
-		case 16:
-			return VM_REG_GUEST_X16;
-		case 17:
-			return VM_REG_GUEST_X17;
-		case 18:
-			return VM_REG_GUEST_X18;
-		case 19:
-			return VM_REG_GUEST_X19;
-		case 20:
-			return VM_REG_GUEST_X20;
-		case 21:
-			return VM_REG_GUEST_X21;
-		case 22:
-			return VM_REG_GUEST_X22;
-		case 23:
-			return VM_REG_GUEST_X23;
-		case 24:
-			return VM_REG_GUEST_X24;
-		case 25:
-			return VM_REG_GUEST_X25;
-		case 26:
-			return VM_REG_GUEST_X26;
-		case 27:
-			return VM_REG_GUEST_X27;
-		case 28:
-			return VM_REG_GUEST_X28;
-		case 29:
-			return VM_REG_GUEST_X29;
-		case 30:
-			return VM_REG_GUEST_LR;
-		case 31:
-			return VM_REG_GUEST_SP;
-		case 32:
-			return VM_REG_GUEST_ELR;
-		case 33:
-			return VM_REG_GUEST_SPSR;
-		case 34:
-			return VM_REG_ELR_EL2;
-		default:
-			break;
-	}
-
-	return (VM_REG_LAST);
-}
-
 static inline void
 arm64_print_hyp_regs(struct vm_exit *vme)
 {
@@ -694,7 +602,7 @@ arm64_gen_inst_emul_data(struct hypctx *hypctx, uint32_t esr_iss,
 	vie->access_size = 1 << esr_sas;
 	vie->sign_extend = (esr_iss & ISS_DATA_SSE) ? 1 : 0;
 	vie->dir = (esr_iss & ISS_DATA_WnR) ? VM_DIR_WRITE : VM_DIR_READ;
-	vie->reg = get_vm_reg_name(reg_num, UNUSED);
+	vie->reg = reg_num;
 
 	paging = &vme_ret->u.inst_emul.paging;
 	paging->far = hypctx->exit_info.far_el2;
@@ -718,7 +626,7 @@ arm64_gen_reg_emul_data(uint32_t esr_iss, struct vm_exit *vme_ret)
 	/* ARMv8 Architecture Manual, p. D7-2273: 1 means read */
 	vre->dir = (esr_iss & ISS_MSR_DIR) ? VM_DIR_READ : VM_DIR_WRITE;
 	reg_num = ISS_MSR_Rt(esr_iss);
-	vre->reg = get_vm_reg_name(reg_num, UNUSED);
+	vre->reg = reg_num;
 }
 
 static void
