@@ -772,7 +772,7 @@ next_irq:
 		vgic_v3_release_irq(irq);
 
 		if (notify)
-			vcpu_notify_event(vm_vcpu(hyp->vm, target_vcpu), false);
+			vcpu_notify_event(vm_vcpu(hyp->vm, target_vcpu));
 	}
 
 	return (ret);
@@ -849,7 +849,7 @@ next_irq:
 		vgic_v3_release_irq(irq);
 
 		if (notify)
-			vcpu_notify_event(vm_vcpu(hyp->vm, target_vcpu), false);
+			vcpu_notify_event(vm_vcpu(hyp->vm, target_vcpu));
 	}
 }
 
@@ -1948,7 +1948,7 @@ out:
 	vgic_v3_release_irq(irq);
 
 	if (notify)
-		vcpu_notify_event(vm_vcpu(hyp->vm, vcpuid), false);
+		vcpu_notify_event(vm_vcpu(hyp->vm, vcpuid));
 
 	return (0);
 }

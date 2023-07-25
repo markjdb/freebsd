@@ -65,7 +65,6 @@ vmmpmap_init(void)
 
 	l0_paddr = VM_PAGE_TO_PHYS(m);
 	l0 = (pd_entry_t *)PHYS_TO_DMAP(l0_paddr);
-	memset(l0, 0, PAGE_SIZE);
 
 	mtx_init(&vmmpmap_mtx, "vmm pmap", NULL, MTX_DEF);
 
