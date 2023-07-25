@@ -283,7 +283,11 @@ vmmops_modinit(int ipinum)
 	pmap_stage2_invalidate_range = vmm_pmap_invalidate_range;
 	pmap_stage2_invalidate_all = vmm_pmap_invalidate_all;
 
-	/* Create an allocator for the virtual address space used by EL2. */
+	/*
+	 * Create an allocator for the virtual address space used by EL2.
+	 * EL2 code is identity-mapped; the allocator is used to find space for
+	 * VM structures.
+	 */
 	el2_mem_alloc = vmem_create("VMM EL2", 0, 0, PAGE_SIZE, 0, M_WAITOK);
 
 	/* Create the mappings for the hypervisor translation table. */
@@ -450,24 +454,42 @@ vmmops_modcleanup(void)
 	return (0);
 }
 
+static vm_size_t
+el2_hyp_size(struct vm *vm)
+{
+	return (round_page(sizeof(struct hyp) +
+	    sizeof(struct hypctx *) * vm_get_maxcpus(vm)));
+}
+
+static vm_size_t
+el2_hypctx_size(void)
+{
+	return (round_page(sizeof(struct hypctx)));
+}
+
+static vm_offset_t
+el2_map_enter(vm_offset_t data, vm_size_t size, vm_prot_t prot)
+{
+	vmem_addr_t addr;
+	int err __diagused;
+	bool rv __diagused;
+
+	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK, &addr);
+	MPASS(err == 0);
+	rv = vmmpmap_enter(addr, size, vtophys(data), prot);
+	MPASS(rv);
+
+	return (addr);
+}
+
 void *
 vmmops_init(struct vm *vm, pmap_t pmap)
 {
 	struct hyp *hyp;
-	vmem_addr_t vm_addr;
 	vm_size_t size;
-	bool rv __diagused;
 
-	/*
-	 * Allocate space for the common hyp struct and
-	 * a hypctx pointer per vcpu.
-	 */
-	size = sizeof(struct hyp) +
-	    sizeof(struct hypctx *) * vm_get_maxcpus(vm);
-	/* Ensure this is the only data on the page */
-	size = round_page(size);
+	size = el2_hyp_size(vm);
 	hyp = malloc_aligned(size, PAGE_SIZE, M_HYP, M_WAITOK | M_ZERO);
-	MPASS(((vm_offset_t)hyp & PAGE_MASK) == 0);
 
 	hyp->vm = vm;
 	hyp->vgic_attached = false;
@@ -475,15 +497,8 @@ vmmops_init(struct vm *vm, pmap_t pmap)
 	vtimer_vminit(hyp);
 	vgic_vminit(hyp);
 
-	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK,
-	    &vm_addr);
-	MPASS(err == 0);
-	MPASS((vm_addr & PAGE_MASK) == 0);
-	hyp->el2_addr = vm_addr;
-
-	rv = vmmpmap_enter(hyp->el2_addr, size, vtophys(hyp),
+	hyp->el2_addr = el2_map_enter((vm_offset_t)hyp, size,
 	    VM_PROT_READ | VM_PROT_WRITE);
-	MPASS(rv);
 
 	return (hyp);
 }
@@ -493,19 +508,10 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 {
 	struct hyp *hyp = vmi;
 	struct hypctx *hypctx;
-	vmem_addr_t vm_addr;
 	vm_size_t size;
-	bool rv __diagused;
 
-	/*
-	 * Allocate space for the common hyp struct and
-	 * a hypctx pointer per vcpu.
-	 */
-	size = sizeof(struct hypctx);
-	/* Ensure this is the only data on the page */
-	size = round_page(size);
+	size = el2_hypctx_size();
 	hypctx = malloc_aligned(size, PAGE_SIZE, M_HYP, M_WAITOK | M_ZERO);
-	MPASS(((vm_offset_t)hyp & PAGE_MASK) == 0);
 
 	KASSERT(vcpuid >= 0 && vcpuid < vm_get_maxcpus(hyp->vm),
 	    ("%s: Invalid vcpuid %d", __func__, vcpuid));
@@ -520,15 +526,8 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	vtimer_cpuinit(hypctx);
 	vgic_cpuinit(hypctx);
 
-	err = vmem_alloc(el2_mem_alloc, size, M_NEXTFIT | M_WAITOK,
-	    &vm_addr);
-	MPASS(err == 0);
-	MPASS((vm_addr & PAGE_MASK) == 0);
-	hypctx->el2_addr = vm_addr;
-
-	rv = vmmpmap_enter(hypctx->el2_addr, size, vtophys(hypctx),
+	hypctx->el2_addr = el2_map_enter((vm_offset_t)hypctx, size,
 	    VM_PROT_READ | VM_PROT_WRITE);
-	MPASS(rv);
 
 	return (hypctx);
 }
@@ -1162,6 +1161,9 @@ vmmops_vcpu_cleanup(void *vcpui)
 
 	vtimer_cpucleanup(hypctx);
 	vgic_cpucleanup(hypctx);
+
+	vmmpmap_remove(hypctx->el2_addr, el2_hypctx_size(), true);
+
 	free(hypctx, M_HYP);
 }
 
@@ -1175,8 +1177,7 @@ vmmops_cleanup(void *vmi)
 
 	smp_rendezvous(NULL, arm_pcpu_vmcleanup, NULL, hyp);
 
-	/* Unmap the VM hyp struct from the hyp mode translation table */
-	vmmpmap_remove(hyp->el2_addr, round_page(sizeof(*hyp)), true);
+	vmmpmap_remove(hyp->el2_addr, el2_hyp_size(hyp->vm), true);
 
 	free(hyp, M_HYP);
 }
