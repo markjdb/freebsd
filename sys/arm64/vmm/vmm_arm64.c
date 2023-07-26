@@ -677,15 +677,19 @@ handle_el1_sync_excp(struct hypctx *hypctx, struct vm_exit *vme_ret,
 		arm64_print_hyp_regs(vme_ret);
 		vme_ret->exitcode = VM_EXITCODE_HYP;
 		break;
-	case EXCP_TRAP_WFI_WFE:
-		if ((hypctx->tf.tf_esr & 0x3) == 0) { /* WFI */
+	case EXCP_TRAP_WFI_WFE: {
+		uint32_t instr;
+
+		instr = (hypctx->tf.tf_esr & ISS_WFx_TI_MASK);
+		if (instr == ISS_WFx_TI_WFI) {
 			vmm_stat_incr(hypctx->vcpu, VMEXIT_WFI, 1);
 			vme_ret->exitcode = VM_EXITCODE_WFI;
 		} else {
-			vmm_stat_incr(hypctx->vcpu, VMEXIT_WFE, 1);
+			/* WFIT/WFE/WFET are currently unhandled. */
 			vme_ret->exitcode = VM_EXITCODE_HYP;
 		}
 		break;
+	}
 	case EXCP_HVC:
 		vmm_stat_incr(hypctx->vcpu, VMEXIT_HVC, 1);
 		vme_ret->exitcode = VM_EXITCODE_HVC;
