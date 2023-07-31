@@ -141,7 +141,6 @@ sysctl_kern_cp_times(SYSCTL_HANDLER_ARGS)
 #endif
 			return SYSCTL_OUT(req, 0, sizeof(long) * CPUSTATES * (mp_maxid + 1));
 	}
-	/* XXX-MJ compat */
 	for (error = 0, c = 0; error == 0 && c <= mp_maxid; c++) {
 		if (!CPU_ABSENT(c)) {
 			pcpu = pcpu_find(c);
@@ -724,9 +723,7 @@ statclock(int cnt, int usermode)
 		} else {
 			td->td_pticks += cnt;
 			td->td_sticks += cnt;
-			if ((td->td_pflags2 & TDP2_VMRUN) != 0)
-				cp_time[CP_VM] += cnt;
-			else if (!TD_IS_IDLETHREAD(td))
+			if (!TD_IS_IDLETHREAD(td))
 				cp_time[CP_SYS] += cnt;
 			else
 				cp_time[CP_IDLE] += cnt;

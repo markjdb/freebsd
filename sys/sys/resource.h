@@ -167,8 +167,7 @@ struct loadavg {
 #define	CP_SYS		2
 #define	CP_INTR		3
 #define	CP_IDLE		4
-#define	CP_VM		5
-#define	CPUSTATES	6
+#define	CPUSTATES	5
 
 #endif	/* __BSD_VISIBLE */
 
