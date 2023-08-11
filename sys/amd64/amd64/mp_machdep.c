@@ -328,6 +328,9 @@ start_all_aps(void)
 	int apic_id, cpu, domain, i;
 	u_char mpbiosreason;
 
+	if (mp_ncpus == 1)
+		return (0);
+
 	amd64_mp_alloc_pcpu();
 	mtx_init(&ap_boot_mtx, "ap boot", NULL, MTX_SPIN);
 
