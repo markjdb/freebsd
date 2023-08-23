@@ -27,17 +27,23 @@
  *
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/stack.h>
 
-#include <machine/vmparam.h>
 #include <machine/pcb.h>
+#include <machine/smp.h>
 #include <machine/stack.h>
+#include <machine/vmparam.h>
+
+static struct stack *stack_intr_stack;
+static struct thread *stack_intr_td;
+static struct mtx intr_lock;
+MTX_SYSINIT(intr_lock, &intr_lock, "stack intr", MTX_DEF);
 
 static void
 stack_capture(struct thread *td, struct stack *st, struct unwind_state *frame)
@@ -54,23 +60,69 @@ stack_capture(struct thread *td, struct stack *st, struct unwind_state *frame)
 	}
 }
 
+void
+stack_capture_intr(void)
+{
+	struct thread *td;
+
+	td = curthread;
+	stack_save(stack_intr_stack);
+	atomic_store_rel_ptr((void *)&stack_intr_td, (uintptr_t)td);
+}
+
 int
 stack_save_td(struct stack *st, struct thread *td)
 {
 	struct unwind_state frame;
+	int cpuid, error;
+	bool done;
 
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
 	KASSERT(!TD_IS_SWAPPED(td),
 	    ("stack_save_td: thread %p is swapped", td));
 
-	if (TD_IS_RUNNING(td))
-		return (EOPNOTSUPP);
+	if (td == curthread) {
+		stack_save(st);
+		return (0);
+	}
 
-	frame.fp = td->td_pcb->pcb_x[PCB_FP];
-	frame.pc = ADDR_MAKE_CANONICAL(td->td_pcb->pcb_x[PCB_LR]);
+	for (done = false, error = 0; !done;) {
+		if (!TD_IS_RUNNING(td)) {
+			/*
+			 * The thread will not start running so long as we hold
+			 * its lock.
+			 */
+			frame.fp = td->td_pcb->pcb_x[PCB_FP];
+			frame.pc =
+			    ADDR_MAKE_CANONICAL(td->td_pcb->pcb_x[PCB_LR]);
+			stack_capture(td, st, &frame);
+			error = 0;
+			break;
+		}
 
-	stack_capture(td, st, &frame);
-	return (0);
+		thread_unlock(td);
+		cpuid = atomic_load_int(&td->td_oncpu);
+		if (cpuid == NOCPU) {
+			cpu_spinwait();
+		} else {
+			mtx_lock(&intr_lock);
+			stack_intr_td = NULL;
+			stack_intr_stack = st;
+			ipi_cpu(cpuid, IPI_TRACE);
+			while (atomic_load_acq_ptr((void *)&stack_intr_td) ==
+			    (uintptr_t)NULL)
+				cpu_spinwait();
+			if (stack_intr_td == td) {
+				done = true;
+				error = st->depth > 0 ? 0 : EBUSY;
+			}
+			stack_intr_td = NULL;
+			mtx_unlock(&intr_lock);
+		}
+		thread_lock(td);
+	}
+
+	return (error);
 }
 
 void

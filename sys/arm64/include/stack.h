@@ -27,6 +27,8 @@
 #ifndef _MACHINE_STACK_H_
 #define	_MACHINE_STACK_H_
 
+#ifdef _KERNEL
+
 #define	INKERNEL(va) \
 	((va) >= VM_MIN_KERNEL_ADDRESS && (va) <= VM_MAX_KERNEL_ADDRESS)
 
@@ -56,4 +58,7 @@ kstack_contains(struct thread *td, vm_offset_t va, size_t len)
 }
 #endif	/* _SYS_PROC_H_ */
 
+void stack_capture_intr(void);
+
+#endif /* _KERNEL */
 #endif /* !_MACHINE_STACK_H_ */

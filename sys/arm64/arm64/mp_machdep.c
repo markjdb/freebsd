@@ -60,6 +60,7 @@
 #include <machine/debug_monitor.h>
 #include <machine/intr.h>
 #include <machine/smp.h>
+#include <machine/stack.h>
 #ifdef VFP
 #include <machine/vfp.h>
 #endif
@@ -123,6 +124,7 @@ static void ipi_hardclock(void *);
 static void ipi_preempt(void *);
 static void ipi_rendezvous(void *);
 static void ipi_stop(void *);
+static void ipi_trace(void *);
 
 #ifdef FDT
 static u_int fdt_cpuid;
@@ -169,6 +171,7 @@ release_aps(void *dummy __unused)
 	intr_pic_ipi_setup(IPI_STOP, "stop", ipi_stop, NULL);
 	intr_pic_ipi_setup(IPI_STOP_HARD, "stop hard", ipi_stop, NULL);
 	intr_pic_ipi_setup(IPI_HARDCLOCK, "hardclock", ipi_hardclock, NULL);
+	intr_pic_ipi_setup(IPI_TRACE, "trace", ipi_trace, NULL);
 
 	atomic_store_rel_int(&aps_ready, 1);
 	/* Wake up the other CPUs */
@@ -440,6 +443,12 @@ ipi_stop(void *dummy __unused)
 	CPU_CLR_ATOMIC(cpu, &started_cpus);
 	CPU_CLR_ATOMIC(cpu, &stopped_cpus);
 	CTR0(KTR_SMP, "IPI_STOP (restart)");
+}
+
+static void
+ipi_trace(void *dummy __unused)
+{
+	stack_capture_intr();
 }
 
 struct cpu_group *
