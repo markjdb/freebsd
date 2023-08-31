@@ -80,9 +80,8 @@ enum vm_reg_name {
 	VM_REG_GUEST_X29,
 	VM_REG_GUEST_LR,
 	VM_REG_GUEST_SP,
-	VM_REG_GUEST_ELR,
-	VM_REG_GUEST_SPSR,
-	VM_REG_ELR_EL2,
+	VM_REG_GUEST_PC,
+	VM_REG_GUEST_CPSR,
 	VM_REG_LAST
 };
 
@@ -183,10 +182,10 @@ int vm_deassert_irq(struct vm *vm, uint32_t irq);
 int vm_raise_msi(struct vm *vm, uint64_t msg, uint64_t addr, int bus, int slot,
     int func);
 struct vm_exit *vm_exitinfo(struct vcpu *vcpu);
-void vm_exit_suspended(struct vcpu *vcpu, uint64_t rip);
-void vm_exit_debug(struct vcpu *vcpu, uint64_t rip);
-void vm_exit_rendezvous(struct vcpu *vcpu, uint64_t rip);
-void vm_exit_astpending(struct vcpu *vcpu, uint64_t rip);
+void vm_exit_suspended(struct vcpu *vcpu, uint64_t pc);
+void vm_exit_debug(struct vcpu *vcpu, uint64_t pc);
+void vm_exit_rendezvous(struct vcpu *vcpu, uint64_t pc);
+void vm_exit_astpending(struct vcpu *vcpu, uint64_t pc);
 
 #ifdef _SYS__CPUSET_H_
 cpuset_t vm_active_cpus(struct vm *vm);

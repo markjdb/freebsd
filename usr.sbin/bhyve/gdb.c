@@ -168,8 +168,8 @@ static const int gdb_regset[] = {
 	VM_REG_GUEST_X29,
 	VM_REG_GUEST_LR,
 	VM_REG_GUEST_SP,
-	VM_REG_ELR_EL2,		/* guest pc */
-	VM_REG_GUEST_SPSR,
+	VM_REG_GUEST_PC,
+	VM_REG_GUEST_CPSR,
 };
 
 static const int gdb_regsize[] = {

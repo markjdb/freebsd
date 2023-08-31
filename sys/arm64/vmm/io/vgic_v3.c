@@ -541,8 +541,8 @@ vgic_v3_cpuinit(device_t dev, struct hypctx *hypctx)
 	 * ICH_VMCR_EL2_VENG0: virtual Group 0 interrupts enabled.
 	 * ICH_VMCR_EL2_VENG1: virtual Group 1 interrupts enabled.
 	 */
-	hypctx->vgic_v3_regs.ich_vmcr_el2 = \
-	    (virt_features.min_prio << ICH_VMCR_EL2_VPMR_SHIFT) | \
+	hypctx->vgic_v3_regs.ich_vmcr_el2 =
+	    (virt_features.min_prio << ICH_VMCR_EL2_VPMR_SHIFT) |
 	    ICH_VMCR_EL2_VBPR1_NO_PREEMPTION | ICH_VMCR_EL2_VBPR0_NO_PREEMPTION;
 	hypctx->vgic_v3_regs.ich_vmcr_el2 &= ~ICH_VMCR_EL2_VEOIM;
 	hypctx->vgic_v3_regs.ich_vmcr_el2 |= ICH_VMCR_EL2_VENG0 |
@@ -2132,24 +2132,33 @@ vgic_v3_init(device_t dev)
 	/* TODO: These fields are common with the vgicv2 driver */
 	pribits = ICH_VTR_EL2_PRIBITS(ich_vtr_el2);
 	switch (pribits) {
+	default:
 	case 5:
 		virt_features.min_prio = 0xf8;
+		break;
 	case 6:
 		virt_features.min_prio = 0xfc;
+		break;
 	case 7:
 		virt_features.min_prio = 0xfe;
+		break;
 	case 8:
 		virt_features.min_prio = 0xff;
+		break;
 	}
 
 	prebits = ICH_VTR_EL2_PREBITS(ich_vtr_el2);
 	switch (prebits) {
+	default:
 	case 5:
 		virt_features.ich_apr_num = 1;
+		break;
 	case 6:
 		virt_features.ich_apr_num = 2;
+		break;
 	case 7:
 		virt_features.ich_apr_num = 4;
+		break;
 	}
 
 	virt_features.ich_lr_num = ICH_VTR_EL2_LISTREGS(ich_vtr_el2);

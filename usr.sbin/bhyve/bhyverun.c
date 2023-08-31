@@ -130,7 +130,7 @@ int fdt_build(struct vmctx *ctx, struct vcpu *bsp, int ncpu);
 #if defined(__aarch64__)
 #define	VM_EXIT_PC(vmexit)	(vmexit).pc
 #define	VM_EXIT_PC_NAME		"pc"
-#define	VM_REG_GUEST_PC		VM_REG_ELR_EL2
+#define	VM_REG_GUEST_PC		VM_REG_GUEST_PC
 #elif defined(__amd64__)
 #define	VM_EXIT_PC(vmexit)	(vmexit).rip
 #define	VM_EXIT_PC_NAME		"rip"
@@ -1765,10 +1765,12 @@ main(int argc, char *argv[])
 		perror("device emulation initialization error");
 		exit(4);
 	}
+#ifdef __amd64__
 	if (init_tpm(ctx) != 0) {
 		fprintf(stderr, "Failed to init TPM device");
 		exit(4);
 	}
+#endif
 
 	/*
 	 * Initialize after PCI, to allow a bootrom file to reserve the high
