@@ -123,7 +123,7 @@ static void
 arm_setup_vectors(void *arg)
 {
 	struct vmm_init_regs *el2_regs;
-	char *stack_top;
+	uintptr_t stack_top;
 	uint32_t sctlr_el2;
 	register_t daif;
 
@@ -142,7 +142,7 @@ arm_setup_vectors(void *arg)
 	vmm_call_hyp(vtophys(&vmm_hyp_code));
 
 	/* Create and map the hypervisor stack */
-	stack_top = (char *)stack_hyp_va[PCPU_GET(cpuid)] + VMM_STACK_SIZE;
+	stack_top = stack_hyp_va[PCPU_GET(cpuid)] + VMM_STACK_SIZE;
 
 	/*
 	 * Configure the system control register for EL2:
