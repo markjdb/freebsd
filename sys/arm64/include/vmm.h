@@ -82,6 +82,12 @@ enum vm_reg_name {
 	VM_REG_GUEST_SP,
 	VM_REG_GUEST_PC,
 	VM_REG_GUEST_CPSR,
+
+	VM_REG_GUEST_SCTLR_EL1,
+	VM_REG_GUEST_TTBR0_EL1,
+	VM_REG_GUEST_TTBR1_EL1,
+	VM_REG_GUEST_TCR_EL1,
+	VM_REG_GUEST_TCR2_EL1,
 	VM_REG_LAST
 };
 
@@ -108,6 +114,7 @@ struct vm_exception;
 struct vm_exit;
 struct vm_run;
 struct vm_object;
+struct vm_guest_paging;
 struct vm_vgic_descr;
 struct pmap;
 
@@ -153,8 +160,8 @@ void *vm_gpa_hold_global(struct vm *vm, vm_paddr_t gpa, size_t len,
 void vm_gpa_release(void *cookie);
 bool vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa);
 
-int vm_gla2gpa_nofault(struct vcpu *vcpu, uint64_t gla, int prot,
-    uint64_t *gpa, int *is_fault);
+int vm_gla2gpa_nofault(struct vcpu *vcpu, struct vm_guest_paging *paging,
+    uint64_t gla, int prot, uint64_t *gpa, int *is_fault);
 
 uint16_t vm_get_maxcpus(struct vm *vm);
 void vm_get_topology(struct vm *vm, uint16_t *sockets, uint16_t *cores,
@@ -264,9 +271,10 @@ struct vm_copyinfo {
 #define	VM_GP_MMU_ENABLED	(1 << 5)
 
 struct vm_guest_paging {
-	uint64_t	far;
-	uint64_t	ttbr0_el1;
-	uint64_t	ttbr1_el1;
+	uint64_t	ttbr0_addr;
+	uint64_t	ttbr1_addr;
+	uint64_t	tcr_el1;
+	uint64_t	tcr2_el1;
 	int		flags;
 	int		padding;
 };
