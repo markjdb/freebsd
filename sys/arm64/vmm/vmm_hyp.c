@@ -247,6 +247,8 @@ vmm_hyp_reg_store(struct hypctx *hypctx, struct hyp *hyp, bool guest)
 	hypctx->sctlr_el1 = READ_SPECIALREG(sctlr_el1);
 	hypctx->spsr_el1 = READ_SPECIALREG(spsr_el1);
 	hypctx->tcr_el1 = READ_SPECIALREG(tcr_el1);
+	/* TODO: Support when this is not res0 */
+	hypctx->tcr2_el1 = 0;
 	hypctx->ttbr0_el1 = READ_SPECIALREG(ttbr0_el1);
 	hypctx->ttbr1_el1 = READ_SPECIALREG(ttbr1_el1);
 
@@ -284,6 +286,7 @@ vmm_hyp_reg_restore(struct hypctx *hypctx, struct hyp *hyp, bool guest)
 	WRITE_SPECIALREG(par_el1, hypctx->par_el1);
 	WRITE_SPECIALREG(sctlr_el1, hypctx->sctlr_el1);
 	WRITE_SPECIALREG(tcr_el1, hypctx->tcr_el1);
+	/* TODO: tcr2_el1 */
 	WRITE_SPECIALREG(ttbr0_el1, hypctx->ttbr0_el1);
 	WRITE_SPECIALREG(ttbr1_el1, hypctx->ttbr1_el1);
 	WRITE_SPECIALREG(spsr_el1, hypctx->spsr_el1);

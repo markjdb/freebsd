@@ -867,11 +867,11 @@ vmm_sysmem_maxaddr(struct vm *vm)
 }
 
 int
-vm_gla2gpa_nofault(struct vcpu *vcpu, uint64_t gla, int prot, uint64_t *gpa,
-    int *is_fault)
+vm_gla2gpa_nofault(struct vcpu *vcpu, struct vm_guest_paging *paging,
+    uint64_t gla, int prot, uint64_t *gpa, int *is_fault)
 {
 
-	vmmops_gla2gpa(vcpu->cookie, gla, prot, gpa, is_fault);
+	vmmops_gla2gpa(vcpu->cookie, paging, gla, prot, gpa, is_fault);
 	return (0);
 }
 

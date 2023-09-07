@@ -112,6 +112,7 @@ struct vm_gla2gpa {
 	int		vcpuid;		/* inputs */
 	int 		prot;		/* PROT_READ or PROT_WRITE */
 	uint64_t	gla;
+	struct vm_guest_paging paging;
 	int		fault;		/* outputs */
 	uint64_t	gpa;
 };

@@ -32,6 +32,7 @@
 #include <sys/smp.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
+#include <sys/mman.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
@@ -607,9 +608,10 @@ arm64_gen_inst_emul_data(struct hypctx *hypctx, uint32_t esr_iss,
 	vie->reg = reg_num;
 
 	paging = &vme_ret->u.inst_emul.paging;
-	paging->far = hypctx->exit_info.far_el2;
-	paging->ttbr0_el1 = hypctx->ttbr0_el1;
-	paging->ttbr1_el1 = hypctx->ttbr1_el1;
+	paging->ttbr0_addr = hypctx->ttbr0_el1 & ~(TTBR_ASID_MASK | TTBR_CnP);
+	paging->ttbr1_addr = hypctx->ttbr1_el1 & ~(TTBR_ASID_MASK | TTBR_CnP);
+	paging->tcr_el1 = hypctx->tcr_el1;
+	paging->tcr2_el1 = hypctx->tcr2_el1;
 	paging->flags = hypctx->tf.tf_spsr & (PSR_M_MASK | PSR_M_32);
 	if ((hypctx->sctlr_el1 & SCTLR_M) != 0)
 		paging->flags |= VM_GP_MMU_ENABLED;
@@ -810,75 +812,215 @@ ptp_hold(struct vcpu *vcpu, vm_paddr_t ptpphys, size_t len, void **cookie)
 	return (ptr);
 }
 
-void
-vmmops_gla2gpa(void *vcpui, uint64_t gla, int prot, uint64_t *gpa,
-    int *is_fault)
+/* log2 of the number of bytes in a page table entry */
+#define	PTE_SHIFT	3
+int
+vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
+    int prot, uint64_t *gpa, int *is_fault)
 {
 	struct hypctx *hypctx;
 	void *cookie;
-	uint64_t *ptep, pte;
-	uint64_t ttbr;
-
-	hypctx = (struct hypctx *)vcpui;
-
-	/* TODO: Handle TBI/MTE/etc */
-	/* TODO: Support non-native granule size */
-	/* TODO: Support non-4 level page tables */
-	/* TODO: Support > 48-bit address space */
-	/* TODO: Check prot */
+	uint64_t mask, *ptep, pte, pte_addr;
+	int address_bits, granule_shift, ia_bits, levels, pte_shift, tsz;
+	bool is_el0;
 
 	/* Check if the MMU is off */
-	if ((hypctx->sctlr_el1 & SCTLR_M) == 0) {
+	if ((paging->flags & VM_GP_MMU_ENABLED) == 0) {
 		*is_fault = 0;
 		*gpa = gla;
-		return;
+		return (0);
 	}
+
+	is_el0 = (paging->flags & PSR_M_MASK) == PSR_M_EL0t;
 
 	if (ADDR_IS_KERNEL(gla)) {
-		ttbr = hypctx->ttbr1_el1;
+		/* If address translation is disabled raise an exception */
+		if ((paging->tcr_el1 & TCR_EPD1) != 0) {
+			*is_fault = 1;
+			return (0);
+		}
+		if (is_el0 && (paging->tcr_el1 & TCR_E0PD1) != 0) {
+			*is_fault = 1;
+			return (0);
+		}
+		pte_addr = paging->ttbr1_addr;
+		tsz = (paging->tcr_el1 & TCR_T1SZ_MASK) >> TCR_T1SZ_SHIFT;
+		/* Clear the top byte if TBI is on */
+		if ((paging->tcr_el1 & TCR_TBI1) != 0)
+			gla |= (0xfful << 56);
+		switch (paging->tcr_el1 & TCR_TG1_MASK) {
+		case TCR_TG1_4K:
+			granule_shift = PAGE_SHIFT_4K;
+			break;
+		case TCR_TG1_16K:
+			granule_shift = PAGE_SHIFT_16K;
+			break;
+		case TCR_TG1_64K:
+			granule_shift = PAGE_SHIFT_64K;
+			break;
+		default:
+			*is_fault = 1;
+			return (EINVAL);
+		}
 	} else {
-		ttbr = hypctx->ttbr0_el1;
+		/* If address translation is disabled raise an exception */
+		if ((paging->tcr_el1 & TCR_EPD0) != 0) {
+			*is_fault = 1;
+			return (0);
+		}
+		if (is_el0 && (paging->tcr_el1 & TCR_E0PD0) != 0) {
+			*is_fault = 1;
+			return (0);
+		}
+		pte_addr = paging->ttbr0_addr;
+		tsz = (paging->tcr_el1 & TCR_T0SZ_MASK) >> TCR_T0SZ_SHIFT;
+		/* Clear the top byte if TBI is on */
+		if ((paging->tcr_el1 & TCR_TBI0) != 0)
+			gla &= ~(0xfful << 56);
+		switch (paging->tcr_el1 & TCR_TG0_MASK) {
+		case TCR_TG0_4K:
+			granule_shift = PAGE_SHIFT_4K;
+			break;
+		case TCR_TG0_16K:
+			granule_shift = PAGE_SHIFT_16K;
+			break;
+		case TCR_TG0_64K:
+			granule_shift = PAGE_SHIFT_64K;
+			break;
+		default:
+			*is_fault = 1;
+			return (EINVAL);
+		}
 	}
 
+	/*
+	 * TODO: Support FEAT_TTST for smaller tsz values and FEAT_LPA2
+	 * for larger values.
+	 */
+	switch (granule_shift) {
+	case PAGE_SHIFT_4K:
+		/*
+		 * See "Table D8-11 4KB granule, determining stage 1 initial
+		 * lookup level" from the "Arm Architecture Reference Manual
+		 * for A-Profile architecture" revision I.a for the minimum
+		 * and maximum values.
+		 */
+		if (tsz < 16 || tsz > 39) {
+			*is_fault = 1;
+			return (EINVAL);
+		}
+		break;
+	/* TODO: Support non-4k granule */
+	default:
+		*is_fault = 1;
+		return (EINVAL);
+	}
+
+	/*
+	 * Calculate the input address bits. These are 64 bit in an address
+	 * with the top tsz bits being all 0 or all 1.
+	  */
+	ia_bits = 64 - tsz;
+
+	/*
+	 * Calculate the number of address bits used in the page table
+	 * calculation. This is ia_bits minus the bottom granule_shift
+	 * bits that are passed to the output address.
+	 */
+	address_bits = ia_bits - granule_shift;
+
+	/*
+	 * Calculate the number of levels. Each level uses
+	 * granule_shift - PTE_SHIFT bits of the input address.
+	 * This is because the table is 1 << granule_shift and each
+	 * entry is 1 << PTE_SHIFT bytes.
+	 */
+	levels = howmany(address_bits, granule_shift - PTE_SHIFT);
+
+	/* Mask of the upper unused bits in the virtual address */
+	gla &= (1ul << ia_bits) - 1;
+	hypctx = (struct hypctx *)vcpui;
 	cookie = NULL;
-	ptep = ptp_hold(hypctx->vcpu, ttbr, PAGE_SIZE, &cookie);
-	pte = ptep[pmap_l0_index(gla)];
-	if ((pte & ATTR_DESCR_MASK) != L0_TABLE)
-		goto fault;
+	/* TODO: Check if the level supports block descriptors */
+	for (;levels > 0; levels--) {
+		int idx;
 
-	ptep = ptp_hold(hypctx->vcpu, pte & ~ATTR_MASK, PAGE_SIZE, &cookie);
-	pte = ptep[pmap_l1_index(gla)];
-	if ((pte & ATTR_DESCR_MASK) == L1_BLOCK) {
-		*gpa = (pte & ~ATTR_MASK) | (gla & L1_OFFSET);
-		goto done;
+		/* TODO: ptp_hold works on host pages */
+		ptep = ptp_hold(hypctx->vcpu, pte_addr, 1 << granule_shift,
+		    &cookie);
+		pte_shift = (levels - 1) * (granule_shift - PTE_SHIFT) +
+		    granule_shift;
+		idx = (gla >> pte_shift) &
+		    ((1ul << (granule_shift - PTE_SHIFT)) - 1);
+		pte = ptep[idx];
+
+		/* Calculate the level we are looking at */
+		switch (levels) {
+		default:
+			goto fault;
+		/* TODO: Level -1 when FEAT_LPA2 is implemented */
+		case 4: /* Level 0 */
+			/* TODO: support FEAT_??? */
+			if ((pte & ATTR_DESCR_MASK) != L0_TABLE)
+				goto fault;
+			/* FALLTHROUGH */
+		case 3: /* Level 1 */
+		case 2: /* Level 2 */
+			switch (pte & ATTR_DESCR_MASK) {
+			/* Use L1 macro as all levels are the same */
+			case L1_TABLE:
+				/* Check if EL0 can access this address space */
+				if (is_el0 &&
+				    (pte & TATTR_AP_TABLE_NO_EL0) != 0)
+					goto fault;
+				/* Check if the address space is writable */
+				if ((prot & PROT_WRITE) != 0 &&
+				    (pte & TATTR_AP_TABLE_RO) != 0)
+					goto fault;
+				if ((prot & PROT_EXEC) != 0) {
+					/* Check the table exec attribute */
+					if ((is_el0 &&
+					    (pte & TATTR_UXN_TABLE) != 0) ||
+					    (!is_el0 &&
+					     (pte & TATTR_PXN_TABLE) != 0))
+						goto fault;
+				}
+				pte_addr = pte & ~ATTR_MASK;
+				break;
+			case L1_BLOCK:
+				goto done;
+			default:
+				goto fault;
+			}
+			break;
+		case 1: /* Level 3 */
+			if ((pte & ATTR_DESCR_MASK) == L3_PAGE)
+				goto done;
+			goto fault;
+		}
 	}
-	if ((pte & ATTR_DESCR_MASK) != L1_TABLE)
-		goto fault;
-
-	ptep = ptp_hold(hypctx->vcpu, pte & ~ATTR_MASK, PAGE_SIZE, &cookie);
-	pte = ptep[pmap_l2_index(gla)];
-	if ((pte & ATTR_DESCR_MASK) == L2_BLOCK) {
-		*gpa = (pte & ~ATTR_MASK) | (gla & L2_OFFSET);
-		goto done;
-	}
-	if ((pte & ATTR_DESCR_MASK) != L2_TABLE)
-		goto fault;
-
-	ptep = ptp_hold(hypctx->vcpu, pte & ~ATTR_MASK, PAGE_SIZE, &cookie);
-	pte = ptep[pmap_l3_index(gla)];
-	if ((pte & ATTR_DESCR_MASK) == L3_PAGE) {
-		*gpa = (pte & ~ATTR_MASK) | (gla & L3_OFFSET);
-	} else
-		goto fault;
 
 done:
+	/* Check if EL0 has access to the block/page */
+	if (is_el0 && (pte & ATTR_S1_AP(ATTR_S1_AP_USER)) == 0)
+		goto fault;
+	if ((prot & PROT_WRITE) != 0 && (pte & ATTR_S1_AP_RW_BIT) != 0)
+		goto fault;
+	if ((prot & PROT_EXEC) != 0) {
+		if ((is_el0 && (pte & ATTR_S1_UXN) != 0) ||
+		    (!is_el0 && (pte & ATTR_S1_PXN) != 0))
+			goto fault;
+	}
+	mask = (1ul << pte_shift) - 1;
+	*gpa = (pte & ~ATTR_MASK) | (gla & mask);
 	*is_fault = 0;
 	ptp_release(&cookie);
-	return;
+	return (0);
 
 fault:
 	*is_fault = 1;
 	ptp_release(&cookie);
+	return (0);
 }
 
 int
@@ -1053,6 +1195,16 @@ hypctx_regptr(struct hypctx *hypctx, int reg)
 		return (&hypctx->tf.tf_spsr);
 	case VM_REG_GUEST_PC:
 		return (&hypctx->tf.tf_elr);
+	case VM_REG_GUEST_SCTLR_EL1:
+		return (&hypctx->sctlr_el1);
+	case VM_REG_GUEST_TTBR0_EL1:
+		return (&hypctx->ttbr0_el1);
+	case VM_REG_GUEST_TTBR1_EL1:
+		return (&hypctx->ttbr1_el1);
+	case VM_REG_GUEST_TCR_EL1:
+		return (&hypctx->tcr_el1);
+	case VM_REG_GUEST_TCR2_EL1:
+		return (&hypctx->tcr2_el1);
 	default:
 		break;
 	}

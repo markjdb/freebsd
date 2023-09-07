@@ -605,8 +605,8 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		break;
 	case VM_GLA2GPA_NOFAULT:
 		gg = (struct vm_gla2gpa *)data;
-		error = vm_gla2gpa_nofault(vcpu, gg->gla, gg->prot, &gg->gpa,
-		    &gg->fault);
+		error = vm_gla2gpa_nofault(vcpu, &gg->paging, gg->gla,
+		    gg->prot, &gg->gpa, &gg->fault);
 		KASSERT(error == 0 || error == EFAULT,
 		    ("%s: vm_gla2gpa unknown error %d", __func__, error));
 		break;

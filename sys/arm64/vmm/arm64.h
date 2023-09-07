@@ -65,6 +65,7 @@ struct hypctx {
 	uint64_t	par_el1;	/* Physical Address Register */
 	uint64_t	sctlr_el1;	/* System Control Register */
 	uint64_t	tcr_el1;	/* Translation Control Register */
+	uint64_t	tcr2_el1;	/* Translation Control Register 2 */
 	uint64_t	ttbr0_el1;	/* Translation Table Base Register 0 */
 	uint64_t	ttbr1_el1;	/* Translation Table Base Register 1 */
 	uint64_t	spsr_el1;	/* Saved Program Status Register */
@@ -123,8 +124,8 @@ struct hyp {
 DEFINE_VMMOPS_IFUNC(int, modinit, (int ipinum))
 DEFINE_VMMOPS_IFUNC(int, modcleanup, (void))
 DEFINE_VMMOPS_IFUNC(void *, init, (struct vm *vm, struct pmap *pmap))
-DEFINE_VMMOPS_IFUNC(void, gla2gpa, (void *vcpui, uint64_t gla, int prot,
-    uint64_t *gpa, int *is_fault))
+DEFINE_VMMOPS_IFUNC(int, gla2gpa, (void *vcpui, struct vm_guest_paging *paging,
+    uint64_t gla, int prot, uint64_t *gpa, int *is_fault))
 DEFINE_VMMOPS_IFUNC(int, run, (void *vcpui, register_t pc, struct pmap *pmap,
     struct vm_eventinfo *info))
 DEFINE_VMMOPS_IFUNC(void, cleanup, (void *vmi))
