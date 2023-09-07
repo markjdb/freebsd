@@ -63,6 +63,10 @@
 #include "mem.h"
 #include "mevent.h"
 
+#ifdef __aarch64__
+#include <machine/armreg.h>
+#endif
+
 /*
  * GDB_SIGNAL_* numbers are part of the GDB remote protocol.  Most stops
  * use SIGTRAP.
@@ -339,6 +343,32 @@ guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 		paging->paging_mode = PAGING_MODE_PAE;
 	return (0);
 }
+#else
+static int
+guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
+{
+	uint64_t regs[6];
+	const int regset[6] = {
+		VM_REG_GUEST_TTBR0_EL1,
+		VM_REG_GUEST_TTBR1_EL1,
+		VM_REG_GUEST_TCR_EL1,
+		VM_REG_GUEST_TCR2_EL1,
+		VM_REG_GUEST_SCTLR_EL1,
+		VM_REG_GUEST_CPSR,
+	};
+
+	if (vm_get_register_set(vcpu, nitems(regset), regset, regs) == -1)
+		return (-1);
+
+	paging->ttbr0_addr = regs[0] & ~(TTBR_ASID_MASK | TTBR_CnP);
+	paging->ttbr1_addr = regs[1] & ~(TTBR_ASID_MASK | TTBR_CnP);
+	paging->tcr_el1 = regs[2];
+	paging->tcr2_el1 = regs[3];
+	paging->flags = regs[5] & (PSR_M_MASK | PSR_M_32);
+	if ((regs[4] & SCTLR_M) != 0)
+		paging->flags |= VM_GP_MMU_ENABLED;
+	return (0);
+}
 #endif /* 0 */
 
 /*
@@ -350,19 +380,17 @@ guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 static int
 guest_vaddr2paddr(struct vcpu *vcpu, uint64_t vaddr, uint64_t *paddr)
 {
-	//struct vm_guest_paging paging;
+	struct vm_guest_paging paging;
 	int fault;
 
-#if 0
 	if (guest_paging_info(vcpu, &paging) == -1)
 		return (-1);
-#endif
 
 	/*
 	 * Always use PROT_READ.  We really care if the VA is
 	 * accessible, not if the current vCPU can write.
 	 */
-	if (vm_gla2gpa_nofault(vcpu, /*&paging,*/ vaddr, PROT_READ, paddr,
+	if (vm_gla2gpa_nofault(vcpu, &paging, vaddr, PROT_READ, paddr,
 	    &fault) == -1)
 		return (-1);
 	if (fault)
