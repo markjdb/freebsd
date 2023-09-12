@@ -3,7 +3,7 @@
 /*
  * Copyright (c) 2019-2020 Maxime Villard, m00nbsd.net
  * All rights reserved.
- * Copyright (c) 2021 The FreeBSD Foundation
+ * Copyright (c) 2023 The FreeBSD Foundation
  *
  * Portions of this software were developed by Mark Johnston under sponsorship
  * from the FreeBSD Foundation.
@@ -72,20 +72,27 @@ void kmsan_init_ret(size_t);
  */
 
 typedef struct {
-	uint8_t *shad;
-	msan_orig_t *orig;
+	uintptr_t	shad;
+	uintptr_t	orig;
+/*
+ *	uint8_t		*shad;
+ *	msan_orig_t	*orig;
+ */
 } msan_meta_t;
 
-#define MSAN_PARAM_SIZE		800
-#define MSAN_RETVAL_SIZE	800
+#define MSAN_PARAM_SIZE		(800)
+#define MSAN_RETVAL_SIZE	(800)
 typedef struct {
-	uint8_t param_shadow[MSAN_PARAM_SIZE];
-	uint8_t retval_shadow[MSAN_RETVAL_SIZE];
-	uint8_t va_arg_shadow[MSAN_PARAM_SIZE];
-	uint8_t va_arg_origin[MSAN_PARAM_SIZE];
-	uint64_t va_arg_overflow_size;
-	msan_orig_t param_origin[MSAN_PARAM_SIZE / sizeof(msan_orig_t)];
-	msan_orig_t retval_origin;
+	char		param_shadow[MSAN_PARAM_SIZE];
+	char		retval_shadow[MSAN_RETVAL_SIZE];
+	char		va_arg_shadow[MSAN_PARAM_SIZE];
+	char		va_arg_origin[MSAN_PARAM_SIZE];
+	uint64_t	va_arg_overflow_size;
+/*
+ *	char		param_origin[MSAN_PARAM_SIZE];
+ */
+	msan_orig_t	param_origin[MSAN_PARAM_SIZE / sizeof(msan_orig_t)];
+	msan_orig_t	retval_origin;
 } msan_tls_t;
 
 /* -------------------------------------------------------------------------- */
@@ -94,8 +101,8 @@ typedef struct {
 #define MSAN_ORIG_MASK	(~0x3)
 
 typedef struct kmsan_td {
-	size_t ctx;
-	msan_tls_t tls[MSAN_NCONTEXT];
+	size_t		ctx;
+	msan_tls_t	tls[MSAN_NCONTEXT];
 } msan_td_t;
 
 static msan_tls_t dummy_tls;
@@ -146,6 +153,13 @@ SYSCTL_BOOL(_debug_kmsan, OID_AUTO, disabled, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
     &kmsan_disabled, 0, "KMSAN is disabled");
 
 static MALLOC_DEFINE(M_KMSAN, "kmsan", "Kernel memory sanitizer");
+
+/* -------------------------------------------------------------------------- */
+
+void kmsan_thread_alloc(struct thread *td);
+void kmsan_thread_free(struct thread *td);
+void kmsan_intr_enter(void);
+void kmsan_intr_leave(void);
 
 /* -------------------------------------------------------------------------- */
 
@@ -277,17 +291,18 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 	msan_meta_t ret;
 
 	if (__predict_false(!kmsan_enabled)) {
-		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
-		ret.orig = (msan_orig_t *)msan_dummy_orig;
+		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
+		    msan_dummy_shad);
+		ret.orig = (uintptr_t)msan_dummy_orig;
 	} else if (__predict_false(kmsan_md_unsupported((vm_offset_t)addr))) {
-		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
-		ret.orig = (msan_orig_t *)msan_dummy_orig;
+		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
+		    msan_dummy_shad);
+		ret.orig = (uintptr_t)msan_dummy_orig;
 	} else {
-		ret.shad = (void *)kmsan_md_addr_to_shad((vm_offset_t)addr);
+		ret.shad = (uintptr_t)kmsan_md_addr_to_shad((vm_offset_t)addr);
 		ret.orig =
-		    (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
-		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
-		    MSAN_ORIG_MASK);
+		    (uintptr_t)kmsan_md_addr_to_orig((vm_offset_t)addr);
+		ret.orig = (ret.orig & MSAN_ORIG_MASK);
 	}
 
 	return (ret);
@@ -296,6 +311,7 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 static inline void
 kmsan_origin_fill(const void *addr, msan_orig_t o, size_t size)
 {
+#if 0
 	msan_orig_t *orig;
 	size_t i;
 
@@ -311,25 +327,30 @@ kmsan_origin_fill(const void *addr, msan_orig_t o, size_t size)
 	for (i = 0; i < size; i += 4) {
 		orig[i / 4] = o;
 	}
+#endif
 }
 
 static inline void
 kmsan_shadow_fill(uintptr_t addr, uint8_t c, size_t size)
 {
-	uint8_t *shad;
+/*
+ *	uint8_t *shad;
+ */
 
 	if (__predict_false(!kmsan_enabled))
 		return;
 	if (__predict_false(kmsan_md_unsupported(addr)))
 		return;
-
-	shad = (uint8_t *)kmsan_md_addr_to_shad(addr);
-	__builtin_memset(shad, c, size);
+/*
+ *	shad = (uint8_t *)kmsan_md_addr_to_shad(addr);
+ *	__builtin_memset(shad, c, size);
+ */
 }
 
 static inline void
 kmsan_meta_copy(void *dst, const void *src, size_t size)
 {
+#if 0
 	uint8_t *orig_src, *orig_dst;
 	uint8_t *shad_src, *shad_dst;
 	msan_orig_t *_src, *_dst;
@@ -357,11 +378,13 @@ kmsan_meta_copy(void *dst, const void *src, size_t size)
 		orig_src++;
 		orig_dst++;
 	}
+#endif
 }
 
 static inline void
 kmsan_shadow_check(uintptr_t addr, size_t size, const char *hook)
 {
+#if 0
 	msan_orig_t *orig;
 	uint8_t *shad;
 	size_t i;
@@ -380,6 +403,7 @@ kmsan_shadow_check(uintptr_t addr, size_t size, const char *hook)
 		kmsan_report_hook((const char *)addr + i, orig, size, i, hook);
 		break;
 	}
+#endif
 }
 
 void
@@ -392,6 +416,7 @@ kmsan_init_arg(size_t n)
 		return;
 	if (__predict_false(curthread == NULL))
 		return;
+
 	mtd = curthread->td_kmsan;
 	arg = mtd->tls[mtd->ctx].param_shadow;
 	__builtin_memset(arg, 0, n);
@@ -407,6 +432,7 @@ kmsan_init_ret(size_t n)
 		return;
 	if (__predict_false(curthread == NULL))
 		return;
+
 	mtd = curthread->td_kmsan;
 	arg = mtd->tls[mtd->ctx].retval_shadow;
 	__builtin_memset(arg, 0, n);
@@ -424,6 +450,7 @@ kmsan_check_arg(size_t size, const char *hook)
 		return;
 	if (__predict_false(curthread == NULL))
 		return;
+
 	mtd = curthread->td_kmsan;
 	ctx = mtd->ctx;
 	arg = mtd->tls[ctx].param_shadow;
@@ -431,6 +458,7 @@ kmsan_check_arg(size_t size, const char *hook)
 	for (i = 0; i < size; i++) {
 		if (__predict_true(arg[i] == 0))
 			continue;
+
 		orig = &mtd->tls[ctx].param_origin[i / sizeof(msan_orig_t)];
 		kmsan_report_hook((const char *)arg + i, orig, size, i, hook);
 		break;
@@ -442,22 +470,27 @@ kmsan_thread_alloc(struct thread *td)
 {
 	msan_td_t *mtd;
 
-	if (!kmsan_enabled)
-		return;
+	KASSERT(curthread->td_intr_nesting_level == 0,
+	   ("alloc msan tls (M_WAITOK) in interrupt context"));
 
 	mtd = td->td_kmsan;
 	if (mtd == NULL) {
+		if (__predict_false(!THREAD_CAN_SLEEP())) {
+			KASSERT(0,
+			    ("alloc msan tls (M_WAITOK) with sleeping prohibited"));
+		}
 		/* We might be recycling a thread. */
 		kmsan_init_arg(sizeof(size_t) + sizeof(struct malloc_type *) +
 		    sizeof(int));
 		mtd = malloc(sizeof(*mtd), M_KMSAN, M_WAITOK);
 	}
 	__builtin_memset(mtd, 0, sizeof(*mtd));
-	mtd->ctx = 0;
 
-	if (td->td_kstack != 0)
-		kmsan_mark((void *)td->td_kstack, ptoa(td->td_kstack_pages),
-		    KMSAN_STATE_UNINIT);
+/*
+ *	if (td->td_kstack != 0)
+ *		kmsan_mark((void *)td->td_kstack, ptoa(td->td_kstack_pages),
+ *		    KMSAN_STATE_UNINIT);
+ */
 
 	td->td_kmsan = mtd;
 }
@@ -467,15 +500,13 @@ kmsan_thread_free(struct thread *td)
 {
 	msan_td_t *mtd;
 
-	if (!kmsan_enabled)
-		return;
 	if (__predict_false(td == curthread))
-		kmsan_panic("%s: freeing KMSAN TLS for curthread", __func__);
+		panic("%s: freeing KMSAN TLS for curthread", __func__);
 
 	mtd = td->td_kmsan;
+	td->td_kmsan = NULL;
 	kmsan_init_arg(sizeof(void *) + sizeof(struct malloc_type *));
 	free(mtd, M_KMSAN);
-	td->td_kmsan = NULL;
 }
 
 void kmsan_intr_enter(void);
@@ -514,6 +545,7 @@ kmsan_intr_leave(void)
 void
 kmsan_shadow_map(vm_offset_t addr, size_t size)
 {
+#if 0
 	size_t npages, i;
 	vm_offset_t va;
 
@@ -534,6 +566,7 @@ kmsan_shadow_map(vm_offset_t addr, size_t size)
 	for (i = 0; i < npages; i++) {
 		pmap_san_enter(va + ptoa(i));
 	}
+#endif
 }
 
 void
@@ -685,6 +718,7 @@ __msan_poison_alloca(const void *addr, uint64_t size, const char *descr)
 void
 __msan_unpoison_alloca(const void *addr, uint64_t size)
 {
+	//kmsan_origin_fill(addr, 0, size);
 	kmsan_shadow_fill((uintptr_t)addr, KMSAN_STATE_INITED, size);
 }
 
@@ -693,7 +727,9 @@ __msan_warning(msan_orig_t origin)
 {
 	if (__predict_false(!kmsan_enabled))
 		return;
-	kmsan_report_inline(origin, KMSAN_RET_ADDR);
+/*
+ *	kmsan_report_inline(origin, KMSAN_RET_ADDR);
+ */
 }
 
 msan_tls_t *
@@ -707,6 +743,7 @@ __msan_get_context_state(void)
 	 */
 	if (__predict_false(!kmsan_enabled || curthread == NULL))
 		return (&dummy_tls);
+
 	mtd = curthread->td_kmsan;
 	return (&mtd->tls[mtd->ctx]);
 }
@@ -717,6 +754,11 @@ __msan_get_context_state(void)
  * Function hooks. Mostly ASM functions which need KMSAN wrappers to handle
  * initialized areas properly.
  */
+
+void * kmsan_memcpy(void *dst, const void *src, size_t len);
+int kmsan_memcmp(const void *b1, const void *b2, size_t len);
+void * kmsan_memset(void *dst, int c, size_t len);
+void * kmsan_memmove(void *dst, const void *src, size_t len);
 
 void *
 kmsan_memcpy(void *dst, const void *src, size_t len)
@@ -732,6 +774,9 @@ kmsan_memcpy(void *dst, const void *src, size_t len)
 int
 kmsan_memcmp(const void *b1, const void *b2, size_t len)
 {
+/*
+ *	return (__builtin_memcmp(b1, b2, len));
+ */
 	const uint8_t *_b1 = b1, *_b2 = b2;
 	size_t i;
 
@@ -756,6 +801,9 @@ kmsan_memcmp(const void *b1, const void *b2, size_t len)
 void *
 kmsan_memset(void *dst, int c, size_t len)
 {
+/*
+ *	return (__builtin_memset(dst, c, len));
+ */
 	/* No kmsan_check_arg, because inlined. */
 	kmsan_shadow_fill((uintptr_t)dst, KMSAN_STATE_INITED, len);
 	kmsan_init_ret(sizeof(void *));
@@ -765,6 +813,9 @@ kmsan_memset(void *dst, int c, size_t len)
 void *
 kmsan_memmove(void *dst, const void *src, size_t len)
 {
+/*
+ *	return (__builtin_memmove(dst, src, len));
+ */
 	/* No kmsan_check_arg, because inlined. */
 	if (__predict_true(len != 0)) {
 		kmsan_meta_copy(dst, src, len);
@@ -777,9 +828,16 @@ __strong_reference(kmsan_memcpy, __msan_memcpy);
 __strong_reference(kmsan_memset, __msan_memset);
 __strong_reference(kmsan_memmove, __msan_memmove);
 
+char * kmsan_strcpy(char *dst, const char *src);
+int kmsan_strcmp(const char *s1, const char *s2);
+size_t kmsan_strlen(const char *str);
+
 char *
 kmsan_strcpy(char *dst, const char *src)
 {
+/*
+ *	return (__builtin_strcpy(dst, src));
+ */
 	const char *_src = src;
 	char *_dst = dst;
 	size_t len = 0;
@@ -803,6 +861,9 @@ kmsan_strcpy(char *dst, const char *src)
 int
 kmsan_strcmp(const char *s1, const char *s2)
 {
+/*
+ *	return (__builtin_strcmp(s1, s2));
+ */
 	const char *_s1 = s1, *_s2 = s2;
 	size_t len = 0;
 
@@ -830,6 +891,9 @@ kmsan_strcmp(const char *s1, const char *s2)
 size_t
 kmsan_strlen(const char *str)
 {
+/*
+ *	return (__builtin_strlen(str));
+ */
 	const char *s;
 
 	kmsan_check_arg(sizeof(str), "strlen():args");
@@ -853,6 +917,9 @@ int	kmsan_copyinstr(const void *, void *, size_t, size_t *);
 int
 kmsan_copyin(const void *uaddr, void *kaddr, size_t len)
 {
+/*
+ *	return (copyin(uaddr, kaddr, len));
+ */
 	int ret;
 
 	kmsan_check_arg(sizeof(uaddr) + sizeof(kaddr) + sizeof(len),
@@ -867,6 +934,9 @@ kmsan_copyin(const void *uaddr, void *kaddr, size_t len)
 int
 kmsan_copyout(const void *kaddr, void *uaddr, size_t len)
 {
+/*
+ *	return (copyout(kaddr, uaddr, len));
+ */
 	kmsan_check_arg(sizeof(kaddr) + sizeof(uaddr) + sizeof(len),
 	    "copyout():args");
 	kmsan_shadow_check((uintptr_t)kaddr, len, "copyout():arg1");
@@ -877,6 +947,9 @@ kmsan_copyout(const void *kaddr, void *uaddr, size_t len)
 int
 kmsan_copyinstr(const void *uaddr, void *kaddr, size_t len, size_t *done)
 {
+/*
+ *	return (copyinstr(uaddr, kaddr, len, done));
+ */
 	size_t _done;
 	int ret;
 
@@ -895,6 +968,24 @@ kmsan_copyinstr(const void *uaddr, void *kaddr, size_t len, size_t *done)
 
 /* -------------------------------------------------------------------------- */
 
+/*
+ *int kmsan_fubyte(volatile const void *base);
+ *int kmsan_fuword16(volatile const void *base);
+ *int kmsan_fueword(volatile const void *base, long *val);
+ *int kmsan_fueword32(volatile const void *base, int32_t *val);
+ *int kmsan_fueword64(volatile const void *base, int64_t *val);
+ *int kmsan_subyte(volatile void *base, int byte);
+ *int kmsan_suword(volatile void *base, long word);
+ *int kmsan_suword16(volatile void *base, int word);
+ *int kmsan_suword32(volatile void *base, int32_t word);
+ *int kmsan_suword64(volatile void *base, int64_t word);
+ *int kmsan_casueword32(volatile uint32_t *base, uint32_t oldval,
+ *    uint32_t *oldvalp, uint32_t newval);
+ *int kmsan_casueword(volatile u_long *base, u_long oldval, u_long *oldvalp,
+ *    u_long newval);
+ */
+/* -------------------------------------------------------------------------- */
+#if 0
 int
 kmsan_fubyte(volatile const void *base)
 {
@@ -1043,9 +1134,9 @@ kmsan_casueword(volatile u_long *base, u_long oldval, u_long *oldvalp,
 	kmsan_init_ret(sizeof(int));
 	return (ret);
 }
-
+#endif
 /* -------------------------------------------------------------------------- */
-
+#if 0
 #include <machine/atomic.h>
 #include <sys/atomic_san.h>
 
@@ -1340,9 +1431,9 @@ kmsan_atomic_interrupt_fence(void)
 {
 	atomic_interrupt_fence();
 }
-
+#endif
 /* -------------------------------------------------------------------------- */
-
+#if 0
 #include <sys/bus.h>
 #include <machine/bus.h>
 #include <sys/bus_san.h>
@@ -1382,13 +1473,40 @@ kmsan_bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t hnd,
 	bus_space_barrier(tag, hnd, offset, size, flags);
 }
 
-/* XXXMJ x86-specific */
+#define MSAN_BUS_PEEK_FUNC(width, type)				\
+	int kmsan_bus_space_peek_##width(bus_space_tag_t tag,		\
+	    bus_space_handle_t hnd, bus_size_t offset, type *value)	\
+	{								\
+		return (bus_space_peek_##width(tag, hnd, offset, value)); \
+	}
+
+MSAN_BUS_PEEK_FUNC(1, uint8_t)
+MSAN_BUS_PEEK_FUNC(2, uint16_t)
+MSAN_BUS_PEEK_FUNC(4, uint32_t)
+
+#define MSAN_BUS_POKE_FUNC(width, type)					\
+	int kmsan_bus_space_poke_##width(bus_space_tag_t tag,		\
+	    bus_space_handle_t hnd, bus_size_t offset, type value)	\
+	{								\
+		return (bus_space_poke_##width(tag, hnd, offset, value)); \
+	}
+
+MSAN_BUS_POKE_FUNC(1, uint8_t)
+MSAN_BUS_POKE_FUNC(2, uint16_t)
+MSAN_BUS_POKE_FUNC(4, uint32_t)
+
+#if defined(__x86__) || defined(__amd64__)
+#define IF_NOT_X86_BUS_SPACE_IO(tag) if ((tag) != X86_BUS_SPACE_IO)
+#else
+#define IF_NOT_X86_BUS_SPACE_IO(tag)
+#endif
+
 #define MSAN_BUS_READ_FUNC(func, width, type)				\
 	type kmsan_bus_space_read##func##_##width(bus_space_tag_t tag,	\
 	    bus_space_handle_t hnd, bus_size_t offset)			\
 	{								\
 		type ret;						\
-		if ((tag) != X86_BUS_SPACE_IO)				\
+		IF_NOT_X86_BUS_SPACE_IO(tag)						\
 			kmsan_shadow_fill((uintptr_t)(hnd + offset),	\
 			    KMSAN_STATE_INITED, (width));		\
 		ret = bus_space_read##func##_##width(tag, hnd, offset);	\
@@ -1429,6 +1547,13 @@ MSAN_BUS_READ_PTR_FUNC(region, 4, uint32_t)
 MSAN_BUS_READ_PTR_FUNC(region_stream, 4, uint32_t)
 
 MSAN_BUS_READ_FUNC(, 8, uint64_t)
+#if 0
+MSAN_BUS_READ_FUNC(_stream, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(multi, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(multi_stream, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(region, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(region_stream, 8, uint64_t)
+#endif
 
 #define	MSAN_BUS_WRITE_FUNC(func, width, type)				\
 	void kmsan_bus_space_write##func##_##width(bus_space_tag_t tag,	\
@@ -1494,9 +1619,9 @@ MSAN_BUS_SET_FUNC(multi, 4, uint32_t)
 MSAN_BUS_SET_FUNC(region, 4, uint32_t)
 MSAN_BUS_SET_FUNC(multi_stream, 4, uint32_t)
 MSAN_BUS_SET_FUNC(region_stream, 4, uint32_t)
-
+#endif
 /* -------------------------------------------------------------------------- */
-
+#if 0
 void
 kmsan_bus_dmamap_sync(struct memdesc *desc, bus_dmasync_op_t op)
 {
@@ -1540,3 +1665,4 @@ kmsan_bus_dmamap_sync(struct memdesc *desc, bus_dmasync_op_t op)
 		}
 	}
 }
+#endif

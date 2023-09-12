@@ -126,7 +126,8 @@ ATOMIC_SAN_FUNCS(64, uint64_t);
 ATOMIC_SAN_LOAD_STORE(SAN_INTERCEPTOR_PREFIX, bool, bool);
 ATOMIC_SAN_THREAD_FENCE(SAN_INTERCEPTOR_PREFIX);
 
-#ifndef SAN_RUNTIME
+//#ifndef SAN_RUNTIME
+#if !defined(SAN_RUNTIME) && defined(SAN_INTERCEPTOR_PREFIX)
 
 /*
  * Redirect uses of an atomic(9) function to the sanitizer's interceptor.

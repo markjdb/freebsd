@@ -34,6 +34,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/asan.h>
+#include <sys/msan.h>
 #include <sys/buf.h>
 #include <sys/bus.h>
 #include <sys/cons.h>
@@ -1020,6 +1021,7 @@ initarm(struct arm64_bootparams *abp)
 
 	kcsan_cpu_init(0);
 	kasan_init();
+	kmsan_init();
 
 	env = kern_getenv("kernelname");
 	if (env != NULL)

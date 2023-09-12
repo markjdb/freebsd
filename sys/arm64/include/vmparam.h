@@ -131,6 +131,12 @@
  *                  0xfffffeffffffffff  End of DMAP
  *                  0xffffa00000000000  Start of DMAP
  *
+ *                  0xffff01ffffffffff  End of KMSAN origin map
+ *                  0xffff018000000000  512G KMSAN origin map (optional)
+ *
+ *                  0xffff017fffffffff  End of KMSAN shadow map
+ *                  0xffff010000000000  512G KMSAN shadow map (optional)
+ *
  *                  0xffff009fffffffff  End of KASAN shadow map
  *                  0xffff008000000000  Start of KASAN shadow map
  *
@@ -166,6 +172,14 @@
 /* 128 GiB KASAN shadow map */
 #define	KASAN_MIN_ADDRESS	(0xffff008000000000UL)
 #define	KASAN_MAX_ADDRESS	(0xffff00a000000000UL)
+
+/* 512 GiB KMSAN shadow addresses */
+#define	KMSAN_SHAD_MIN_ADDRESS	(0xffff010000000000UL)
+#define	KMSAN_SHAD_MAX_ADDRESS	(0xffff018000000000UL)
+
+/* 512 GiB KMSAN origin addresses */
+#define	KMSAN_ORIG_MIN_ADDRESS	(0xffff018000000000UL)
+#define	KMSAN_ORIG_MAX_ADDRESS	(0xffff020000000000UL)
 
 /* The address bits that hold a pointer authentication code */
 #define	PAC_ADDR_MASK		(0xff7f000000000000UL)

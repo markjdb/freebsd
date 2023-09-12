@@ -32,7 +32,7 @@
 #define _SYS_MSAN_H_
 
 #ifdef KMSAN
-#include <sys/_bus_dma.h>
+//#include <sys/_bus_dma.h>
 #include <sys/types.h>
 
 #define KMSAN_STATE_UNINIT	0xFF
@@ -58,7 +58,9 @@ void kmsan_shadow_map(vm_offset_t, size_t);
 void kmsan_thread_alloc(struct thread *);
 void kmsan_thread_free(struct thread *);
 
-void kmsan_bus_dmamap_sync(struct memdesc *, bus_dmasync_op_t);
+/*
+ *void kmsan_bus_dmamap_sync(struct memdesc *, bus_dmasync_op_t);
+ */
 
 void kmsan_orig(const void *, size_t, int, uintptr_t);
 void kmsan_mark(const void *, size_t, uint8_t);

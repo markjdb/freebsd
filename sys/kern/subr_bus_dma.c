@@ -318,6 +318,14 @@ _bus_dmamap_load_uio(bus_dma_tag_t dmat, bus_dmamap_t map, struct uio *uio,
 	return (error);
 }
 
+#ifdef KMSAN
+static inline void
+_bus_dmamap_load_kmsan(bus_dma_tag_t dmat, bus_dmamap_t map,
+    struct memdesc *mem)
+{
+}
+#endif
+
 /*
  * Map the buffer buf into bus space using the dmamap map.
  */
