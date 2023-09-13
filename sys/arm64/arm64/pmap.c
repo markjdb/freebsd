@@ -116,6 +116,7 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mman.h>
+#include <sys/msan.h>
 #include <sys/msgbuf.h>
 #include <sys/mutex.h>
 #include <sys/physmem.h>
@@ -1184,32 +1185,32 @@ pmap_bootstrap_dmap(vm_paddr_t min_pa)
 }
 
 static void
-pmap_bootstrap_l2(vm_offset_t va)
+pmap_bootstrap_l2(vm_offset_t va, vm_offset_t ve)
 {
 	KASSERT((va & L1_OFFSET) == 0, ("Invalid virtual address"));
 
 	/* Leave bs_state.pa as it's only needed to bootstrap blocks and pages*/
 	bs_state.va = va;
 
-	for (; bs_state.va < VM_MAX_KERNEL_ADDRESS; bs_state.va += L1_SIZE)
+	for (; bs_state.va < ve; bs_state.va += L1_SIZE)
 		pmap_bootstrap_l1_table(&bs_state);
 }
 
 static void
-pmap_bootstrap_l3(vm_offset_t va)
+pmap_bootstrap_l3(vm_offset_t va, vm_offset_t ve)
 {
 	KASSERT((va & L2_OFFSET) == 0, ("Invalid virtual address"));
 
 	/* Leave bs_state.pa as it's only needed to bootstrap blocks and pages*/
 	bs_state.va = va;
 
-	for (; bs_state.va < VM_MAX_KERNEL_ADDRESS; bs_state.va += L2_SIZE)
+	for (; bs_state.va < ve; bs_state.va += L2_SIZE)
 		pmap_bootstrap_l2_table(&bs_state);
 }
 
-#ifdef KASAN
+#if defined(KASAN) || defined(KMSAN)
 static void
-pmap_bootstrap_allocate_kasan_l2(vm_paddr_t start_pa, vm_paddr_t end_pa,
+pmap_bootstrap_allocate_san_l2(vm_paddr_t start_pa, vm_paddr_t end_pa,
     vm_offset_t *start_va, int *nkasan_l2)
 {
 	int i;
@@ -1323,9 +1324,21 @@ pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
 	 * loader allocated the first and only l2 page table page used to map
 	 * the kernel, preloaded files and module metadata.
 	 */
-	pmap_bootstrap_l2(KERNBASE + L1_SIZE);
+	pmap_bootstrap_l2(KERNBASE + L1_SIZE, VM_MAX_KERNEL_ADDRESS);
+#ifdef KMSAN
+	bs_state.va = KMSAN_SHAD_MIN_ADDRESS;
+	pmap_bootstrap_l1_table(&bs_state);
+	bs_state.va = KMSAN_ORIG_MIN_ADDRESS;
+	pmap_bootstrap_l1_table(&bs_state);
+
+/*
+ *	pmap_bootstrap_l2(KMSAN_SHAD_MIN_ADDRESS, KMSAN_SHAD_MAX_ADDRESS);
+ *	pmap_bootstrap_l2(KMSAN_ORIG_MIN_ADDRESS, KMSAN_ORIG_MAX_ADDRESS);
+ */
+#endif
 	/* And the l3 tables for the early devmap */
-	pmap_bootstrap_l3(VM_MAX_KERNEL_ADDRESS - (PMAP_MAPDEV_EARLY_SIZE));
+	pmap_bootstrap_l3(VM_MAX_KERNEL_ADDRESS - (PMAP_MAPDEV_EARLY_SIZE),
+	    VM_MAX_KERNEL_ADDRESS);
 
 	cpu_tlb_flushID();
 
@@ -1357,7 +1370,13 @@ pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
 	cpu_tlb_flushID();
 }
 
-#if defined(KASAN)
+#if defined(KASAN) || defined(KMSAN)
+#ifdef KMSAN
+static void __nosanitizeaddress __nosanitizememory
+pmap_san_enter_bootstrap(void);
+static pd_entry_t	*pmap_kmsan_shad_early_l2;
+static pd_entry_t	*pmap_kmsan_orig_early_l2;
+#endif
 /*
  * Finish constructing the initial shadow map:
  * - Count how many pages from KERNBASE to virtual_avail (scaled for
@@ -1365,22 +1384,23 @@ pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
  * - Map that entire range using L2 superpages.
  */
 void
-pmap_bootstrap_san(vm_paddr_t kernstart)
+pmap_bootstrap_san(vm_paddr_t kernstart) __nosanitizeaddress __nosanitizememory
 {
 	vm_offset_t va;
-	int i, shadow_npages, nkasan_l2;
+	int i, shadow_npages, nksan_l2;
+	int npages = (virtual_avail - VM_MIN_KERNEL_ADDRESS) / PAGE_SIZE;
 
 	/*
 	 * Rebuild physmap one more time, we may have excluded more regions from
 	 * allocation since pmap_bootstrap().
 	 */
 	bzero(physmap, sizeof(physmap));
+#ifdef KASAN
 	physmap_idx = physmem_avail(physmap, nitems(physmap));
 	physmap_idx /= 2;
 
-	shadow_npages = (virtual_avail - VM_MIN_KERNEL_ADDRESS) / PAGE_SIZE;
-	shadow_npages = howmany(shadow_npages, KASAN_SHADOW_SCALE);
-	nkasan_l2 = howmany(shadow_npages, Ln_ENTRIES);
+	shadow_npages = howmany(npages, KASAN_SHADOW_SCALE);
+	nksan_l2 = howmany(shadow_npages, Ln_ENTRIES);
 
 	/* Map the valid KVA up to this point. */
 	va = KASAN_MIN_ADDRESS;
@@ -1390,7 +1410,7 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 	 * the shadow map as high up as we can to avoid depleting the lower 4GB in case
 	 * it's needed for, e.g., an xhci controller that can only do 32-bit DMA.
 	 */
-	for (i = (physmap_idx * 2) - 2; i >= 0 && nkasan_l2 > 0; i -= 2) {
+	for (i = (physmap_idx * 2) - 2; i >= 0 && nksan_l2 > 0; i -= 2) {
 		vm_paddr_t plow, phigh;
 
 		/* L2 mappings must be backed by memory that is L2-aligned */
@@ -1401,13 +1421,79 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 		if (kernstart >= plow && kernstart < phigh)
 			phigh = kernstart;
 		if (phigh - plow >= L2_SIZE)
-			pmap_bootstrap_allocate_kasan_l2(plow, phigh, &va,
-			    &nkasan_l2);
+			pmap_bootstrap_allocate_san_l2(plow, phigh, &va,
+			    &nksan_l2);
 	}
 
-	if (nkasan_l2 != 0)
+	if (nksan_l2 != 0)
+		panic("Could not find phys region for shadow map");
+#endif
+#ifdef KMSAN
+	pmap_san_enter_bootstrap();
+
+	/* --- SHADOW --- */
+	physmap_idx = physmem_avail(physmap, nitems(physmap));
+	physmap_idx /= 2;
+
+	shadow_npages = npages;
+	nksan_l2 = howmany(shadow_npages, Ln_ENTRIES);
+
+	/* Map the valid KVA up to this point. */
+	va = KMSAN_SHAD_MIN_ADDRESS;
+
+	/*
+	 * Find a slot in the physmap large enough for what we needed.  We try to put
+	 * the shadow map as high up as we can to avoid depleting the lower 4GB in case
+	 * it's needed for, e.g., an xhci controller that can only do 32-bit DMA.
+	 */
+	for (i = (physmap_idx * 2) - 2; i >= 0 && nksan_l2 > 0; i -= 2) {
+		vm_paddr_t plow, phigh;
+
+		/* L2 mappings must be backed by memory that is L2-aligned */
+		plow = roundup2(physmap[i], L2_SIZE);
+		phigh = physmap[i + 1];
+		if (plow >= phigh)
+			continue;
+		if (kernstart >= plow && kernstart < phigh)
+			phigh = kernstart;
+		if (phigh - plow >= L2_SIZE)
+			pmap_bootstrap_allocate_san_l2(plow, phigh, &va,
+			    &nksan_l2);
+	}
+
+	if (nksan_l2 != 0)
 		panic("Could not find phys region for shadow map");
 
+	/* --- ORIGIN --- */
+	physmap_idx = physmem_avail(physmap, nitems(physmap));
+	physmap_idx /= 2;
+
+	/* Map the valid KVA up to this point. */
+	va = KMSAN_ORIG_MIN_ADDRESS;
+
+	/*
+	 * Find a slot in the physmap large enough for what we needed.  We try to put
+	 * the shadow map as high up as we can to avoid depleting the lower 4GB in case
+	 * it's needed for, e.g., an xhci controller that can only do 32-bit DMA.
+	 */
+	for (i = (physmap_idx * 2) - 2; i >= 0 && nksan_l2 > 0; i -= 2) {
+		vm_paddr_t plow, phigh;
+
+		/* L2 mappings must be backed by memory that is L2-aligned */
+		plow = roundup2(physmap[i], L2_SIZE);
+		phigh = physmap[i + 1];
+		if (plow >= phigh)
+			continue;
+		if (kernstart >= plow && kernstart < phigh)
+			phigh = kernstart;
+		if (phigh - plow >= L2_SIZE)
+			pmap_bootstrap_allocate_san_l2(plow, phigh, &va,
+			    &nksan_l2);
+	}
+
+	if (nksan_l2 != 0)
+		panic("Could not find phys region for shadow map");
+#endif
 	/*
 	 * Done. We should now have a valid shadow address mapped for all KVA
 	 * that has been mapped so far, i.e., KERNBASE to virtual_avail. Thus,
@@ -7837,21 +7923,65 @@ pmap_is_valid_memattr(pmap_t pmap __unused, vm_memattr_t mode)
 	return (mode >= VM_MEMATTR_DEVICE && mode <= VM_MEMATTR_WRITE_THROUGH);
 }
 
-#if defined(KASAN)
+#if defined(KASAN) || defined(KMSAN)
 static vm_paddr_t	pmap_san_early_kernstart;
-static pd_entry_t	*pmap_san_early_l2;
-
-void __nosanitizeaddress
+/*
+ *static pd_entry_t	*pmap_san_early_l2;
+ */
+/*
+ * this functions is called from locore.S before initarm()
+ */
+void __nosanitizeaddress __nosanitizememory
 pmap_san_bootstrap(struct arm64_bootparams *abp)
 {
 
 	pmap_san_early_kernstart = KERNBASE - abp->kern_delta;
+#ifdef KASAN
 	kasan_init_early(abp->kern_stack, KSTACK_PAGES * PAGE_SIZE);
+#endif
+#ifdef KMSAN
+/*
+ *	kmsan_shadow_map(abp->kern_stack, KSTACK_PAGES * PAGE_SIZE);
+ */
+#endif
 }
 
-#define	SAN_BOOTSTRAP_L2_SIZE	(1 * L2_SIZE)
-#define	SAN_BOOTSTRAP_SIZE	(2 * PAGE_SIZE)
-static vm_offset_t __nosanitizeaddress
+#if defined(KASAN) && defined(KMSAN)
+#elif defined(KMSAN)
+#elif defined(KASAN)
+#else
+#error "no KASAN, no KMSAN"
+#endif
+
+#ifdef KASAN
+static pd_entry_t	*pmap_kasan_early_l2;
+#endif
+/*
+ *#ifdef KMSAN
+ *static pd_entry_t	*pmap_kmsan_shad_early_l2;
+ *static pd_entry_t	*pmap_kmsan_orig_early_l2;
+ *#endif
+ */
+
+/*
+ * We need 2 pages (L1, L2)
+ */
+#if defined(KASAN) && defined(KMSAN)
+#define SAN_NPAGES	(6)	/* KASAN, KMSAN */
+#elif defined(KMSAN)
+#define SAN_NPAGES	(4)	/* KMSAN only */
+#else
+#define SAN_NPAGES	(2)	/* KASAN only */
+#endif
+
+/*
+ *#define	SAN_BOOTSTRAP_L2_SIZE	(1 * L2_SIZE)
+ */
+#define	SAN_BOOTSTRAP_L2_SIZE	((SAN_NPAGES/2) * L2_SIZE)
+#define	SAN_BOOTSTRAP_SIZE	(SAN_NPAGES * PAGE_SIZE)
+
+#if defined(KASAN) || defined(KMSAN)
+static vm_offset_t __nosanitizeaddress __nosanitizememory
 pmap_san_enter_bootstrap_alloc_l2(void)
 {
 	static uint8_t bootstrap_data[SAN_BOOTSTRAP_L2_SIZE] __aligned(L2_SIZE);
@@ -7871,7 +8001,7 @@ pmap_san_enter_bootstrap_alloc_l2(void)
 /*
  * SAN L1 + L2 pages, maybe L3 entries later?
  */
-static vm_offset_t __nosanitizeaddress
+static vm_offset_t __nosanitizeaddress __nosanitizememory
 pmap_san_enter_bootstrap_alloc_pages(int npages)
 {
 	static uint8_t bootstrap_data[SAN_BOOTSTRAP_SIZE] __aligned(PAGE_SIZE);
@@ -7888,18 +8018,35 @@ pmap_san_enter_bootstrap_alloc_pages(int npages)
 	return (addr);
 }
 
-static void __nosanitizeaddress
+static void __nosanitizeaddress __nosanitizememory
 pmap_san_enter_bootstrap(void)
 {
 	vm_offset_t freemempos;
 
+#ifdef KASAN
 	/* L1, L2 */
 	freemempos = pmap_san_enter_bootstrap_alloc_pages(2);
 	bs_state.freemempos = freemempos;
 	bs_state.va = KASAN_MIN_ADDRESS;
 	pmap_bootstrap_l1_table(&bs_state);
-	pmap_san_early_l2 = bs_state.l2;
+	pmap_kasan_early_l2 = bs_state.l2;
+#endif
+#ifdef KMSAN
+	/* L1, L2 */
+	freemempos = pmap_san_enter_bootstrap_alloc_pages(2);
+	bs_state.freemempos = freemempos;
+	bs_state.va = KMSAN_SHAD_MIN_ADDRESS;
+	pmap_bootstrap_l1_table(&bs_state);
+	pmap_kmsan_shad_early_l2 = bs_state.l2;
+
+	freemempos = pmap_san_enter_bootstrap_alloc_pages(2);
+	bs_state.freemempos = freemempos;
+	bs_state.va = KMSAN_ORIG_MIN_ADDRESS;
+	pmap_bootstrap_l1_table(&bs_state);
+	pmap_kmsan_orig_early_l2 = bs_state.l2;
+#endif
 }
+#endif
 
 static vm_page_t
 pmap_san_enter_alloc_l3(void)
@@ -7920,7 +8067,7 @@ pmap_san_enter_alloc_l2(void)
 	    Ln_ENTRIES, 0, ~0ul, L2_SIZE, 0, VM_MEMATTR_DEFAULT));
 }
 
-void __nosanitizeaddress
+void __nosanitizeaddress __nosanitizememory
 pmap_san_enter(vm_offset_t va)
 {
 	pd_entry_t *l1, *l2;
@@ -7933,11 +8080,28 @@ pmap_san_enter(vm_offset_t va)
 		bool first;
 
 		/* Temporary shadow map prior to pmap_bootstrap(). */
-		first = pmap_san_early_l2 == NULL;
+#if defined(KASAN)
+		first = pmap_kasan_early_l2 == NULL;
+#else
+		first = pmap_kmsan_shad_early_l2 == NULL;
+#endif
 		if (first)
 			pmap_san_enter_bootstrap();
+#ifdef KASAN
+		l2 = pmap_kasan_early_l2;
+		slot = pmap_l2_index(va);
 
-		l2 = pmap_san_early_l2;
+		if ((pmap_load(&l2[slot]) & ATTR_DESCR_VALID) == 0) {
+			MPASS(first);
+			block = pmap_san_enter_bootstrap_alloc_l2();
+			pmap_store(&l2[slot],
+			    PHYS_TO_PTE(pmap_early_vtophys(block)) |
+			    PMAP_SAN_PTE_BITS | L2_BLOCK);
+			dmb(ishst);
+		}
+#endif
+#ifdef KMSAN
+		l2 = pmap_kmsan_orig_early_l2;
 		slot = pmap_l2_index(va);
 
 		if ((pmap_load(&l2[slot]) & ATTR_DESCR_VALID) == 0) {
@@ -7949,6 +8113,18 @@ pmap_san_enter(vm_offset_t va)
 			dmb(ishst);
 		}
 
+		l2 = pmap_kmsan_shad_early_l2;
+		slot = pmap_l2_index(va);
+
+		if ((pmap_load(&l2[slot]) & ATTR_DESCR_VALID) == 0) {
+			MPASS(first);
+			block = pmap_san_enter_bootstrap_alloc_l2();
+			pmap_store(&l2[slot],
+			    PHYS_TO_PTE(pmap_early_vtophys(block)) |
+			    PMAP_SAN_PTE_BITS | L2_BLOCK);
+			dmb(ishst);
+		}
+#endif
 		return;
 	}
 
@@ -7982,7 +8158,7 @@ pmap_san_enter(vm_offset_t va)
 	    PMAP_SAN_PTE_BITS | L3_PAGE);
 	dmb(ishst);
 }
-#endif /* KASAN */
+#endif /* KASAN || KMSAN */
 
 /*
  * Track a range of the kernel's virtual address space that is contiguous
@@ -8158,6 +8334,12 @@ sysctl_kmaps(SYSCTL_HANDLER_ARGS)
 #ifdef KASAN
 		else if (i == pmap_l0_index(KASAN_MIN_ADDRESS))
 			sbuf_printf(sb, "\nKASAN shadow map:\n");
+#endif
+#ifdef KMSAN
+		else if (i == pmap_l0_index(KMSAN_SHAD_MIN_ADDRESS))
+			sbuf_printf(sb, "\nKMSAN shadow map:\n");
+		else if (i == pmap_l0_index(KMSAN_ORIG_MIN_ADDRESS))
+			sbuf_printf(sb, "\nKMSAN origin map:\n");
 #endif
 
 		l0e = kernel_pmap->pm_l0[i];

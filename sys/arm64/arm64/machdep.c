@@ -34,7 +34,6 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/asan.h>
-#include <sys/msan.h>
 #include <sys/buf.h>
 #include <sys/bus.h>
 #include <sys/cons.h>
@@ -49,6 +48,7 @@
 #include <sys/ktr.h>
 #include <sys/limits.h>
 #include <sys/linker.h>
+#include <sys/msan.h>
 #include <sys/msgbuf.h>
 #include <sys/pcpu.h>
 #include <sys/physmem.h>
@@ -973,7 +973,7 @@ initarm(struct arm64_bootparams *abp)
 	 * we'll end up searching for segments that we can safely use.  Those
 	 * segments also get excluded from phys_avail.
 	 */
-#if defined(KASAN)
+#if defined(KASAN) || defined(KMSAN)
 	pmap_bootstrap_san(KERNBASE - abp->kern_delta);
 #endif
 

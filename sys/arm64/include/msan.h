@@ -1,3 +1,6 @@
+/*
+ * Copyright 2023, Klara Systems.
+ */
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
@@ -83,8 +86,7 @@ kmsan_md_unsupported(vm_offset_t addr)
 	 * (GENERIC-KMSAN is ~80MB at the time of writing), shadowing would
 	 * incur signficant memory usage.
 	 */
-	//return (addr < VM_MIN_KERNEL_ADDRESS || addr >= KERNBASE);
-	return (true);
+	return (addr < VM_MIN_KERNEL_ADDRESS || addr >= KERNBASE);
 }
 
 #endif /* KMSAN */
