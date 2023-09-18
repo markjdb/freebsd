@@ -72,12 +72,12 @@ void kmsan_init_ret(size_t);
  */
 
 typedef struct {
-	uintptr_t	shad;
-	uintptr_t	orig;
 /*
- *	uint8_t		*shad;
- *	msan_orig_t	*orig;
+ *	uintptr_t	shad;
+ *	uintptr_t	orig;
  */
+	uint8_t		*shad;
+	msan_orig_t	*orig;
 } msan_meta_t;
 
 #define MSAN_PARAM_SIZE		(800)
@@ -281,18 +281,34 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 	msan_meta_t ret;
 
 	if (__predict_false(!kmsan_enabled)) {
-		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
-		    msan_dummy_shad);
-		ret.orig = (uintptr_t)msan_dummy_orig;
+		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
+		ret.orig = (msan_orig_t *)msan_dummy_orig;
+/*
+ *		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
+ *		    msan_dummy_shad);
+ *		ret.orig = (uintptr_t)msan_dummy_orig;
+ */
 	} else if (__predict_false(kmsan_md_unsupported((vm_offset_t)addr))) {
-		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
-		    msan_dummy_shad);
-		ret.orig = (uintptr_t)msan_dummy_orig;
+		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
+		ret.orig = (msan_orig_t *)msan_dummy_orig;
+/*
+ *		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
+ *		    msan_dummy_shad);
+ *		ret.orig = (uintptr_t)msan_dummy_orig;
+ */
 	} else {
-		ret.shad = (uintptr_t)kmsan_md_addr_to_shad((vm_offset_t)addr);
+		ret.shad = (void *)kmsan_md_addr_to_shad((vm_offset_t)addr);
+/*
+ *		ret.shad = (uintptr_t)kmsan_md_addr_to_shad((vm_offset_t)addr);
+ */
 		ret.orig =
-		    (uintptr_t)kmsan_md_addr_to_orig((vm_offset_t)addr);
-		ret.orig = (ret.orig & MSAN_ORIG_MASK);
+		    (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
+		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
+		    MSAN_ORIG_MASK);
+/*
+ *		    (uintptr_t)kmsan_md_addr_to_orig((vm_offset_t)addr);
+ *		ret.orig = (ret.orig & MSAN_ORIG_MASK);
+ */
 	}
 
 	return (ret);
@@ -716,7 +732,6 @@ __msan_get_context_state(void)
 	 */
 	if (__predict_false(!kmsan_enabled || curthread == NULL))
 		return (&dummy_tls);
-
 	mtd = curthread->td_kmsan;
 	return (&mtd->tls[mtd->ctx]);
 }
