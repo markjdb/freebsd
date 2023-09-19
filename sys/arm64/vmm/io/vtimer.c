@@ -98,7 +98,6 @@ vtimer_virtual_timer_intr(void *arg)
 		vgic_inject_irq(hypctx->hyp, vcpu_vcpuid(hypctx->vcpu),
 		    GT_VIRT_IRQ, true);
 
-	//hypctx->vtimer_cpu.virt_timer.cntx_ctl_el0 &= ~CNTP_CTL_ENABLE;
 	cntv_ctl = hypctx->vtimer_cpu.virt_timer.cntx_ctl_el0;
 
 out:

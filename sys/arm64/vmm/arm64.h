@@ -151,30 +151,12 @@ DEFINE_VMMOPS_IFUNC(int, restore_tsc, (void *vcpui, uint64_t now))
 
 uint64_t	vmm_call_hyp(uint64_t, ...);
 
+#if 0
 #define	eprintf(fmt, ...)	printf("%s:%d " fmt, __func__, __LINE__, ##__VA_ARGS__)
-//#define	eprintf(fmt, ...)	do {} while(0)
+#else
+#define	eprintf(fmt, ...)	do {} while(0)
+#endif
 
-#define	VMID_GENERATION_MASK 		((1UL<<8) - 1)
-#define	build_vttbr(vmid, ptaddr) 	\
-		((((vmid) & VMID_GENERATION_MASK) << VTTBR_VMID_SHIFT) | \
-						(uint64_t)(ptaddr))
-
-#define	MPIDR_SMP_MASK 		(0x3 << 30)
-#define	MPIDR_AFF1_LEVEL(x) 	(((x) >> 2) << 8)
-#define	MPIDR_AFF0_LEVEL(x) 	(((x) & 0x3) << 0)
-
-/*
- * Return true if the exception was caused by a translation fault in the stage 2
- * translation regime. The DFSC encoding for a translation fault has the format
- * 0b0001LL, where LL (bits [1:0]) represents the level where the fault occured
- * (page D7-2280 of the ARMv8 Architecture Manual).
- */
-#define	ISS_DATA_DFSC_TF(esr_iss)	\
-		(!((esr_iss) & 0b111000) && ((esr_iss) & 0b000100))
-#define	FAR_EL2_PAGE_OFFSET(x)		((x) & PAGE_MASK)
-
-#define	DEBUG_ME	0
-
-#define	arm64_get_active_vcpu()		((struct hypctx *)PCPU_GET(vcpu))
+struct hypctx *arm64_get_active_vcpu(void);
 
 #endif /* !_VMM_ARM64_H_ */

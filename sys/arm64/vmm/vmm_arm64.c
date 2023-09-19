@@ -105,11 +105,18 @@ static void vmm_pmap_clean_stage2_tlbi(void);
 static void vmm_pmap_invalidate_range(uint64_t, vm_offset_t, vm_offset_t, bool);
 static void vmm_pmap_invalidate_all(uint64_t);
 
+DPCPU_DEFINE_STATIC(struct hypctx *, vcpu);
+
 static inline void
 arm64_set_active_vcpu(struct hypctx *hypctx)
 {
+	DPCPU_SET(vcpu, hypctx);
+}
 
-	PCPU_SET(vcpu, hypctx);
+struct hypctx *
+arm64_get_active_vcpu(void)
+{
+	return (DPCPU_GET(vcpu));
 }
 
 static void
@@ -587,7 +594,6 @@ arm64_gen_inst_emul_data(struct hypctx *hypctx, uint32_t esr_iss,
 	struct vm_guest_paging *paging;
 	struct vie *vie;
 	uint32_t esr_sas, reg_num;
-	uint64_t page_off;
 
 	/*
 	 * Get the page address from HPFAR_EL2.
@@ -595,8 +601,8 @@ arm64_gen_inst_emul_data(struct hypctx *hypctx, uint32_t esr_iss,
 	vme_ret->u.inst_emul.gpa =
 	    HPFAR_EL2_FIPA_ADDR(hypctx->exit_info.hpfar_el2);
 	/* Bits [11:0] are the same as bits [11:0] from the virtual address. */
-	page_off = FAR_EL2_PAGE_OFFSET(hypctx->exit_info.far_el2);
-	vme_ret->u.inst_emul.gpa += page_off;
+	vme_ret->u.inst_emul.gpa += hypctx->exit_info.far_el2 &
+	    FAR_EL2_HPFAR_PAGE_MASK;
 
 	esr_sas = (esr_iss & ISS_DATA_SAS_MASK) >> ISS_DATA_SAS_SHIFT;
 	reg_num = (esr_iss & ISS_DATA_SRT_MASK) >> ISS_DATA_SRT_SHIFT;
