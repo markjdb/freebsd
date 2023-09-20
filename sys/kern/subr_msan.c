@@ -72,10 +72,6 @@ void kmsan_init_ret(size_t);
  */
 
 typedef struct {
-/*
- *	uintptr_t	shad;
- *	uintptr_t	orig;
- */
 	uint8_t		*shad;
 	msan_orig_t	*orig;
 } msan_meta_t;
@@ -273,6 +269,12 @@ out:
 	kmsan_reporting = false;
 }
 
+static inline vm_offset_t
+kmsan_md_addr_to_orig(vm_offset_t addr)
+{
+	//return ((addr - VM_MIN_KERNEL_ADDRESS) % PAGE_SIZE + msan_dummy_orig);
+	return ((vm_offset_t)(uintptr_t)msan_dummy_orig);
+}
 /* -------------------------------------------------------------------------- */
 
 static inline msan_meta_t
@@ -283,32 +285,15 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 	if (__predict_false(!kmsan_enabled)) {
 		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
 		ret.orig = (msan_orig_t *)msan_dummy_orig;
-/*
- *		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
- *		    msan_dummy_shad);
- *		ret.orig = (uintptr_t)msan_dummy_orig;
- */
 	} else if (__predict_false(kmsan_md_unsupported((vm_offset_t)addr))) {
 		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
 		ret.orig = (msan_orig_t *)msan_dummy_orig;
-/*
- *		ret.shad = (uintptr_t)(write ? msan_dummy_write_shad :
- *		    msan_dummy_shad);
- *		ret.orig = (uintptr_t)msan_dummy_orig;
- */
 	} else {
 		ret.shad = (void *)kmsan_md_addr_to_shad((vm_offset_t)addr);
-/*
- *		ret.shad = (uintptr_t)kmsan_md_addr_to_shad((vm_offset_t)addr);
- */
 		ret.orig =
 		    (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
 		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
 		    MSAN_ORIG_MASK);
-/*
- *		    (uintptr_t)kmsan_md_addr_to_orig((vm_offset_t)addr);
- *		ret.orig = (ret.orig & MSAN_ORIG_MASK);
- */
 	}
 
 	return (ret);
@@ -368,7 +353,6 @@ kmsan_meta_copy(void *dst, const void *src, size_t size)
 	shad_src = (uint8_t *)kmsan_md_addr_to_shad((vm_offset_t)src);
 	shad_dst = (uint8_t *)kmsan_md_addr_to_shad((vm_offset_t)dst);
 	__builtin_memmove(shad_dst, shad_src, size);
-
 	orig_src = (uint8_t *)kmsan_md_addr_to_orig((vm_offset_t)src);
 	orig_dst = (uint8_t *)kmsan_md_addr_to_orig((vm_offset_t)dst);
 	for (i = 0; i < size; i++) {
@@ -554,10 +538,12 @@ kmsan_shadow_map(vm_offset_t addr, size_t size)
 		pmap_san_enter(va + ptoa(i));
 	}
 
-	va = kmsan_md_addr_to_orig(addr);
-	for (i = 0; i < npages; i++) {
-		pmap_san_enter(va + ptoa(i));
-	}
+/*
+ *	va = kmsan_md_addr_to_orig(addr);
+ *	for (i = 0; i < npages; i++) {
+ *		pmap_san_enter(va + ptoa(i));
+ *	}
+ */
 }
 
 void

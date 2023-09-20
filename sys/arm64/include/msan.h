@@ -71,11 +71,13 @@ kmsan_md_addr_to_shad(vm_offset_t addr)
 	return (addr - VM_MIN_KERNEL_ADDRESS + KMSAN_SHAD_MIN_ADDRESS);
 }
 
-static inline vm_offset_t
-kmsan_md_addr_to_orig(vm_offset_t addr)
-{
-	return (addr - VM_MIN_KERNEL_ADDRESS + KMSAN_ORIG_MIN_ADDRESS);
-}
+/*
+ *static inline vm_offset_t
+ *kmsan_md_addr_to_orig(vm_offset_t addr)
+ *{
+ *	return (addr - VM_MIN_KERNEL_ADDRESS + KMSAN_ORIG_MIN_ADDRESS);
+ *}
+ */
 
 static inline bool
 kmsan_md_unsupported(vm_offset_t addr)

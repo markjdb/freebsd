@@ -1209,6 +1209,9 @@ pmap_bootstrap_l3(vm_offset_t va, vm_offset_t ve)
 }
 
 #if defined(KASAN) || defined(KMSAN)
+/*
+ * This requires l1, l2 tables allocated.
+ */
 static void
 pmap_bootstrap_allocate_san_l2(vm_paddr_t start_pa, vm_paddr_t end_pa,
     vm_offset_t *start_va, int *nkasan_l2)
@@ -1325,17 +1328,7 @@ pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
 	 * the kernel, preloaded files and module metadata.
 	 */
 	pmap_bootstrap_l2(KERNBASE + L1_SIZE, VM_MAX_KERNEL_ADDRESS);
-#ifdef KMSAN
-	bs_state.va = KMSAN_SHAD_MIN_ADDRESS;
-	pmap_bootstrap_l1_table(&bs_state);
-	bs_state.va = KMSAN_ORIG_MIN_ADDRESS;
-	pmap_bootstrap_l1_table(&bs_state);
 
-/*
- *	pmap_bootstrap_l2(KMSAN_SHAD_MIN_ADDRESS, KMSAN_SHAD_MAX_ADDRESS);
- *	pmap_bootstrap_l2(KMSAN_ORIG_MIN_ADDRESS, KMSAN_ORIG_MAX_ADDRESS);
- */
-#endif
 	/* And the l3 tables for the early devmap */
 	pmap_bootstrap_l3(VM_MAX_KERNEL_ADDRESS - (PMAP_MAPDEV_EARLY_SIZE),
 	    VM_MAX_KERNEL_ADDRESS);
@@ -1383,9 +1376,14 @@ static pd_entry_t	*pmap_kmsan_orig_early_l2;
  *   shadow map)
  * - Map that entire range using L2 superpages.
  */
+/*
+ *void
+ *pmap_bootstrap_san(vm_paddr_t kernstart) __nosanitizeaddress __nosanitizememory
+ */
 void
-pmap_bootstrap_san(vm_paddr_t kernstart) __nosanitizeaddress __nosanitizememory
+pmap_bootstrap_san(vm_paddr_t kernbase, uint64_t kern_delta) __nosanitizeaddress __nosanitizememory
 {
+	vm_paddr_t kernstart = kernbase - kern_delta;
 	vm_offset_t va;
 	int i, shadow_npages, nksan_l2;
 	int npages = (virtual_avail - VM_MIN_KERNEL_ADDRESS) / PAGE_SIZE;
@@ -1463,10 +1461,13 @@ pmap_bootstrap_san(vm_paddr_t kernstart) __nosanitizeaddress __nosanitizememory
 
 	if (nksan_l2 != 0)
 		panic("Could not find phys region for shadow map");
-
+#if 0
 	/* --- ORIGIN --- */
 	physmap_idx = physmem_avail(physmap, nitems(physmap));
 	physmap_idx /= 2;
+
+	shadow_npages = npages;
+	nksan_l2 = howmany(shadow_npages, Ln_ENTRIES);
 
 	/* Map the valid KVA up to this point. */
 	va = KMSAN_ORIG_MIN_ADDRESS;
@@ -1493,6 +1494,7 @@ pmap_bootstrap_san(vm_paddr_t kernstart) __nosanitizeaddress __nosanitizememory
 
 	if (nksan_l2 != 0)
 		panic("Could not find phys region for shadow map");
+#endif
 #endif
 	/*
 	 * Done. We should now have a valid shadow address mapped for all KVA
@@ -2806,8 +2808,10 @@ pmap_growkernel(vm_offset_t addr)
 	addr = roundup2(addr, L2_SIZE);
 	if (addr - 1 >= vm_map_max(kernel_map))
 		addr = vm_map_max(kernel_map);
-	if (kernel_vm_end < addr)
+	if (kernel_vm_end < addr) {
 		kasan_shadow_map(kernel_vm_end, addr - kernel_vm_end);
+		kmsan_shadow_map(kernel_vm_end, addr - kernel_vm_end);
+	}
 	while (kernel_vm_end < addr) {
 		l0 = pmap_l0(kernel_pmap, kernel_vm_end);
 		KASSERT(pmap_load(l0) != 0,
@@ -7966,12 +7970,10 @@ static pd_entry_t	*pmap_kasan_early_l2;
 /*
  * We need 2 pages (L1, L2)
  */
-#if defined(KASAN) && defined(KMSAN)
-#define SAN_NPAGES	(6)	/* KASAN, KMSAN */
-#elif defined(KMSAN)
-#define SAN_NPAGES	(4)	/* KMSAN only */
-#else
+#if defined(KASAN)
 #define SAN_NPAGES	(2)	/* KASAN only */
+#else
+#define SAN_NPAGES	(16)	/* KMSAN */
 #endif
 
 /*
@@ -8074,10 +8076,12 @@ pmap_san_enter(vm_offset_t va)
 	pt_entry_t *l3;
 	vm_page_t m;
 
+	/* ALL this code sucks and should be remade for KMSAN at least */
 	if (virtual_avail == 0) {
 		vm_offset_t block;
 		int slot;
 		bool first;
+		panic("=== XXXXXXXXXXXXX===: 0x%lx", va);
 
 		/* Temporary shadow map prior to pmap_bootstrap(). */
 #if defined(KASAN)
