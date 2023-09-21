@@ -71,13 +71,11 @@ kmsan_md_addr_to_shad(vm_offset_t addr)
 	return (addr - VM_MIN_KERNEL_ADDRESS + KMSAN_SHAD_MIN_ADDRESS);
 }
 
-/*
- *static inline vm_offset_t
- *kmsan_md_addr_to_orig(vm_offset_t addr)
- *{
- *	return (addr - VM_MIN_KERNEL_ADDRESS + KMSAN_ORIG_MIN_ADDRESS);
- *}
- */
+static inline vm_offset_t
+kmsan_md_addr_to_orig(vm_offset_t addr)
+{
+	return (addr - VM_MIN_KERNEL_ADDRESS + KMSAN_ORIG_MIN_ADDRESS);
+}
 
 static inline bool
 kmsan_md_unsupported(vm_offset_t addr)
@@ -88,7 +86,10 @@ kmsan_md_unsupported(vm_offset_t addr)
 	 * (GENERIC-KMSAN is ~80MB at the time of writing), shadowing would
 	 * incur signficant memory usage.
 	 */
-	return (addr < VM_MIN_KERNEL_ADDRESS || addr >= KERNBASE);
+	/*
+	 * Incorrect: for arm64 VM_MIN_KERNEL_ADDRESS == KERNBASE !!! */
+	//return (addr < VM_MIN_KERNEL_ADDRESS || addr >= VM_MAX_KERNEL_ADDRESS);
+	return (1);
 }
 
 #endif /* KMSAN */

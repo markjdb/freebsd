@@ -269,12 +269,6 @@ out:
 	kmsan_reporting = false;
 }
 
-static inline vm_offset_t
-kmsan_md_addr_to_orig(vm_offset_t addr)
-{
-	//return ((addr - VM_MIN_KERNEL_ADDRESS) % PAGE_SIZE + msan_dummy_orig);
-	return ((vm_offset_t)(uintptr_t)msan_dummy_orig);
-}
 /* -------------------------------------------------------------------------- */
 
 static inline msan_meta_t
@@ -290,10 +284,13 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 		ret.orig = (msan_orig_t *)msan_dummy_orig;
 	} else {
 		ret.shad = (void *)kmsan_md_addr_to_shad((vm_offset_t)addr);
-		ret.orig =
-		    (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
-		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
-		    MSAN_ORIG_MASK);
+/*
+ *		ret.orig =
+ *		    (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
+ *		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
+ *		    MSAN_ORIG_MASK);
+ */
+		ret.orig = (msan_orig_t *)msan_dummy_orig;
 	}
 
 	return (ret);
@@ -302,14 +299,16 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 static inline void
 kmsan_origin_fill(const void *addr, msan_orig_t o, size_t size)
 {
-	msan_orig_t *orig;
-	size_t i;
+/*
+ *	msan_orig_t *orig;
+ *	size_t i;
+ */
 
 	if (__predict_false(!kmsan_enabled))
 		return;
 	if (__predict_false(kmsan_md_unsupported((vm_offset_t)addr)))
 		return;
-
+#if 0
 	orig = (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
 	size += ((uintptr_t)orig & (sizeof(*orig) - 1));
 	orig = (msan_orig_t *)((uintptr_t)orig & MSAN_ORIG_MASK);
@@ -317,6 +316,7 @@ kmsan_origin_fill(const void *addr, msan_orig_t o, size_t size)
 	for (i = 0; i < size; i += 4) {
 		orig[i / 4] = o;
 	}
+#endif
 }
 
 static inline void
@@ -336,10 +336,14 @@ kmsan_shadow_fill(uintptr_t addr, uint8_t c, size_t size)
 static inline void
 kmsan_meta_copy(void *dst, const void *src, size_t size)
 {
-	uint8_t *orig_src, *orig_dst;
+/*
+ *	uint8_t *orig_src, *orig_dst;
+ */
 	uint8_t *shad_src, *shad_dst;
-	msan_orig_t *_src, *_dst;
-	size_t i;
+/*
+ *	msan_orig_t *_src, *_dst;
+ *	size_t i;
+ */
 
 	if (__predict_false(!kmsan_enabled))
 		return;
@@ -353,6 +357,7 @@ kmsan_meta_copy(void *dst, const void *src, size_t size)
 	shad_src = (uint8_t *)kmsan_md_addr_to_shad((vm_offset_t)src);
 	shad_dst = (uint8_t *)kmsan_md_addr_to_shad((vm_offset_t)dst);
 	__builtin_memmove(shad_dst, shad_src, size);
+#if 0
 	orig_src = (uint8_t *)kmsan_md_addr_to_orig((vm_offset_t)src);
 	orig_dst = (uint8_t *)kmsan_md_addr_to_orig((vm_offset_t)dst);
 	for (i = 0; i < size; i++) {
@@ -362,6 +367,7 @@ kmsan_meta_copy(void *dst, const void *src, size_t size)
 		orig_src++;
 		orig_dst++;
 	}
+#endif
 }
 
 static inline void
@@ -380,7 +386,10 @@ kmsan_shadow_check(uintptr_t addr, size_t size, const char *hook)
 	for (i = 0; i < size; i++) {
 		if (__predict_true(shad[i] == 0))
 			continue;
-		orig = (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)&shad[i]);
+/*
+ *		orig = (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)&shad[i]);
+ */
+		orig = (msan_orig_t *)msan_dummy_orig;
 		orig = (msan_orig_t *)((uintptr_t)orig & MSAN_ORIG_MASK);
 		kmsan_report_hook((const char *)addr + i, orig, size, i, hook);
 		break;
