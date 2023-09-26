@@ -275,7 +275,9 @@ static inline msan_meta_t
 kmsan_meta_get(const void *addr, size_t size, const bool write)
 {
 	msan_meta_t ret;
-
+	ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
+	ret.orig = (msan_orig_t *)msan_dummy_orig;
+#if 0
 	if (__predict_false(!kmsan_enabled)) {
 		ret.shad = write ? msan_dummy_write_shad : msan_dummy_shad;
 		ret.orig = (msan_orig_t *)msan_dummy_orig;
@@ -287,11 +289,11 @@ kmsan_meta_get(const void *addr, size_t size, const bool write)
 /*
  *		ret.orig =
  *		    (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)addr);
- *		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
- *		    MSAN_ORIG_MASK);
  */
-		ret.orig = (msan_orig_t *)msan_dummy_orig;
+		ret.orig = (msan_orig_t *)((uintptr_t)ret.orig &
+		    MSAN_ORIG_MASK);
 	}
+#endif
 
 	return (ret);
 }
@@ -391,7 +393,9 @@ kmsan_shadow_check(uintptr_t addr, size_t size, const char *hook)
  */
 		orig = (msan_orig_t *)msan_dummy_orig;
 		orig = (msan_orig_t *)((uintptr_t)orig & MSAN_ORIG_MASK);
-		kmsan_report_hook((const char *)addr + i, orig, size, i, hook);
+/*
+ *		kmsan_report_hook((const char *)addr + i, orig, size, i, hook);
+ */
 		break;
 	}
 }
@@ -429,7 +433,9 @@ kmsan_init_ret(size_t n)
 static void
 kmsan_check_arg(size_t size, const char *hook)
 {
-	msan_orig_t *orig;
+/*
+ *	msan_orig_t *orig;
+ */
 	msan_td_t *mtd;
 	uint8_t *arg;
 	size_t ctx, i;
@@ -445,8 +451,12 @@ kmsan_check_arg(size_t size, const char *hook)
 	for (i = 0; i < size; i++) {
 		if (__predict_true(arg[i] == 0))
 			continue;
-		orig = &mtd->tls[ctx].param_origin[i / sizeof(msan_orig_t)];
-		kmsan_report_hook((const char *)arg + i, orig, size, i, hook);
+/*
+ *		orig = &mtd->tls[ctx].param_origin[i / sizeof(msan_orig_t)];
+ */
+/*
+ *		kmsan_report_hook((const char *)arg + i, orig, size, i, hook);
+ */
 		break;
 	}
 }
@@ -537,8 +547,10 @@ kmsan_shadow_map(vm_offset_t addr, size_t size)
 	MPASS(addr % PAGE_SIZE == 0);
 	MPASS(size % PAGE_SIZE == 0);
 
-	if (!kmsan_enabled)
-		return;
+/*
+ *	if (!kmsan_enabled)
+ *		return;
+ */
 
 	npages = atop(size);
 
@@ -713,12 +725,16 @@ __msan_warning(msan_orig_t origin)
 {
 	if (__predict_false(!kmsan_enabled))
 		return;
-	kmsan_report_inline(origin, KMSAN_RET_ADDR);
+/*
+ *	kmsan_report_inline(origin, KMSAN_RET_ADDR);
+ */
 }
 
 msan_tls_t *
 __msan_get_context_state(void)
 {
+	return (&dummy_tls);
+#if 0
 	msan_td_t *mtd;
 
 	/*
@@ -729,6 +745,7 @@ __msan_get_context_state(void)
 		return (&dummy_tls);
 	mtd = curthread->td_kmsan;
 	return (&mtd->tls[mtd->ctx]);
+#endif
 }
 
 /* -------------------------------------------------------------------------- */
@@ -738,58 +755,67 @@ __msan_get_context_state(void)
  * initialized areas properly.
  */
 
-void *
+static void *
 kmsan_memcpy(void *dst, const void *src, size_t len)
 {
 	/* No kmsan_check_arg, because inlined. */
-	kmsan_init_ret(sizeof(void *));
-	if (__predict_true(len != 0)) {
-		kmsan_meta_copy(dst, src, len);
-	}
+/*
+ *	kmsan_init_ret(sizeof(void *));
+ *	if (__predict_true(len != 0)) {
+ *		kmsan_meta_copy(dst, src, len);
+ *	}
+ */
 	return (__builtin_memcpy(dst, src, len));
 }
 
-int
+static int
 kmsan_memcmp(const void *b1, const void *b2, size_t len)
 {
-	const uint8_t *_b1 = b1, *_b2 = b2;
-	size_t i;
-
-	kmsan_check_arg(sizeof(b1) + sizeof(b2) + sizeof(len),
-	    "memcmp():args");
-	kmsan_init_ret(sizeof(int));
-
-	for (i = 0; i < len; i++) {
-		if (*_b1 != *_b2) {
-			kmsan_shadow_check((uintptr_t)b1, i + 1,
-			    "memcmp():arg1");
-			kmsan_shadow_check((uintptr_t)b2, i + 1,
-			    "memcmp():arg2");
-			return (*_b1 - *_b2);
-		}
-		_b1++, _b2++;
-	}
-
-	return (0);
+        return (__builtin_memcmp(b1, b2, len));
+/*
+ *	const uint8_t *_b1 = b1, *_b2 = b2;
+ *	size_t i;
+ *
+ *	kmsan_check_arg(sizeof(b1) + sizeof(b2) + sizeof(len),
+ *	    "memcmp():args");
+ *	kmsan_init_ret(sizeof(int));
+ *
+ *	for (i = 0; i < len; i++) {
+ *		if (*_b1 != *_b2) {
+ *			kmsan_shadow_check((uintptr_t)b1, i + 1,
+ *			    "memcmp():arg1");
+ *			kmsan_shadow_check((uintptr_t)b2, i + 1,
+ *			    "memcmp():arg2");
+ *			return (*_b1 - *_b2);
+ *		}
+ *		_b1++, _b2++;
+ *	}
+ *
+ *	return (0);
+ */
 }
 
-void *
+static void *
 kmsan_memset(void *dst, int c, size_t len)
 {
 	/* No kmsan_check_arg, because inlined. */
-	kmsan_shadow_fill((uintptr_t)dst, KMSAN_STATE_INITED, len);
-	kmsan_init_ret(sizeof(void *));
+/*
+ *	kmsan_shadow_fill((uintptr_t)dst, KMSAN_STATE_INITED, len);
+ *	kmsan_init_ret(sizeof(void *));
+ */
 	return (__builtin_memset(dst, c, len));
 }
 
-void *
+static void *
 kmsan_memmove(void *dst, const void *src, size_t len)
 {
 	/* No kmsan_check_arg, because inlined. */
-	if (__predict_true(len != 0)) {
-		kmsan_meta_copy(dst, src, len);
-	}
-	kmsan_init_ret(sizeof(void *));
+/*
+ *	if (__predict_true(len != 0)) {
+ *		kmsan_meta_copy(dst, src, len);
+ *	}
+ *	kmsan_init_ret(sizeof(void *));
+ */
 	return (__builtin_memmove(dst, src, len));
 }
 
@@ -797,6 +823,7 @@ __strong_reference(kmsan_memcpy, __msan_memcpy);
 __strong_reference(kmsan_memset, __msan_memset);
 __strong_reference(kmsan_memmove, __msan_memmove);
 
+#if 0
 char *
 kmsan_strcpy(char *dst, const char *src)
 {
@@ -1066,7 +1093,6 @@ kmsan_casueword(volatile u_long *base, u_long oldval, u_long *oldvalp,
 
 /* -------------------------------------------------------------------------- */
 
-#if 0
 #include <machine/atomic.h>
 #include <sys/atomic_san.h>
 

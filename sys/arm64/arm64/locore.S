@@ -147,7 +147,7 @@ virtdone:
 	str	x23, [x0, #BP_BOOT_EL]
 	str	x4,  [x0, #BP_HCR_EL2]
 
-#if defined(KASAN)
+#if defined(KASAN) || defined(KMSAN)
 	/* Save bootparams */
 	mov	x19, x0
 

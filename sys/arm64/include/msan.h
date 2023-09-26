@@ -88,8 +88,7 @@ kmsan_md_unsupported(vm_offset_t addr)
 	 */
 	/*
 	 * Incorrect: for arm64 VM_MIN_KERNEL_ADDRESS == KERNBASE !!! */
-	//return (addr < VM_MIN_KERNEL_ADDRESS || addr >= VM_MAX_KERNEL_ADDRESS);
-	return (1);
+	return (addr < VM_MIN_KERNEL_ADDRESS || addr >= VM_MAX_KERNEL_ADDRESS);
 }
 
 #endif /* KMSAN */

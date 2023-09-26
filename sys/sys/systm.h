@@ -241,7 +241,10 @@ void	*memcpy(void * _Nonnull to, const void * _Nonnull from, size_t len);
 void	*memmove(void * _Nonnull dest, const void * _Nonnull src, size_t n);
 int	memcmp(const void *b1, const void *b2, size_t len);
 
-#ifdef SAN_NEEDS_INTERCEPTORS
+/*
+ *#ifdef SAN_NEEDS_INTERCEPTORS
+ */
+#if 0
 #define	SAN_INTERCEPTOR(func)	\
 	__CONCAT(SAN_INTERCEPTOR_PREFIX, __CONCAT(_, func))
 void	*SAN_INTERCEPTOR(memset)(void *, int, size_t);
@@ -296,7 +299,10 @@ int	copyout(const void * _Nonnull __restrict kaddr,
 int	copyout_nofault(const void * _Nonnull __restrict kaddr,
 	    void * __restrict udaddr, size_t len);
 
-#ifdef SAN_NEEDS_INTERCEPTORS
+/*
+ *#ifdef SAN_NEEDS_INTERCEPTORS
+ */
+#if 0
 int	SAN_INTERCEPTOR(copyin)(const void *, void *, size_t);
 int	SAN_INTERCEPTOR(copyinstr)(const void *, void *, size_t, size_t *);
 int	SAN_INTERCEPTOR(copyout)(const void *, void *, size_t);
@@ -327,7 +333,10 @@ int	casueword32(volatile uint32_t *base, uint32_t oldval, uint32_t *oldvalp,
 int	casueword(volatile u_long *p, u_long oldval, u_long *oldvalp,
 	    u_long newval);
 
-#if defined(SAN_NEEDS_INTERCEPTORS) && !defined(KCSAN)
+/*
+ *#if defined(SAN_NEEDS_INTERCEPTORS) && !defined(KCSAN)
+ */
+#if 0
 int	SAN_INTERCEPTOR(fubyte)(volatile const void *base);
 int	SAN_INTERCEPTOR(fuword16)(volatile const void *base);
 int	SAN_INTERCEPTOR(fueword)(volatile const void *base, long *val);
