@@ -180,6 +180,9 @@ vfp_init(void)
 				elf_hwcap |= HWCAP_VFPv4;
 		}
 
+		/* Disable to be enabled when it's used */
+		vfp_disable();
+
 		/* initialize the coprocess 10 and 11 calls
 		 * These are called to restore the registers and enable
 		 * the VFP hardware.
