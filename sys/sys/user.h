@@ -541,8 +541,10 @@ struct kinfo_ovmentry {
 	int	 _kve_ispare[3];		/* Space for more stuff. */
 };
 
-#if defined(__amd64__) || defined(__i386__)
+#if defined(__amd64__)
 #define	KINFO_VMENTRY_SIZE	1168
+#elif defined(__i386__)
+#define	KINFO_VMENTRY_SIZE	1164
 #endif
 
 struct kinfo_vmentry {
