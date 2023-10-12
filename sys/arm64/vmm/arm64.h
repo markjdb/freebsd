@@ -154,7 +154,7 @@ uint64_t	vmm_call_hyp(uint64_t, ...);
 #define	eprintf(fmt, ...)	printf("%s:%d " fmt, __func__, __LINE__, ##__VA_ARGS__)
 //#define	eprintf(fmt, ...)	do {} while(0)
 
-#define	VMID_GENERATION_MASK 		((1UL<<8) - 1)
+#define	VMID_GENERATION_MASK 		((1UL << 8) - 1)
 #define	build_vttbr(vmid, ptaddr) 	\
 		((((vmid) & VMID_GENERATION_MASK) << VTTBR_VMID_SHIFT) | \
 						(uint64_t)(ptaddr))
