@@ -72,7 +72,6 @@ struct vm_run {
 	cpuset_t	*cpuset;	/* CPU set storage */
 	size_t		cpusetsize;
 	struct vm_exit	*vm_exit;
-
 };
 
 struct vm_exception {

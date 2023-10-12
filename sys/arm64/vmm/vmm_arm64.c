@@ -192,7 +192,7 @@ static uint64_t
 vmm_vtcr_el2_sl(u_int levels)
 {
 #if PAGE_SIZE == PAGE_SIZE_4K
-	switch(levels) {
+	switch (levels) {
 	case 2:
 		return (VTCR_EL2_SL0_4K_LVL2);
 	case 3:
@@ -204,7 +204,7 @@ vmm_vtcr_el2_sl(u_int levels)
 		    levels);
 	}
 #elif PAGE_SIZE == PAGE_SIZE_16K
-	switch(levels) {
+	switch (levels) {
 	case 2:
 		return (VTCR_EL2_SL0_16K_LVL2);
 	case 3:
