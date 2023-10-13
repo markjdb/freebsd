@@ -302,9 +302,9 @@ bhyve_init_platform(struct vmctx *ctx, struct vcpu *bsp)
 		return (ENOENT);
 	}
 	load_bootrom(ctx, bootrom, &elr);
-	error = vm_set_register(bsp, VM_REG_ELR_EL2, elr);
+	error = vm_set_register(bsp, VM_REG_GUEST_PC, elr);
 	if (error != 0) {
-		warn("vm_set_register(ELR_EL2)");
+		warn("vm_set_register(GUEST_PC)");
 		return (error);
 	}
 
