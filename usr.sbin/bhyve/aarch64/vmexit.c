@@ -207,7 +207,7 @@ vmexit_smccc(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 		assert(error == 0);
 
 		/* Set the start program counter */
-		error = vm_set_register(newvcpu, VM_REG_ELR_EL2,
+		error = vm_set_register(newvcpu, VM_REG_GUEST_PC,
 		    vme->u.smccc_call.args[1]);
 		assert(error == 0);
 
