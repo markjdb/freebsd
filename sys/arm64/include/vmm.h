@@ -28,6 +28,7 @@
 #define	_VMM_H_
 
 #include <sys/param.h>
+#include <sys/cpuset.h>
 #include <vm/vm.h>
 #include <vm/pmap.h>
 
