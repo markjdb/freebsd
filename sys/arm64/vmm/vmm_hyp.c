@@ -500,6 +500,8 @@ vmm_hyp_call_guest(struct hyp *hyp, struct hypctx *hypctx)
 
 	/* Store the exit info */
 	hypctx->exit_info.far_el2 = READ_SPECIALREG(far_el2);
+	vmm_hyp_reg_store(hypctx, hyp, true);
+
 	hpfar_valid = true;
 	if (ret == EXCP_TYPE_EL1_SYNC) {
 		switch(ESR_ELx_EXCEPTION(hypctx->tf.tf_esr)) {
@@ -547,8 +549,6 @@ vmm_hyp_call_guest(struct hyp *hyp, struct hypctx *hypctx)
 			ret = EXCP_TYPE_REENTER;
 		}
 	}
-
-	vmm_hyp_reg_store(hypctx, hyp, true);
 
 	vmm_hyp_reg_restore(&host_hypctx, NULL, false);
 

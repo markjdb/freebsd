@@ -42,8 +42,6 @@ struct hypctx {
 
 	/*
 	 * EL1 control registers.
-	 * Be careful changing the layout of these as we access them from
-	 * assembly when switching between the host and guest.
 	 */
 	uint64_t	elr_el1;	/* Exception Link Register */
 	uint64_t	sp_el0;		/* Stack pointer */
@@ -127,7 +125,7 @@ DEFINE_VMMOPS_IFUNC(int, modcleanup, (void))
 DEFINE_VMMOPS_IFUNC(void *, init, (struct vm *vm, struct pmap *pmap))
 DEFINE_VMMOPS_IFUNC(void, gla2gpa, (void *vcpui, uint64_t gla, int prot,
     uint64_t *gpa, int *is_fault))
-DEFINE_VMMOPS_IFUNC(int, run, (void *vcpui, register_t rip, struct pmap *pmap,
+DEFINE_VMMOPS_IFUNC(int, run, (void *vcpui, register_t pc, struct pmap *pmap,
     struct vm_eventinfo *info))
 DEFINE_VMMOPS_IFUNC(void, cleanup, (void *vmi))
 DEFINE_VMMOPS_IFUNC(void *, vcpu_init, (void *vmi, struct vcpu *vcpu,

@@ -260,7 +260,7 @@ LEND(handle_hyp_init)
 	/* We got the exception while the host was running */
 	ldr	x9, [sp], #16
 	mov	x0, \type
-	eret
+	ERET
 .endm
 
 
@@ -358,7 +358,7 @@ ENTRY(vmm_enter_guest)
 	restore_guest_registers
 
 	/* Enter guest */
-	eret
+	ERET
 END(vmm_enter_guest)
 
 /*

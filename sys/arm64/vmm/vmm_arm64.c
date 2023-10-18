@@ -1039,7 +1039,7 @@ vmmops_cleanup(void *vmi)
  * Return register value. Registers have different sizes and an explicit cast
  * must be made to ensure proper conversion.
  */
-static void *
+static uint64_t *
 hypctx_regptr(struct hypctx *hypctx, int reg)
 {
 	switch (reg) {
@@ -1049,11 +1049,9 @@ hypctx_regptr(struct hypctx *hypctx, int reg)
 		return (&hypctx->tf.tf_lr);
 	case VM_REG_GUEST_SP:
 		return (&hypctx->tf.tf_sp);
-	case VM_REG_GUEST_ELR: /* This is bogus */
-		return (&hypctx->tf.tf_elr);
-	case VM_REG_GUEST_SPSR: /* This is bogus */
+	case VM_REG_GUEST_CPSR:
 		return (&hypctx->tf.tf_spsr);
-	case VM_REG_ELR_EL2:
+	case VM_REG_GUEST_PC:
 		return (&hypctx->tf.tf_elr);
 	default:
 		break;
@@ -1064,7 +1062,7 @@ hypctx_regptr(struct hypctx *hypctx, int reg)
 int
 vmmops_getreg(void *vcpui, int reg, uint64_t *retval)
 {
-	void *regp;
+	uint64_t *regp;
 	int running, hostcpu;
 	struct hypctx *hypctx = vcpui;
 
@@ -1073,21 +1071,18 @@ vmmops_getreg(void *vcpui, int reg, uint64_t *retval)
 		panic("arm_getreg: %s%d is running", vm_name(hypctx->hyp->vm),
 		    vcpu_vcpuid(hypctx->vcpu));
 
-	if ((regp = hypctx_regptr(hypctx, reg)) != NULL) {
-		if (reg == VM_REG_GUEST_SPSR)
-			*retval = *(uint32_t *)regp;
-		else
-			*retval = *(uint64_t *)regp;
-		return (0);
-	} else {
+	regp = hypctx_regptr(hypctx, reg);
+	if (regp == NULL)
 		return (EINVAL);
-	}
+
+	*retval = *regp;
+	return (0);
 }
 
 int
 vmmops_setreg(void *vcpui, int reg, uint64_t val)
 {
-	void *regp;
+	uint64_t *regp;
 	struct hypctx *hypctx = vcpui;
 	int running, hostcpu;
 
@@ -1096,15 +1091,12 @@ vmmops_setreg(void *vcpui, int reg, uint64_t val)
 		panic("arm_setreg: %s%d is running", vm_name(hypctx->hyp->vm),
 		    vcpu_vcpuid(hypctx->vcpu));
 
-	if ((regp = hypctx_regptr(hypctx, reg)) != NULL) {
-		if (reg == VM_REG_GUEST_SPSR)
-			*(uint32_t *)regp = (uint32_t)val;
-		else
-			*(uint64_t *)regp = val;
-		return (0);
-	} else {
+	regp = hypctx_regptr(hypctx, reg);
+	if (regp == NULL)
 		return (EINVAL);
-	}
+
+	*regp = val;
+	return (0);
 }
 
 int

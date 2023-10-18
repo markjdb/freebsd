@@ -552,11 +552,11 @@ vm_cleanup(struct vm *vm, bool destroy)
 	 * so those mappings are removed on a VM reset.
 	 */
 	if (!destroy) {
-	for (i = 0; i < VM_MAX_MEMMAPS; i++) {
-		mm = &vm->mem_maps[i];
-		if (destroy || !sysmem_mapping(vm, mm))
-			vm_free_memmap(vm, i);
-	}
+		for (i = 0; i < VM_MAX_MEMMAPS; i++) {
+			mm = &vm->mem_maps[i];
+			if (destroy || !sysmem_mapping(vm, mm))
+				vm_free_memmap(vm, i);
+		}
 	}
 
 	if (destroy) {
@@ -1569,7 +1569,7 @@ vm_set_register(struct vcpu *vcpu, int reg, uint64_t val)
 	if (reg >= VM_REG_LAST)
 		return (EINVAL);
 	error = vmmops_setreg(vcpu->cookie, reg, val);
-	if (error || reg != VM_REG_ELR_EL2)
+	if (error || reg != VM_REG_GUEST_PC)
 		return (error);
 
 	vcpu->nextpc = val;
