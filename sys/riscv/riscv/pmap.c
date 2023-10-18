@@ -3472,10 +3472,8 @@ pmap_enter_quick_locked(pmap_t pmap, vm_offset_t va, vm_page_t m,
 	    !pmap_try_insert_pv_entry(pmap, va, m, lockp)) {
 		if (mpte != NULL) {
 			SLIST_INIT(&free);
-			if (pmap_unwire_ptp(pmap, va, mpte, &free)) {
-				pmap_invalidate_page(pmap, va);
+			if (pmap_unwire_ptp(pmap, va, mpte, &free))
 				vm_page_free_pages_toq(&free, false);
-			}
 			mpte = NULL;
 		}
 		return (mpte);
@@ -3524,7 +3522,6 @@ pmap_enter_quick_locked(pmap_t pmap, vm_offset_t va, vm_page_t m,
 	}
 #endif
 
-	pmap_invalidate_page(pmap, va);
 	return (mpte);
 }
 
