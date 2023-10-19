@@ -1395,7 +1395,7 @@ static g_start_t	fd_start;
 static g_ioctl_t	fd_ioctl;
 static g_provgone_t	fd_providergone;
 
-struct g_class g_fd_class = {
+static struct g_class g_fd_class = {
 	.name =		"FD",
 	.version =	G_VERSION,
 	.start =	fd_start,

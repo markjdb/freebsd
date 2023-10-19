@@ -68,7 +68,7 @@ static u_int g_gate_maxunits = 256;
 SYSCTL_UINT(_kern_geom_gate, OID_AUTO, maxunits, CTLFLAG_RDTUN,
     &g_gate_maxunits, 0, "Maximum number of ggate devices");
 
-struct g_class g_gate_class = {
+static struct g_class g_gate_class = {
 	.name = G_GATE_CLASS_NAME,
 	.version = G_VERSION,
 };

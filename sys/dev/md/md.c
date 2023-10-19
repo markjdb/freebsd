@@ -217,7 +217,7 @@ static struct cdevsw mdctl_cdevsw = {
 	.d_name =	MD_NAME,
 };
 
-struct g_class g_md_class = {
+static struct g_class g_md_class = {
 	.name = "MD",
 	.version = G_VERSION,
 	.init = g_md_init,

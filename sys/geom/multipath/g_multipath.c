@@ -102,7 +102,7 @@ static g_init_t g_multipath_init;
 static g_fini_t g_multipath_fini;
 static g_dumpconf_t g_multipath_dumpconf;
 
-struct g_class g_multipath_class = {
+static struct g_class g_multipath_class = {
 	.name		= G_MULTIPATH_CLASS_NAME,
 	.version	= G_VERSION,
 	.ctlreq		= g_multipath_config,

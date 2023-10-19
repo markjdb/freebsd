@@ -60,7 +60,7 @@ static g_taste_t g_concat_taste;
 static g_ctl_req_t g_concat_config;
 static g_dumpconf_t g_concat_dumpconf;
 
-struct g_class g_concat_class = {
+static struct g_class g_concat_class = {
 	.name = G_CONCAT_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_concat_config,

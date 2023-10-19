@@ -430,7 +430,7 @@ static struct g_geom * nvdimm_spa_g_create(struct nvdimm_spa_dev *dev,
     const char *name);
 static g_ctl_destroy_geom_t nvdimm_spa_g_destroy_geom;
 
-struct g_class nvdimm_spa_g_class = {
+static struct g_class nvdimm_spa_g_class = {
 	.name =		"SPA",
 	.version =	G_VERSION,
 	.start =	nvdimm_spa_g_start,

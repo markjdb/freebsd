@@ -61,7 +61,7 @@ static g_provgone_t g_nop_providergone;
 static g_resize_t g_nop_resize;
 static g_start_t g_nop_start;
 
-struct g_class g_nop_class = {
+static struct g_class g_nop_class = {
 	.name = G_NOP_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_nop_config,

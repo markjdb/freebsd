@@ -224,7 +224,7 @@ static g_dumpconf_t g_journal_dumpconf;
 static g_init_t g_journal_init;
 static g_fini_t g_journal_fini;
 
-struct g_class g_journal_class = {
+static struct g_class g_journal_class = {
 	.name = G_JOURNAL_CLASS_NAME,
 	.version = G_VERSION,
 	.taste = g_journal_taste,

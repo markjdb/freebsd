@@ -212,7 +212,7 @@ static void g_eli_fini(struct g_class *mp);
 static g_taste_t g_eli_taste;
 static g_dumpconf_t g_eli_dumpconf;
 
-struct g_class g_eli_class = {
+static struct g_class g_eli_class = {
 	.name = G_ELI_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_eli_config,

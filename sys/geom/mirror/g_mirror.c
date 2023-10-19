@@ -97,7 +97,7 @@ static g_fini_t g_mirror_fini;
 static g_provgone_t g_mirror_providergone;
 static g_resize_t g_mirror_resize;
 
-struct g_class g_mirror_class = {
+static struct g_class g_mirror_class = {
 	.name = G_MIRROR_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_mirror_config,

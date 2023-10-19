@@ -60,7 +60,7 @@ static g_init_t g_ofwd_init;
 static g_start_t g_ofwd_start;
 static g_access_t g_ofwd_access;
 
-struct g_class g_ofwd_class = {
+static struct g_class g_ofwd_class = {
 	.name = "OFWD",
 	.version = G_VERSION,
 	.init = g_ofwd_init,

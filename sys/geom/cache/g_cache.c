@@ -97,7 +97,7 @@ static g_taste_t g_cache_taste;
 static g_ctl_req_t g_cache_config;
 static g_dumpconf_t g_cache_dumpconf;
 
-struct g_class g_cache_class = {
+static struct g_class g_cache_class = {
 	.name = G_CACHE_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_cache_config,

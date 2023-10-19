@@ -60,7 +60,7 @@ static int g_union_destroy_geom(struct gctl_req *req, struct g_class *mp,
 static g_provgone_t g_union_providergone;
 static g_resize_t g_union_resize;
 
-struct g_class g_union_class = {
+static struct g_class g_union_class = {
 	.name = G_UNION_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_union_config,

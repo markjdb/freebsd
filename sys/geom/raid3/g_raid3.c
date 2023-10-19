@@ -108,7 +108,7 @@ static void g_raid3_init(struct g_class *mp);
 static void g_raid3_fini(struct g_class *mp);
 static void g_raid3_providergone(struct g_provider *pp);
 
-struct g_class g_raid3_class = {
+static struct g_class g_raid3_class = {
 	.name = G_RAID3_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_raid3_config,

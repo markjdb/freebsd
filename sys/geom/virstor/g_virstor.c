@@ -66,7 +66,7 @@ static g_ctl_req_t g_virstor_config;
 static g_ctl_destroy_geom_t g_virstor_destroy_geom;
 
 /* Declare & initialize class structure ("geom class") */
-struct g_class g_virstor_class = {
+static struct g_class g_virstor_class = {
 	.name =		G_VIRSTOR_CLASS_NAME,
 	.version =	G_VERSION,
 	.init =		g_virstor_init,

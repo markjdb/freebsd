@@ -57,7 +57,7 @@ static g_dumpconf_t g_stripe_dumpconf;
 static g_init_t g_stripe_init;
 static g_fini_t g_stripe_fini;
 
-struct g_class g_stripe_class = {
+static struct g_class g_stripe_class = {
 	.name = G_STRIPE_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_stripe_config,

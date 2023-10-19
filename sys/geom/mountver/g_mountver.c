@@ -71,7 +71,7 @@ static void g_mountver_dumpconf(struct sbuf *sb, const char *indent,
 static void g_mountver_init(struct g_class *mp);
 static void g_mountver_fini(struct g_class *mp);
 
-struct g_class g_mountver_class = {
+static struct g_class g_mountver_class = {
 	.name = G_MOUNTVER_CLASS_NAME,
 	.version = G_VERSION,
 	.ctlreq = g_mountver_config,
