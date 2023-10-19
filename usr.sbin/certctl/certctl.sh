@@ -114,7 +114,7 @@ create_trusted()
 		otherhash=$(openssl x509 -sha1 -in "$otherfile" -noout -fingerprint)
 		if [ "$certhash" = "$otherhash" ] ; then
 			info "Skipping untrusted certificate $hash ($otherfile)"
-			return 1
+			return 0
 		fi
 	done
 	for otherfile in $(find $CERTDESTDIR -name "$hash.*") ; do
