@@ -1600,12 +1600,7 @@ vm_assert_irq(struct vm *vm, uint32_t irq)
 int
 vm_deassert_irq(struct vm *vm, uint32_t irq)
 {
-	struct hyp *hyp = (struct hyp *)vm->cookie;
-	int error;
-
-	error = vgic_inject_irq(hyp, -1, irq, false);
-
-	return (error);
+	return (vgic_inject_irq(vm->cookie, -1, irq, false));
 }
 
 int

@@ -1895,6 +1895,9 @@ vgic_v3_inject_irq(device_t dev, struct hyp *hyp, int vcpuid, uint32_t irqid,
 	int target_vcpu;
 	bool notify;
 
+	if (!hyp->vgic_attached)
+		return (ENODEV);
+
 	KASSERT(vcpuid == -1 || irqid < VGIC_PRV_I_NUM,
 	    ("%s: SPI/LPI with vcpuid set: irq %u vcpuid %u", __func__, irqid,
 	    vcpuid));
@@ -1902,7 +1905,7 @@ vgic_v3_inject_irq(device_t dev, struct hyp *hyp, int vcpuid, uint32_t irqid,
 	irq = vgic_v3_get_irq(hyp, vcpuid, irqid);
 	if (irq == NULL) {
 		eprintf("Malformed IRQ %u.\n", irqid);
-		return (1);
+		return (EINVAL);
 	}
 
 	target_vcpu = irq->target_vcpu;
@@ -1918,13 +1921,13 @@ vgic_v3_inject_irq(device_t dev, struct hyp *hyp, int vcpuid, uint32_t irqid,
 	/* TODO: Check from 0 to vm->maxcpus */
 	if (vcpuid < 0 || vcpuid >= vm_get_maxcpus(hyp->vm)) {
 		vgic_v3_release_irq(irq);
-		return (1);
+		return (EINVAL);
 	}
 
 	hypctx = hyp->ctx[vcpuid];
 	if (hypctx == NULL) {
 		vgic_v3_release_irq(irq);
-		return (1);
+		return (EINVAL);
 	}
 
 	notify = false;
