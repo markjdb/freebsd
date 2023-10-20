@@ -3078,7 +3078,7 @@ fgetvp_lookup(int fd, struct nameidata *ndp, struct vnode **vpp)
 	cap_rights_set_one(&rights, CAP_LOOKUP);
 	cnp = &ndp->ni_cnd;
 
-	error = fget_cap(td, ndp->ni_dirfd, &rights, &fp, &ndp->ni_filecaps);
+	error = fget_cap(td, fd, &rights, &fp, &ndp->ni_filecaps);
 	if (__predict_false(error != 0))
 		return (error);
 	if (__predict_false(fp->f_ops == &badfileops)) {
