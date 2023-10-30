@@ -280,12 +280,10 @@ struct bus_space {
 			   bus_size_t, uint64_t);
 };
 
-#if 1
-/*
- *#if defined(SAN_NEEDS_INTERCEPTORS) && !defined(SAN_RUNTIME)
- *#include <sys/bus_san.h>
- *#else
- */
+
+#if defined(SAN_NEEDS_INTERCEPTORS) && !defined(SAN_RUNTIME)
+#include <sys/bus_san.h>
+#else
 
 /*
  * Utility macros; INTERNAL USE ONLY.

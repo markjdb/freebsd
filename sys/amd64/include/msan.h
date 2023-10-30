@@ -83,7 +83,7 @@ kmsan_md_unsupported(vm_offset_t addr)
 	 * (GENERIC-KMSAN is ~80MB at the time of writing), shadowing would
 	 * incur signficant memory usage.
 	 */
-	return (addr < VM_MIN_KERNEL_ADDRESS || addr > VM_MAX_KERNEL_ADDRESS);
+	return (addr < VM_MIN_KERNEL_ADDRESS || addr >= KERNBASE);
 }
 
 #endif /* KMSAN */

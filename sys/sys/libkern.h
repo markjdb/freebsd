@@ -232,8 +232,7 @@ size_t	 strspn(const char *, const char *);
 char	*strstr(const char *, const char *);
 int	 strvalid(const char *, size_t);
 
-//#ifdef SAN_NEEDS_INTERCEPTORS
-#if 0
+#ifdef SAN_NEEDS_INTERCEPTORS
 #ifndef SAN_INTERCEPTOR
 #define	SAN_INTERCEPTOR(func)	\
 	__CONCAT(SAN_INTERCEPTOR_PREFIX, __CONCAT(_, func))

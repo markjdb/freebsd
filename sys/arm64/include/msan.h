@@ -1,10 +1,8 @@
-/*
- * Copyright 2023, Klara Systems.
- */
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2023 The FreeBSD Foundation
+ * Copyright (c) 2021 The FreeBSD Foundation
+ * Copyright (c) 2023 Klara Inc.
  *
  * This software was developed by Mark Johnston under sponsorship from the
  * FreeBSD Foundation.

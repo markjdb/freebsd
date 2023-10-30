@@ -7918,10 +7918,7 @@ static pd_entry_t	*pmap_kmsan_shad_early_l2;
 static pd_entry_t	*pmap_kmsan_orig_early_l2;
 #endif
 
-/*
- * this functions is called from locore.S before initarm()
- */
-	void __nosanitizeaddress __nosanitizememory
+void __nosanitizeaddress __nosanitizememory
 pmap_san_bootstrap(struct arm64_bootparams *abp)
 {
 
