@@ -704,13 +704,10 @@ vmm_el2_tlbi(uint64_t type, uint64_t start, uint64_t len)
 		__asm __volatile("tlbi	alle2" ::: "memory");
 		break;
 	case HYP_EL2_TLBI_VA:
-		end = (start + len) >> 12;
-		start >>= 12;
-		while (start < end) {
-			/* TODO: Use new macros when merged past them */
-			r = start & 0xffffffffffful;
+		end = TLBI_VA(start + len);
+		start = TLBI_VA(start);
+		for (r = start; r < end; r += TLBI_VA_L3_INCR) {
 			__asm __volatile("tlbi	vae2is, %0" :: "r"(r));
-			start += PAGE_SIZE;
 		}
 		break;
 	}
