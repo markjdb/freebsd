@@ -520,8 +520,11 @@ kmsan_shadow_map(vm_offset_t addr, size_t size)
 	MPASS(addr % PAGE_SIZE == 0);
 	MPASS(size % PAGE_SIZE == 0);
 
+	/* XXX-MJ Needed for pmap_san_bootstrap(). */
+#if 0
 	if (!kmsan_enabled)
 		return;
+#endif
 
 	npages = atop(size);
 
@@ -1406,9 +1409,9 @@ MSAN_BUS_POKE_FUNC(2, uint16_t)
 MSAN_BUS_POKE_FUNC(4, uint32_t)
 
 #if defined(__x86__) || defined(__amd64__)
-#define IF_NOT_X86_BUS_SPACE_IO(tag) if ((tag) != X86_BUS_SPACE_IO)
+#define X86_BUS_SPACE_IO(tag)	((tag) == X86_BUS_SPACE_IO)
 #else
-#define IF_NOT_X86_BUS_SPACE_IO(tag)
+#define X86_BUS_SPACE_IO(tag)	(true) /* XXX-MJ inverted */
 #endif
 
 #define MSAN_BUS_READ_FUNC(func, width, type)				\
@@ -1416,7 +1419,7 @@ MSAN_BUS_POKE_FUNC(4, uint32_t)
 	    bus_space_handle_t hnd, bus_size_t offset)			\
 	{								\
 		type ret;						\
-		IF_NOT_X86_BUS_SPACE_IO(tag)						\
+		if (!X86_BUS_SPACE_IO(tag))				\
 			kmsan_shadow_fill((uintptr_t)(hnd + offset),	\
 			    KMSAN_STATE_INITED, (width));		\
 		ret = bus_space_read##func##_##width(tag, hnd, offset);	\

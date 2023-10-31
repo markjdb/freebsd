@@ -872,7 +872,7 @@ pmap_resident_count_dec(pmap_t pmap, int count)
 	pmap->pm_stats.resident_count -= count;
 }
 
-static vm_paddr_t
+static vm_paddr_t __nosanitizememory
 pmap_early_vtophys(vm_offset_t va)
 {
 	vm_paddr_t pa_page;
@@ -908,7 +908,7 @@ static struct pmap_bootstrap_state bs_state = {
 	.dmap_valid = false,
 };
 
-static void
+static void __nosanitizememory
 pmap_bootstrap_l0_table(struct pmap_bootstrap_state *state)
 {
 	vm_paddr_t l1_pa;
@@ -960,7 +960,7 @@ pmap_bootstrap_l0_table(struct pmap_bootstrap_state *state)
 	KASSERT(state->l1 != NULL, ("%s: NULL l1", __func__));
 }
 
-static void
+static void __nosanitizememory
 pmap_bootstrap_l1_table(struct pmap_bootstrap_state *state)
 {
 	vm_paddr_t l2_pa;
@@ -1211,19 +1211,17 @@ pmap_bootstrap_l3(vm_offset_t va, vm_offset_t ve)
 #if defined(KASAN) || defined(KMSAN)
 static void
 pmap_bootstrap_allocate_san_l2(vm_paddr_t start_pa, vm_paddr_t end_pa,
-    vm_offset_t *start_va, int *nkasan_l2)
+    vm_offset_t *vap, vm_offset_t eva)
 {
-	int i;
 	vm_paddr_t pa;
 	vm_offset_t va;
 	pd_entry_t *l2;
 
-	va = *start_va;
+	va = *vap;
 	pa = rounddown2(end_pa - L2_SIZE, L2_SIZE);
-	l2 = pmap_l2(kernel_pmap, va);
+	for (; pa >= start_pa && va < eva; va += L2_SIZE, pa -= L2_SIZE) {
+		l2 = pmap_l2(kernel_pmap, va);
 
-	for (i = 0; pa >= start_pa && i < *nkasan_l2;
-	    i++, va += L2_SIZE, pa -= L2_SIZE, l2++) {
 		/*
 		 * KASAN stack checking results in us having already allocated
 		 * part of our shadow map, so we can just skip those segments.
@@ -1233,25 +1231,11 @@ pmap_bootstrap_allocate_san_l2(vm_paddr_t start_pa, vm_paddr_t end_pa,
 			continue;
 		}
 
+		bzero((void *)PHYS_TO_DMAP(pa), L2_SIZE);
+		physmem_exclude_region(pa, L2_SIZE, EXFLAG_NOALLOC);
 		pmap_store(l2, PHYS_TO_PTE(pa) | PMAP_SAN_PTE_BITS | L2_BLOCK);
 	}
-
-	/*
-	 * Ended the allocation due to start_pa constraint, rather than because
-	 * we allocated everything.  Adjust back up to the start_pa and remove
-	 * the invalid L2 block from our accounting.
-	 */
-	if (pa < start_pa) {
-		va += L2_SIZE;
-		i--;
-		pa = start_pa;
-	}
-
-	bzero((void *)PHYS_TO_DMAP(pa), i * L2_SIZE);
-	physmem_exclude_region(pa, i * L2_SIZE, EXFLAG_NOALLOC);
-
-	*nkasan_l2 -= i;
-	*start_va = va;
+	*vap = va;
 }
 #endif
 
@@ -1370,9 +1354,8 @@ pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
 void __nosanitizeaddress __nosanitizememory
 pmap_bootstrap_san(vm_paddr_t kernstart)
 {
-	vm_offset_t va;
-	int i, shadow_npages, nksan_l2;
-	int npages = (virtual_avail - VM_MIN_KERNEL_ADDRESS) / PAGE_SIZE;
+	vm_offset_t va, eva;
+	int i;
 
 	/*
 	 * Rebuild physmap one more time, we may have excluded more regions from
@@ -1383,18 +1366,17 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 	physmap_idx = physmem_avail(physmap, nitems(physmap));
 	physmap_idx /= 2;
 
-	shadow_npages = howmany(npages, KASAN_SHADOW_SCALE);
-	nksan_l2 = howmany(shadow_npages, Ln_ENTRIES);
-
 	/* Map the valid KVA up to this point. */
 	va = KASAN_MIN_ADDRESS;
+	eva = va +
+	    ((virtual_avail - VM_MIN_KERNEL_ADDRESS) >> KASAN_SHADOW_SCALE);
 
 	/*
 	 * Find a slot in the physmap large enough for what we needed.  We try to put
 	 * the shadow map as high up as we can to avoid depleting the lower 4GB in case
 	 * it's needed for, e.g., an xhci controller that can only do 32-bit DMA.
 	 */
-	for (i = (physmap_idx * 2) - 2; i >= 0 && nksan_l2 > 0; i -= 2) {
+	for (i = (physmap_idx * 2) - 2; i >= 0; i -= 2) {
 		vm_paddr_t plow, phigh;
 
 		/* L2 mappings must be backed by memory that is L2-aligned */
@@ -1405,30 +1387,32 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 		if (kernstart >= plow && kernstart < phigh)
 			phigh = kernstart;
 		if (phigh - plow >= L2_SIZE)
-			pmap_bootstrap_allocate_san_l2(plow, phigh, &va,
-			    &nksan_l2);
+			pmap_bootstrap_allocate_san_l2(plow, phigh, &va, eva);
+		if (va >= eva)
+			break;
 	}
 
-	if (nksan_l2 != 0)
+	if (i < 0)
 		panic("Could not find phys region for shadow map");
 #endif
 #ifdef KMSAN
+	/*
+	 * XXX-MJ too much duplication
+	 */
 	/* --- SHADOW --- */
 	physmap_idx = physmem_avail(physmap, nitems(physmap));
 	physmap_idx /= 2;
 
-	shadow_npages = npages;
-	nksan_l2 = howmany(shadow_npages, Ln_ENTRIES);
-
 	/* Map the valid KVA up to this point. */
 	va = KMSAN_SHAD_MIN_ADDRESS;
+	eva = va + (virtual_avail - VM_MIN_KERNEL_ADDRESS);
 
 	/*
 	 * Find a slot in the physmap large enough for what we needed.  We try to put
 	 * the shadow map as high up as we can to avoid depleting the lower 4GB in case
 	 * it's needed for, e.g., an xhci controller that can only do 32-bit DMA.
 	 */
-	for (i = (physmap_idx * 2) - 2; i >= 0 && nksan_l2 > 0; i -= 2) {
+	for (i = (physmap_idx * 2) - 2; i >= 0; i -= 2) {
 		vm_paddr_t plow, phigh;
 
 		/* L2 mappings must be backed by memory that is L2-aligned */
@@ -1439,28 +1423,28 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 		if (kernstart >= plow && kernstart < phigh)
 			phigh = kernstart;
 		if (phigh - plow >= L2_SIZE)
-			pmap_bootstrap_allocate_san_l2(plow, phigh, &va, &nksan_l2);
+			pmap_bootstrap_allocate_san_l2(plow, phigh, &va, eva);
+		if (va >= eva)
+			break;
 	}
-
-	if (nksan_l2 != 0)
-		panic("Could not find phys region for shadow map");
+	if (i < 0)
+		panic("Could not find phys region for shadow map va %#lx eva %#lx", va, eva);
 
 	/* --- ORIGIN --- */
+	bzero(physmap, sizeof(physmap));
 	physmap_idx = physmem_avail(physmap, nitems(physmap));
 	physmap_idx /= 2;
 
-	shadow_npages = npages;
-	nksan_l2 = howmany(shadow_npages, Ln_ENTRIES);
-
 	/* Map the valid KVA up to this point. */
 	va = KMSAN_ORIG_MIN_ADDRESS;
+	eva = va + (virtual_avail - VM_MIN_KERNEL_ADDRESS);
 
 	/*
 	 * Find a slot in the physmap large enough for what we needed.  We try to put
 	 * the shadow map as high up as we can to avoid depleting the lower 4GB in case
 	 * it's needed for, e.g., an xhci controller that can only do 32-bit DMA.
 	 */
-	for (i = (physmap_idx * 2) - 2; i >= 0 && nksan_l2 > 0; i -= 2) {
+	for (i = (physmap_idx * 2) - 2; i >= 0; i -= 2) {
 		vm_paddr_t plow, phigh;
 
 		/* L2 mappings must be backed by memory that is L2-aligned */
@@ -1471,11 +1455,12 @@ pmap_bootstrap_san(vm_paddr_t kernstart)
 		if (kernstart >= plow && kernstart < phigh)
 			phigh = kernstart;
 		if (phigh - plow >= L2_SIZE)
-			pmap_bootstrap_allocate_san_l2(plow, phigh, &va, &nksan_l2);
+			pmap_bootstrap_allocate_san_l2(plow, phigh, &va, eva);
+		if (va >= eva)
+			break;
 	}
-
-	if (nksan_l2 != 0)
-		panic("Could not find phys region for shadow map");
+	if (i < 0)
+		panic("Could not find phys region for origin map va %#lx eva %#lx", va, eva);
 #endif
 	/*
 	 * Done. We should now have a valid shadow address mapped for all KVA
@@ -8051,15 +8036,9 @@ pmap_san_enter(vm_offset_t va)
 		l2 = pmap_kasan_early_l2;
 #endif
 #ifdef KMSAN
-/*
- *		l2 = pmap_kmsan_shad_early_l2;
- */
 #define	KMSAN_L0_SHAD_IDX	(pmap_l0_index(KMSAN_SHAD_MIN_ADDRESS))
 #define	KMSAN_L0_ORIG_IDX	(pmap_l0_index(KMSAN_ORIG_MIN_ADDRESS))
 		int l0_slot = pmap_l0_index(va);
-
-		MPASS((l0_slot == KMSAN_L0_SHAD_IDX) ||
-		    (l0_slot == KMSAN_L0_ORIG_IDX));
 
 		if (l0_slot == KMSAN_L0_SHAD_IDX) {
 			l2 = pmap_kmsan_shad_early_l2;
@@ -8073,7 +8052,6 @@ pmap_san_enter(vm_offset_t va)
 		slot = pmap_l2_index(va);
 
 		if ((pmap_load(&l2[slot]) & ATTR_DESCR_VALID) == 0) {
-			MPASS(first);
 			block = pmap_san_enter_bootstrap_alloc_l2();
 			pmap_store(&l2[slot],
 			    PHYS_TO_PTE(pmap_early_vtophys(block)) |

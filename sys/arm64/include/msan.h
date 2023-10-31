@@ -83,9 +83,9 @@ kmsan_md_unsupported(vm_offset_t addr)
 	 * are always initialized, and because KMSAN kernels are large
 	 * (GENERIC-KMSAN is ~80MB at the time of writing), shadowing would
 	 * incur signficant memory usage.
+	 *
+	 * XXX-MJ this comment is incorrect
 	 */
-	/*
-	 * Incorrect: for arm64 VM_MIN_KERNEL_ADDRESS == KERNBASE !!! */
 	return (addr < VM_MIN_KERNEL_ADDRESS || addr >= VM_MAX_KERNEL_ADDRESS);
 }
 
