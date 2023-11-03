@@ -521,9 +521,6 @@ kmsan_shadow_map(vm_offset_t addr, size_t size)
 	MPASS(addr % PAGE_SIZE == 0);
 	MPASS(size % PAGE_SIZE == 0);
 
-	if (!kmsan_enabled)
-		return;
-
 	npages = atop(size);
 
 	va = kmsan_md_addr_to_shad(addr);
