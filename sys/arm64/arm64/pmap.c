@@ -6306,7 +6306,6 @@ pmap_is_valid_memattr(pmap_t pmap __unused, vm_memattr_t mode)
 }
 
 #if defined(KASAN)
-static vm_paddr_t	pmap_san_early_kernstart;
 static pd_entry_t	*pmap_san_early_l2;
 
 #define	SAN_BOOTSTRAP_L2_SIZE	(1 * L2_SIZE)
