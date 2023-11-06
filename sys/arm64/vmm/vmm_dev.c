@@ -367,6 +367,7 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	struct vm_exception *vmexc;
 	struct vm_gla2gpa *gg;
 	struct vm_memmap *mm;
+	struct vm_munmap *mu;
 	struct vm_msi *vmsi;
 	struct vm_cpu_topology *topology;
 	uint64_t *regvals;
@@ -419,7 +420,7 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 
 	case VM_ALLOC_MEMSEG:
 	case VM_MMAP_MEMSEG:
-	/* TODO: VM_MUNMAP_MEMSEG */
+	case VM_MUNMAP_MEMSEG:
 	case VM_REINIT:
 	case VM_ATTACH_VGIC:
 		/*
@@ -428,8 +429,7 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		 */
 		vm_xlock_memsegs(sc->vm);
 		memsegs_locked = true;
-		/* FALLTHROUGH */
-	/* TODO: Any non-memseg ioctls? */
+
 		/*
 		 * ioctls that operate on the entire virtual machine must
 		 * prevent all vcpus from running.
@@ -536,6 +536,10 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		mm = (struct vm_memmap *)data;
 		error = vm_mmap_memseg(sc->vm, mm->gpa, mm->segid, mm->segoff,
 		    mm->len, mm->prot, mm->flags);
+		break;
+	case VM_MUNMAP_MEMSEG:
+		mu = (struct vm_munmap *)data;
+		error = vm_munmap_memseg(sc->vm, mu->gpa, mu->len);
 		break;
 	case VM_ALLOC_MEMSEG:
 		error = alloc_memseg(sc, (struct vm_memseg *)data);
