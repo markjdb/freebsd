@@ -34,10 +34,19 @@
 #include <sys/mman.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+
 #include <machine/atomic.h>
+#ifdef __amd64__
 #include <machine/specialreg.h>
+#endif
+#ifdef __aarch64__
+#include <machine/armreg.h>
+#endif
 #include <machine/vmm.h>
+
 #include <netinet/in.h>
+
 #include <assert.h>
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
@@ -63,11 +72,35 @@
 #include "mem.h"
 #include "mevent.h"
 
+#if defined(__amd64__)
+#define	GDB_TARGET_ARCH		"i386:x86-64"
+#define	GDB_TARGET_XML_PATH	"/usr/share/bhyve/gdb/amd64.xml"
+#elif defined(__aarch64__)
+#define	GDB_TARGET_ARCH		"aarch64"
+#define	GDB_TARGET_XML_PATH	"/usr/share/bhyve/gdb/aarch64-core.xml"
+#else
+#error "Unsupported architecture"
+#endif
+
 /*
  * GDB_SIGNAL_* numbers are part of the GDB remote protocol.  Most stops
  * use SIGTRAP.
  */
 #define	GDB_SIGNAL_TRAP		5
+
+#if defined(__amd64__)
+#define	GDB_BP_SIZE		1
+#define	GDB_BP_INSTR		(uint8_t []){0xcc}
+#define	GDB_PC_REGNAME		VM_REG_GUEST_RIP
+#elif defined(__aarch64__)
+#define	GDB_BP_SIZE		4
+#define	GDB_BP_INSTR		(uint8_t []){0x00, 0x00, 0x20, 0xd4}
+#define	GDB_PC_REGNAME		VM_REG_GUEST_PC
+#else
+#error "Unsupported architecture"
+#endif
+_Static_assert(sizeof(GDB_BP_INSTR) == GDB_BP_SIZE,
+    "GDB_BP_INSTR has wrong size");
 
 static void gdb_resume_vcpus(void);
 static void check_command(int fd);
@@ -78,6 +111,7 @@ static cpuset_t vcpus_active, vcpus_suspended, vcpus_waiting;
 static pthread_mutex_t gdb_lock;
 static pthread_cond_t idle_vcpus;
 static bool first_stop, report_next_stop, swbreak_enabled;
+static int target_xml_fd = -1;
 
 /*
  * An I/O buffer contains 'capacity' bytes of room at 'data'.  For a
@@ -95,7 +129,7 @@ struct io_buffer {
 
 struct breakpoint {
 	uint64_t gpa;
-	uint8_t shadow_inst;
+	uint8_t shadow_inst[GDB_BP_SIZE];
 	TAILQ_ENTRY(breakpoint) link;
 };
 
@@ -134,6 +168,8 @@ static struct vcpu **vcpus;
 static int cur_vcpu, stopped_vcpu;
 static bool gdb_active = false;
 
+#ifdef __amd64__
+/* The ordering here must match gdb_regsize and the XML definitions. */
 static const int gdb_regset[] = {
 	VM_REG_GUEST_RAX,
 	VM_REG_GUEST_RBX,
@@ -158,7 +194,12 @@ static const int gdb_regset[] = {
 	VM_REG_GUEST_DS,
 	VM_REG_GUEST_ES,
 	VM_REG_GUEST_FS,
-	VM_REG_GUEST_GS
+	VM_REG_GUEST_GS,
+	VM_REG_GUEST_CR0,
+	VM_REG_GUEST_CR2,
+	VM_REG_GUEST_CR3,
+	VM_REG_GUEST_CR4,
+	VM_REG_GUEST_EFER,
 };
 
 static const int gdb_regsize[] = {
@@ -185,9 +226,95 @@ static const int gdb_regsize[] = {
 	4,
 	4,
 	4,
-	4
+	4,
+	8,
+	8,
+	8,
+	8,
+	8,
+};
+#endif
+
+#ifdef __aarch64__
+static const int gdb_regset[] = {
+	VM_REG_GUEST_X0,
+	VM_REG_GUEST_X1,
+	VM_REG_GUEST_X2,
+	VM_REG_GUEST_X3,
+	VM_REG_GUEST_X4,
+	VM_REG_GUEST_X5,
+	VM_REG_GUEST_X6,
+	VM_REG_GUEST_X7,
+	VM_REG_GUEST_X8,
+	VM_REG_GUEST_X9,
+	VM_REG_GUEST_X10,
+	VM_REG_GUEST_X11,
+	VM_REG_GUEST_X12,
+	VM_REG_GUEST_X13,
+	VM_REG_GUEST_X14,
+	VM_REG_GUEST_X15,
+	VM_REG_GUEST_X16,
+	VM_REG_GUEST_X17,
+	VM_REG_GUEST_X18,
+	VM_REG_GUEST_X19,
+	VM_REG_GUEST_X20,
+	VM_REG_GUEST_X21,
+	VM_REG_GUEST_X22,
+	VM_REG_GUEST_X23,
+	VM_REG_GUEST_X24,
+	VM_REG_GUEST_X25,
+	VM_REG_GUEST_X26,
+	VM_REG_GUEST_X27,
+	VM_REG_GUEST_X28,
+	VM_REG_GUEST_X29,
+	VM_REG_GUEST_LR,
+	VM_REG_GUEST_SP,
+	VM_REG_GUEST_PC,
+	VM_REG_GUEST_CPSR,
 };
 
+static const int gdb_regsize[] = {
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	4,
+};
+#endif
+
+_Static_assert(sizeof(gdb_regset) == sizeof(gdb_regsize),
+    "gdb_regset and gdb_regsize have different sizes");
+
+#define GDB_LOG 1
 #ifdef GDB_LOG
 #include <stdarg.h>
 #include <stdio.h>
@@ -221,6 +348,7 @@ debug(const char *fmt, ...)
 
 static void	remove_all_sw_breakpoints(void);
 
+#ifdef __amd64__
 static int
 guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 {
@@ -259,6 +387,36 @@ guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
 		paging->paging_mode = PAGING_MODE_PAE;
 	return (0);
 }
+#endif
+
+#ifdef __aarch64__
+static int
+guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
+{
+	uint64_t regs[5];
+	const int regset[5] = {
+		VM_REG_GUEST_TTBR0_EL1,
+		VM_REG_GUEST_TTBR1_EL1,
+		VM_REG_GUEST_TCR_EL1,
+		VM_REG_GUEST_TCR2_EL1,
+		VM_REG_GUEST_SCTLR_EL1,
+	};
+
+	if (vm_get_register_set(vcpu, nitems(regset), regset, regs) == -1)
+		return (-1);
+
+	memset(paging, 0, sizeof(*paging));
+	paging->ttbr0_addr = regs[0];
+	paging->ttbr1_addr = regs[1];
+	paging->tcr_el1 = regs[2];
+	paging->tcr2_el1 = regs[3];
+	paging->flags = PSR_M_EL1h;
+	if ((regs[4] & SCTLR_M) != 0)
+		paging->flags |= VM_GP_MMU_ENABLED;
+
+	return (0);
+}
+#endif
 
 /*
  * Map a guest virtual address to a physical address (for a given vcpu).
@@ -285,6 +443,16 @@ guest_vaddr2paddr(struct vcpu *vcpu, uint64_t vaddr, uint64_t *paddr)
 	if (fault)
 		return (0);
 	return (1);
+}
+
+static uint64_t
+guest_pc(struct vm_exit *vme)
+{
+#ifdef __amd64__
+	return (vme->rip);
+#else
+	return (vme->pc);
+#endif
 }
 
 static void
@@ -750,6 +918,7 @@ _gdb_cpu_suspend(struct vcpu *vcpu, bool report_stop)
 static int
 _gdb_set_step(struct vcpu *vcpu, int val)
 {
+#ifdef __amd64__
 	int error;
 
 	/*
@@ -763,6 +932,9 @@ _gdb_set_step(struct vcpu *vcpu, int val)
 		(void)vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, val);
 
 	return (error);
+#else
+	return (vm_set_capability(vcpu, VM_CAP_SS_EXIT, val));
+#endif
 }
 
 /*
@@ -773,11 +945,17 @@ _gdb_check_step(struct vcpu *vcpu)
 {
 	int val;
 
+#ifdef __amd64__
 	if (vm_get_capability(vcpu, VM_CAP_MTRAP_EXIT, &val) != 0) {
 		if (vm_get_capability(vcpu, VM_CAP_RFLAGS_TF, &val) != 0)
 			return -1;
 	}
 	return 0;
+#else
+	if (vm_get_capability(vcpu, VM_CAP_SS_EXIT, &val) != 0)
+		return (-1);
+	return (0);
+#endif
 }
 
 /*
@@ -904,6 +1082,7 @@ gdb_cpu_step(struct vcpu *vcpu)
 /*
  * A general handler for VM_EXITCODE_DB.
  * Handles RFLAGS.TF exits on AMD SVM.
+ * XXX-MJ wrong on arm64
  */
 void
 gdb_cpu_debug(struct vcpu *vcpu, struct vm_exit *vmexit)
@@ -911,10 +1090,15 @@ gdb_cpu_debug(struct vcpu *vcpu, struct vm_exit *vmexit)
 	if (!gdb_active)
 		return;
 
+#ifdef __amd64__
 	/* RFLAGS.TF exit? */
 	if (vmexit->u.dbg.trace_trap) {
 		gdb_cpu_step(vcpu);
 	}
+#else
+	(void)vmexit;
+	gdb_cpu_step(vcpu);
+#endif
 }
 
 /*
@@ -955,7 +1139,7 @@ gdb_cpu_breakpoint(struct vcpu *vcpu, struct vm_exit *vmexit)
 	}
 	vcpuid = vcpu_id(vcpu);
 	pthread_mutex_lock(&gdb_lock);
-	error = guest_vaddr2paddr(vcpu, vmexit->rip, &gpa);
+	error = guest_vaddr2paddr(vcpu, guest_pc(vmexit), &gpa);
 	assert(error == 1);
 	bp = find_breakpoint(gpa);
 	if (bp != NULL) {
@@ -964,11 +1148,11 @@ gdb_cpu_breakpoint(struct vcpu *vcpu, struct vm_exit *vmexit)
 		assert(vs->stepped == false);
 		assert(vs->hit_swbreak == false);
 		vs->hit_swbreak = true;
-		vm_set_register(vcpu, VM_REG_GUEST_RIP, vmexit->rip);
+		vm_set_register(vcpu, GDB_PC_REGNAME, guest_pc(vmexit));
 		for (;;) {
 			if (stopped_vcpu == -1) {
-				debug("$vCPU %d reporting breakpoint at rip %#lx\n",
-				    vcpuid, vmexit->rip);
+				debug("$vCPU %d reporting breakpoint at pc %#lx\n",
+				    vcpuid, guest_pc(vmexit));
 				stopped_vcpu = vcpuid;
 				gdb_suspend_vcpus();
 			}
@@ -986,13 +1170,18 @@ gdb_cpu_breakpoint(struct vcpu *vcpu, struct vm_exit *vmexit)
 		}
 		gdb_cpu_resume(vcpu);
 	} else {
-		debug("$vCPU %d injecting breakpoint at rip %#lx\n", vcpuid,
-		    vmexit->rip);
+		debug("$vCPU %d injecting breakpoint at PC %#lx\n", vcpuid,
+		    guest_pc(vmexit));
+#ifdef __amd64__
 		error = vm_set_register(vcpu, VM_REG_GUEST_ENTRY_INST_LENGTH,
 		    vmexit->u.bpt.inst_length);
 		assert(error == 0);
 		error = vm_inject_exception(vcpu, IDT_BP, 0, 0, 0);
 		assert(error == 0);
+#else
+		printf("%s:%d\n", __func__, __LINE__);
+		abort();
+#endif
 	}
 	pthread_mutex_unlock(&gdb_lock);
 }
@@ -1295,7 +1484,7 @@ remove_all_sw_breakpoints(void)
 	TAILQ_FOREACH_SAFE(bp, &breakpoints, link, nbp) {
 		debug("remove breakpoint at %#lx\n", bp->gpa);
 		cp = paddr_guest2host(ctx, bp->gpa, 1);
-		*cp = bp->shadow_inst;
+		memcpy(cp, bp->shadow_inst, sizeof(bp->shadow_inst));
 		TAILQ_REMOVE(&breakpoints, bp, link);
 		free(bp);
 	}
@@ -1311,7 +1500,7 @@ update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 	uint8_t *cp;
 	int error;
 
-	if (kind != 1) {
+	if (kind != GDB_BP_SIZE) {
 		send_error(EINVAL);
 		return;
 	}
@@ -1350,15 +1539,15 @@ update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 			}
 			bp = malloc(sizeof(*bp));
 			bp->gpa = gpa;
-			bp->shadow_inst = *cp;
-			*cp = 0xcc;	/* INT 3 */
+			memcpy(bp->shadow_inst, cp, sizeof(bp->shadow_inst));
+			memcpy(cp, GDB_BP_INSTR, GDB_BP_SIZE);
 			TAILQ_INSERT_TAIL(&breakpoints, bp, link);
 			debug("new breakpoint at %#lx\n", gpa);
 		}
 	} else {
 		if (bp != NULL) {
 			debug("remove breakpoint at %#lx\n", gpa);
-			*cp = bp->shadow_inst;
+			memcpy(cp, bp->shadow_inst, sizeof(bp->shadow_inst));
 			TAILQ_REMOVE(&breakpoints, bp, link);
 			free(bp);
 			if (TAILQ_EMPTY(&breakpoints))
@@ -1500,6 +1689,7 @@ check_features(const uint8_t *data, size_t len)
 	/* This is an arbitrary limit. */
 	append_string("PacketSize=4096");
 	append_string(";swbreak+");
+	append_string(";qXfer:features:read+");
 	finish_packet();
 }
 
@@ -1557,7 +1747,7 @@ gdb_query(const uint8_t *data, size_t len)
 
 		data += strlen("qThreadExtraInfo");
 		len -= strlen("qThreadExtraInfo");
-		if (*data != ',') {
+		if (len == 0 || *data != ',') {
 			send_error(EINVAL);
 			return;
 		}
@@ -1571,6 +1761,57 @@ gdb_query(const uint8_t *data, size_t len)
 		start_packet();
 		append_asciihex(buf);
 		finish_packet();
+	} else if (command_equals(data, len, "qXfer:features:read:target.xml:")) {
+		struct stat sb;
+		char *xml;
+		char buf[64];
+		size_t xmllen;
+		unsigned int doff, dlen;
+		char reply;
+
+		data += strlen("qXfer:features:read:target.xml:");
+		len -= strlen("qXfer:features:read:target.xml:");
+		if (len > sizeof(buf) - 1) {
+			send_error(EINVAL);
+			return;
+		}
+		memcpy(buf, data, len);
+		buf[len] = '\0';
+		if (sscanf(buf, "%x,%x", &doff, &dlen) != 2) {
+			send_error(EINVAL);
+			return;
+		}
+
+		if (fstat(target_xml_fd, &sb) == -1) {
+			EPRINTLN("gdb: fstat: %s", strerror(errno));
+			exit(1);
+		}
+		xmllen = sb.st_size;
+		xml = mmap(NULL, xmllen, PROT_READ, MAP_SHARED,
+		    target_xml_fd, 0);
+		if (xml == MAP_FAILED) {
+			EPRINTLN("gdb: mmap: %s", strerror(errno));
+			exit(1);
+		}
+
+		if (doff >= xmllen) {
+			reply = 'l';
+			dlen = 0;
+		} else if (doff + dlen >= xmllen) {
+			reply = 'l';
+			dlen = xmllen - doff;
+		} else
+			reply = 'm';
+
+		start_packet();
+		append_char(reply);
+		append_packet_data(xml + doff, dlen);
+		finish_packet();
+
+		if (munmap((void *)xml, xmllen) == -1) {
+			EPRINTLN("gdb: munmap: %s", strerror(errno));
+			exit(1);
+		}
 	} else
 		send_empty_response();
 }
@@ -1898,6 +2139,9 @@ void
 init_gdb(struct vmctx *_ctx)
 {
 	int error, flags, optval, s;
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_t rights;
+#endif
 	struct addrinfo hints;
 	struct addrinfo *gdbaddr;
 	const char *saddr, *value;
@@ -1977,4 +2221,13 @@ init_gdb(struct vmctx *_ctx)
 	gdb_active = true;
 	freeaddrinfo(gdbaddr);
 	free(sport);
+
+	target_xml_fd = open(GDB_TARGET_XML_PATH, O_RDONLY);
+	if (target_xml_fd == -1)
+		err(1, "Failed to open %s", GDB_TARGET_XML_PATH);
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_init(&rights, CAP_FSTAT, CAP_MMAP_R, CAP_PREAD);
+	if (caph_rights_limit(target_xml_fd, &rights) == -1)
+		err(1, "Unable to apply rights for sandbox");
+#endif
 }

@@ -534,6 +534,8 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	vtimer_cpuinit(hypctx);
 	vgic_cpuinit(hypctx);
 
+	hypctx->debug_ss_enabled = false;
+
 	hypctx->el2_addr = el2_map_enter((vm_offset_t)hypctx, size,
 	    VM_PROT_READ | VM_PROT_WRITE);
 
@@ -698,6 +700,10 @@ handle_el1_sync_excp(struct hypctx *hypctx, struct vm_exit *vme_ret,
 	case EXCP_BRK:
 		vmm_stat_incr(hypctx->vcpu, VMEXIT_BRK, 1);
 		vme_ret->exitcode = VM_EXITCODE_BRK;
+		break;
+	case EXCP_SOFTSTP_EL0:
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_SS, 1);
+		vme_ret->exitcode = VM_EXITCODE_SS;
 		break;
 	case EXCP_INSN_ABORT_L:
 	case EXCP_DATA_ABORT_L:
@@ -1096,6 +1102,8 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 			hypctx->tf.tf_spsr = hypctx->spsr_el1 & PSR_FLAGS;
 			/* TODO: DIT, PAN, SSBS */
 			hypctx->tf.tf_spsr |= PSR_DAIF | PSR_M_EL1h;
+			/* XXX-MJ what about SS? */
+			printf("%s:%d\n", __func__, __LINE__);
 		}
 
 		daif = intr_disable();
@@ -1112,6 +1120,17 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 			vm_exit_debug(vcpu, pc);
 			break;
 		}
+
+#if 0
+		if (__predict_false(hypctx->debug_ss_enabled)) {
+			hypctx->debug_spsr = hypctx->tf.tf_spsr;
+			hypctx->debug_mdscr = hypctx->mdscr_el1;
+
+			/* XXX-MJ how do we ensure that MDSCR accesses trap? */
+			hypctx->tf.tf_spsr |= PSR_SS;
+			hypctx->mdscr_el1 |= MDSCR_SS | MDSCR_KDE; /* XXX-MJ what about KDE? */
+		}
+#endif
 
 		/* Activate the stage2 pmap so the vmid is valid */
 		pmap_activate_vm(pmap);
@@ -1130,6 +1149,13 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 
 		vgic_sync_hwstate(hypctx);
 		vtimer_sync_hwstate(hypctx);
+
+#if 0
+		if (__predict_false(hypctx->debug_ss_enabled)) {
+			hypctx->tf.tf_spsr = hypctx->debug_spsr;
+			hypctx->mdscr_el1 = hypctx->debug_mdscr;
+		}
+#endif
 
 		/*
 		 * Deactivate the stage2 pmap. vmm_pmap_clean_stage2_tlbi
@@ -1313,7 +1339,11 @@ vmmops_getcap(void *vcpui, int num, int *retval)
 		ret = 0;
 		break;
 	case VM_CAP_BPT_EXIT:
-		*retval = (hypctx->mdcr_el2 & MDCR_EL2_TDE) != 0;
+		*retval = hypctx->debug_bpt_enabled;
+		ret = 0;
+		break;
+	case VM_CAP_SS_EXIT:
+		*retval = hypctx->debug_ss_enabled;
 		ret = 0;
 		break;
 	default:
@@ -1333,10 +1363,36 @@ vmmops_setcap(void *vcpui, int num, int val)
 
 	switch (num) {
 	case VM_CAP_BPT_EXIT:
+		/* XXX-MJ want to set TDA as well? */
 		if (val != 0)
 			hypctx->mdcr_el2 |= MDCR_EL2_TDE;
-		else
+		else if (!hypctx->debug_ss_enabled)
 			hypctx->mdcr_el2 &= ~MDCR_EL2_TDE;
+		hypctx->debug_bpt_enabled = (val != 0);
+		ret = 0;
+		break;
+	case VM_CAP_SS_EXIT:
+		if (val != 0) {
+			hypctx->debug_ss_enabled = true;
+
+			hypctx->debug_spsr = hypctx->tf.tf_spsr & PSR_SS;
+			hypctx->tf.tf_spsr |= PSR_SS;
+			hypctx->debug_mdscr = hypctx->mdscr_el1 &
+			    (MDSCR_SS | MDSCR_KDE);
+			hypctx->mdscr_el1 |= MDSCR_SS | MDSCR_KDE;
+
+			hypctx->mdcr_el2 |= MDCR_EL2_TDE;
+		} else if (hypctx->debug_ss_enabled) {
+			hypctx->debug_ss_enabled = false;
+
+			hypctx->tf.tf_spsr &= ~PSR_SS;
+			hypctx->tf.tf_spsr |= hypctx->debug_spsr & PSR_SS;
+			hypctx->mdscr_el1 &= ~(MDSCR_SS | MDSCR_KDE);
+			hypctx->mdscr_el1 |= hypctx->debug_mdscr &
+			    (MDSCR_SS | MDSCR_KDE);
+			if (!hypctx->debug_bpt_enabled)
+				hypctx->mdcr_el2 &= ~MDCR_EL2_TDE;
+		}
 		ret = 0;
 		break;
 	}

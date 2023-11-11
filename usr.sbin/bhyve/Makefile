@@ -77,6 +77,7 @@ CFLAGS+= -I${SRCTOP}/sys/contrib/libfdt
 .if defined(BHYVE_GDB_SUPPORT)
 SRCS+=	gdb.c
 CFLAGS+= -DBHYVE_GDB
+SUBDIR+= gdb
 .ifdef GDB_LOG
 CFLAGS+=-DGDB_LOG
 .endif

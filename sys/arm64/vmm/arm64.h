@@ -37,6 +37,9 @@
 struct vgic_v3;
 struct vgic_v3_cpu;
 
+/*
+ * Per-vCPU hypervisor state.
+ */
 struct hypctx {
 	struct trapframe tf;
 
@@ -101,6 +104,14 @@ struct hypctx {
 	} exit_info;
 
 	struct vtimer_cpu 	vtimer_cpu;
+
+	/*
+	 * CPU state preserved when single-stepping.
+	 */
+	uint64_t	debug_spsr;
+	uint64_t	debug_mdscr;
+	bool		debug_ss_enabled;
+	bool		debug_bpt_enabled;
 
 	struct vgic_v3_regs	vgic_v3_regs;
 	struct vgic_v3_cpu	*vgic_cpu;
