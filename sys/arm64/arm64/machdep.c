@@ -771,8 +771,8 @@ preload_add_terminator(vm_offset_t dst)
  * Fake some preloaded metadata for the rescue kernel using parameters passed by
  * the panicked kernel.
  */
-static void
-rescue_preload_init(struct arm64_bootparams *abp)
+static vm_offset_t
+rescue_preload_init(void)
 {
 	extern u_long _end;
 	static pd_entry_t l1[Ln_ENTRIES] __aligned(PAGE_SIZE);
@@ -782,7 +782,15 @@ rescue_preload_init(struct arm64_bootparams *abp)
 	pd_entry_t *l0;
 	void *efimap, *efifb;
 	uint64_t ttbr0;
-	vm_offset_t dtb, env, kernend, md, mdstart, off, paramsva;
+	vm_offset_t delta, dtb, env, kernend, md, mdstart, off, paramsva;
+
+	/*
+	 * Find the physical load address of the kernel.  Add "delta" to a
+	 * physical address to get the corresponding virtual address relative to
+	 * KERNBASE.
+	 */
+	delta = KERNBASE -
+	    (arm64_address_translate_s1e1r(KERNBASE) & PAR_PA_MASK);
 
 	/*
 	 * Fetch the boot parameters and DTB/EFI map from the 2MB region
@@ -797,28 +805,28 @@ rescue_preload_init(struct arm64_bootparams *abp)
 	 */
 	_Static_assert(KERNBASE == VM_MIN_KERNEL_ADDRESS,
 	    "kernel does not start at TTBR1 base");
-	paramsva = KERNBASE - abp->kern_delta - RESCUE_RESERV_KERNEL_OFFSET;
+	paramsva = KERNBASE - delta - RESCUE_RESERV_KERNEL_OFFSET;
 
 	ttbr0 = READ_SPECIALREG(ttbr0_el1) & TTBR_BADDR;
-	l0 = (pd_entry_t *)(uintptr_t)(ttbr0 + abp->kern_delta);
+	l0 = (pd_entry_t *)(uintptr_t)(ttbr0 + delta);
 	pde = l0[pmap_l0_index(paramsva)];
 	if (pde == 0) {
 		l0[pmap_l0_index(paramsva)] = L0_TABLE |
-		    ((uintptr_t)l1 - abp->kern_delta);
+		    ((uintptr_t)l1 - delta);
 		l1p = l1;
 	} else {
-		l1p = (pd_entry_t *)((pde & ~ATTR_MASK) + abp->kern_delta);
+		l1p = (pd_entry_t *)((pde & ~ATTR_MASK) + delta);
 	}
 	pde = l1p[pmap_l1_index(paramsva)];
 	if (pde == 0) {
 		l1p[pmap_l1_index(paramsva)] = L1_TABLE |
-		    ((uintptr_t)l2 - abp->kern_delta);
+		    ((uintptr_t)l2 - delta);
 		l2p = l2;
 	} else {
 		/* Currently locore does not create L1_BLOCK entries. */
 		KASSERT((pde & ATTR_DESCR_MASK) == L1_TABLE,
 		    ("invalid L1 entry %#lx", pde));
-		l2p = (pd_entry_t *)((pde & ~ATTR_MASK) + abp->kern_delta);
+		l2p = (pd_entry_t *)((pde & ~ATTR_MASK) + delta);
 	}
 	KASSERT(l2p[pmap_l2_index(paramsva)] == 0,
 	    ("L2 entry already exists for %#lx", paramsva));
@@ -882,7 +890,7 @@ rescue_preload_init(struct arm64_bootparams *abp)
 
 	rescue_dumper_init(&params->kp_dumpparams);
 
-	abp->modulep = mdstart;
+	return (mdstart);
 }
 #endif /* RESCUE */
 
@@ -1064,7 +1072,7 @@ initarm(struct arm64_bootparams *abp)
 	 * loaded rescue kernel, can't easily be determined there.  So, fake it
 	 * here.
 	 */
-	rescue_preload_init(abp);
+	abp->modulep = rescue_preload_init();
 #endif
 
 	TSRAW(&thread0, TS_ENTER, __func__, NULL);
