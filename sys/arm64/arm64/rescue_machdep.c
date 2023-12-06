@@ -146,9 +146,11 @@ rescue_kernel_exec(void)
 
 	/*
 	 * Acknowledge any active interrupts to avoid leaving the PIC in an
-	 * indeterminate state.
+	 * indeterminate state.  Mute system errors: the rescue kernel will
+	 * re-enable them once it's prepared to handle them.
 	 */
 	intr_isrc_reset();
+	serror_disable();
 
 	/*
 	 * Prepare the dump parameters structure for the rescue kernel.  The
