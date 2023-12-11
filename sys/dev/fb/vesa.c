@@ -1698,14 +1698,21 @@ get_palette(video_adapter_t *adp, int base, int count,
 	b = g + count;
 	error = vesa_bios_save_palette2(base, count, r, g, b, bits);
 	if (error == 0) {
-		copyout(r, red, count);
-		copyout(g, green, count);
-		copyout(b, blue, count);
+		error = copyout(r, red, count);
+		if (error)
+			goto out;
+		error = copyout(g, green, count);
+		if (error)
+			goto out;
+		error = copyout(b, blue, count);
+		if (error)
+			goto out;
 		if (trans != NULL) {
 			bzero(r, count);
-			copyout(r, trans, count);
+			error = copyout(r, trans, count);
 		}
 	}
+out:
 	free(r, M_DEVBUF);
 
 	return (error);
@@ -1732,11 +1739,18 @@ set_palette(video_adapter_t *adp, int base, int count,
 	r = malloc(count * 3, M_DEVBUF, M_WAITOK);
 	g = r + count;
 	b = g + count;
-	copyin(red, r, count);
-	copyin(green, g, count);
-	copyin(blue, b, count);
+	error = copyin(red, r, count);
+	if (error)
+		goto out;
+	error = copyin(green, g, count);
+	if (error)
+		goto out;
+	error = copyin(blue, b, count);
+	if (error)
+		goto out;
 
 	error = vesa_bios_load_palette2(base, count, r, g, b, bits);
+out:
 	free(r, M_DEVBUF);
 
 	return (error);
