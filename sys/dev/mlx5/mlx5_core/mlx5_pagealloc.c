@@ -123,7 +123,8 @@ mlx5_fwp_alloc(struct mlx5_core_dev *dev, gfp_t flags, unsigned num)
 
 		/* allocate memory */
 		err = bus_dmamem_alloc(dev->cmd.dma_tag, &fwp[x].virt_addr,
-		    BUS_DMA_WAITOK | BUS_DMA_COHERENT, &fwp[x].dma_map);
+		    BUS_DMA_WAITOK | BUS_DMA_COHERENT | BUS_DMA_ZERO,
+		    &fwp[x].dma_map);
 		if (err != 0)
 			goto failure;
 
