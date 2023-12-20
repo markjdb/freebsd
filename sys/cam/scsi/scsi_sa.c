@@ -1495,7 +1495,7 @@ bailout:
 	if (need_copy != 0) {
 		if (error != EFAULT) {
 			cam_periph_unlock(periph);
-			copyout(params, list->params, list->param_len);
+			error = copyout(params, list->params, list->param_len);
 			cam_periph_lock(periph);
 		}
 		free(params, M_SCSISA);
