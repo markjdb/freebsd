@@ -652,6 +652,9 @@ nfsm_mbufuio(struct nfsrv_descript *nd, struct uio *uiop, int siz)
 	long uiosiz, rem;
 	int error = 0;
 
+	KASSERT(uiop->uio_segflg == UIO_SYSSPACE,
+	    ("%s: uiop->uio_segflg != UIO_SYSSPACE", __func__));
+
 	mp = nd->nd_md;
 	mbufcp = nd->nd_dpos;
 	len = mtod(mp, caddr_t) + mp->m_len - mbufcp;
@@ -686,10 +689,7 @@ nfsm_mbufuio(struct nfsrv_descript *nd, struct uio *uiop, int siz)
 				(mbufcp, uiocp, xfer);
 			else
 #endif
-			if (uiop->uio_segflg == UIO_SYSSPACE)
-				NFSBCOPY(mbufcp, uiocp, xfer);
-			else
-				copyout(mbufcp, uiocp, xfer);
+			NFSBCOPY(mbufcp, uiocp, xfer);
 			left -= xfer;
 			len -= xfer;
 			mbufcp += xfer;
