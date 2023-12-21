@@ -2451,7 +2451,7 @@ void netmap_uninit_bridges(void);
 #define CSB_WRITE(csb, field, v) (put_user(v, &csb->field))
 #else  /* ! linux */
 #define CSB_READ(csb, field, r) (r = fuword32(&csb->field))
-#define CSB_WRITE(csb, field, v) (suword32(&csb->field, v))
+#define CSB_WRITE(csb, field, v) ((void)suword32(&csb->field, v))
 #endif /* ! linux */
 
 /* some macros that may not be defined */

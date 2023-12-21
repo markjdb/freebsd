@@ -1103,7 +1103,7 @@ cam_periph_unmapmem(union ccb *ccb, struct cam_periph_map_info *mapinfo)
 			uma_zfree(pbuf_zone, mapinfo->bp[i]);
 		} else {
 			if (dirs[i] != CAM_DIR_OUT) {
-				copyout(*data_ptrs[i], mapinfo->orig[i],
+				(void)copyout(*data_ptrs[i], mapinfo->orig[i],
 				    lengths[i]);
 			}
 			free(*data_ptrs[i], M_CAMPERIPH);
