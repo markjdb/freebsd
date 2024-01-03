@@ -4294,6 +4294,7 @@ sotoxsocket(struct socket *so, struct xsocket *xso)
 	xso->so_error = so->so_error;
 	xso->so_uid = so->so_cred->cr_uid;
 	xso->so_pgid = so->so_sigio ? so->so_sigio->sio_pgid : 0;
+	xso->so_fibnum = so->so_fibnum;
 	if (SOLISTENING(so)) {
 		xso->so_qlen = so->sol_qlen;
 		xso->so_incqlen = so->sol_incqlen;

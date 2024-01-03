@@ -566,7 +566,8 @@ struct xsocket {
 	uint32_t	so_qlimit;
 	pid_t		so_pgid;
 	uid_t		so_uid;
-	int32_t		so_spare32[8];
+	int		so_fibnum;
+	int32_t		so_spare32[7];
 	int16_t		so_type;
 	int16_t		so_options;
 	int16_t		so_linger;
