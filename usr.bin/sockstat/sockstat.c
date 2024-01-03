@@ -82,6 +82,7 @@ static int	 opt_4;		/* Show IPv4 sockets */
 static int	 opt_6;		/* Show IPv6 sockets */
 static int	 opt_C;		/* Show congestion control */
 static int	 opt_c;		/* Show connected sockets */
+static int	 opt_f;		/* Show FIB numbers */
 static int	 opt_i;		/* Show inp_gencnt */
 static int	 opt_j;		/* Show specified jail */
 static int	 opt_L;		/* Don't show IPv4 or IPv6 loopback sockets */
@@ -1195,6 +1196,12 @@ displaysock(struct sock *s, int pos)
 		default:
 			abort();
 		}
+		if (opt_f) {
+			while (pos < offset)
+				pos += xprintf(" ");
+			pos += xprintf("%d", s->so_fibnum);
+			offset += 7;
+		}
 		if (opt_i) {
 			if (s->proto == IPPROTO_TCP ||
 			    s->proto == IPPROTO_UDP) {
@@ -1301,6 +1308,8 @@ display(void)
 		    "USER", "COMMAND", "PID", "FD", "PROTO",
 		    opt_w ? 45 : 21, "LOCAL ADDRESS",
 		    opt_w ? 45 : 21, "FOREIGN ADDRESS");
+		if (opt_f)
+			printf(" %-6s", "FIB");
 		if (opt_i)
 			printf(" %-8s", "ID");
 		if (opt_U)
@@ -1439,7 +1448,7 @@ main(int argc, char *argv[])
 	int o, i;
 
 	opt_j = -1;
-	while ((o = getopt(argc, argv, "46Ccij:Llnp:P:qSsUuvw")) != -1)
+	while ((o = getopt(argc, argv, "46Ccfij:Llnp:P:qSsUuvw")) != -1)
 		switch (o) {
 		case '4':
 			opt_4 = 1;
@@ -1452,6 +1461,9 @@ main(int argc, char *argv[])
 			break;
 		case 'c':
 			opt_c = 1;
+			break;
+		case 'f':
+			opt_f = 1;
 			break;
 		case 'i':
 			opt_i = 1;
