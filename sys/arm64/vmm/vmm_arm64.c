@@ -534,6 +534,8 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	vtimer_cpuinit(hypctx);
 	vgic_cpuinit(hypctx);
 
+	hypctx->debug_brk_enabled = hypctx->debug_ss_enabled = false;
+
 	hypctx->el2_addr = el2_map_enter((vm_offset_t)hypctx, size,
 	    VM_PROT_READ | VM_PROT_WRITE);
 
@@ -695,7 +697,14 @@ handle_el1_sync_excp(struct hypctx *hypctx, struct vm_exit *vme_ret,
 		arm64_gen_reg_emul_data(esr_iss, vme_ret);
 		vme_ret->exitcode = VM_EXITCODE_REG_EMUL;
 		break;
-
+	case EXCP_BRK:
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_BRK, 1);
+		vme_ret->exitcode = VM_EXITCODE_BRK;
+		break;
+	case EXCP_SOFTSTP_EL0:
+		vmm_stat_incr(hypctx->vcpu, VMEXIT_SS, 1);
+		vme_ret->exitcode = VM_EXITCODE_SS;
+		break;
 	case EXCP_INSN_ABORT_L:
 	case EXCP_DATA_ABORT_L:
 		vmm_stat_incr(hypctx->vcpu, esr_ec == EXCP_DATA_ABORT_L ?
@@ -1299,6 +1308,7 @@ vmmops_exception(void *vcpui, uint64_t esr, uint64_t far)
 int
 vmmops_getcap(void *vcpui, int num, int *retval)
 {
+	struct hypctx *hypctx = vcpui;
 	int ret;
 
 	ret = ENOENT;
@@ -1307,6 +1317,13 @@ vmmops_getcap(void *vcpui, int num, int *retval)
 	case VM_CAP_UNRESTRICTED_GUEST:
 		*retval = 1;
 		ret = 0;
+		break;
+	case VM_CAP_BRK_EXIT:
+		*retval = hypctx->debug_brk_enabled ? 1 : 0;
+		ret = 0;
+		break;
+	case VM_CAP_SS_EXIT:
+		*retval = hypctx->debug_ss_enabled ? 1 : 0;
 		break;
 	default:
 		break;
@@ -1318,6 +1335,45 @@ vmmops_getcap(void *vcpui, int num, int *retval)
 int
 vmmops_setcap(void *vcpui, int num, int val)
 {
+	struct hypctx *hypctx = vcpui;
+	int ret;
 
-	return (ENOENT);
+	ret = 0;
+
+	switch (num) {
+	case VM_CAP_BRK_EXIT:
+		if (val != 0)
+			hypctx->mdcr_el2 |= MDCR_EL2_TDE;
+		else if (!hypctx->debug_ss_enabled)
+			hypctx->mdcr_el2 &= ~MDCR_EL2_TDE;
+		hypctx->debug_brk_enabled = (val != 0);
+		break;
+	case VM_CAP_SS_EXIT:
+		if (val != 0)
+			hypctx->mdcr_el2 |= MDCR_EL2_TDE;
+		else if (!hypctx->debug_brk_enabled)
+			hypctx->mdcr_el2 &= ~MDCR_EL2_TDE;
+
+		if (val != 0) {
+			hypctx->debug_spsr = hypctx->spsr_el1 & PSR_SS;
+			hypctx->debug_mdscr = hypctx->mdscr_el1 &
+			    (MDSCR_SS | MDSCR_KDE);
+
+			hypctx->spsr_el1 |= PSR_SS;
+			hypctx->mdscr_el1 |= MDSCR_SS | MDSCR_KDE;
+		} else if (hypctx->debug_ss_enabled) {
+			hypctx->spsr_el1 &= ~PSR_SS;
+			hypctx->spsr_el1 |= hypctx->debug_spsr & PSR_SS;
+			hypctx->mdscr_el1 &= ~(MDSCR_SS | MDSCR_KDE);
+			hypctx->mdscr_el1 |= hypctx->debug_mdscr &
+			    (MDSCR_SS | MDSCR_KDE);
+		}
+		hypctx->debug_ss_enabled = (val != 0);
+		break;
+	default:
+		ret = ENOENT;
+		break;
+	}
+
+	return (ret);
 }
