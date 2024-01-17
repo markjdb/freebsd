@@ -6,3 +6,4 @@ SRCS+=	\
 SRCS+=	vmm_instruction_emul.c
 
 BHYVE_FDT_SUPPORT=
+BHYVE_GDB_SUPPORT=
