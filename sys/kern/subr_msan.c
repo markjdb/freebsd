@@ -595,8 +595,7 @@ void
 kmsan_mark_mbuf(const struct mbuf *m, uint8_t c)
 {
 	do {
-		if ((m->m_flags & M_EXTPG) == 0)
-			kmsan_mark(m->m_data, m->m_len, c);
+		kmsan_mark(m->m_data, m->m_len, c);
 		m = m->m_next;
 	} while (m != NULL);
 }
