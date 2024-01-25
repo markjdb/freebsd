@@ -1,6 +1,4 @@
 #!/bin/sh
-#
-#
 
 main() {
 	desc=
@@ -30,6 +28,7 @@ main() {
 
 	shift $(( ${OPTIND} - 1 ))
 
+	runscripts="true"
 	vital="false"
 
 	case "${outname}" in
@@ -53,14 +52,17 @@ main() {
 		libcompat-dev|libcompiler_rt-dev|liby-dev)
 			outname=${outname%%-dev}
 			_descr="Development Files"
+			runscripts="false"
 			;;
 		libcompat-lib32_dev|libcompiler_rt-lib32_dev|liby-lib32_dev)
 			outname=${outname%%-lib32_dev}
 			_descr="32-bit Libraries, Development Files"
+			runscripts="false"
 			;;
 		libcompat-man|libelftc-man)
 			outname=${outname%%-man}
 			_descr="Manual Pages"
+			runscripts="false"
 			;;
 		utilities)
 			uclfile="${uclfile}"
@@ -74,31 +76,37 @@ main() {
 			outname="${outname%%-lib32_dev}"
 			_descr="32-bit Libraries, Development Files"
 			pkgdeps="${outname}"
+			runscripts="false"
 			;;
 		*-lib32_dbg)
 			outname="${outname%%-lib32_dbg}"
 			_descr="32-bit Libraries, Debugging Symbols"
 			pkgdeps="${outname}"
+			runscripts="false"
 			;;
 		*-lib32)
 			outname="${outname%%-lib32}"
 			_descr="32-bit Libraries"
 			pkgdeps="${outname}"
+			runscripts="false"
 			;;
 		*-dev)
 			outname="${outname%%-dev}"
 			_descr="Development Files"
 			pkgdeps="${outname}"
+			runscripts="false"
 			;;
 		*-dbg)
 			outname="${outname%%-dbg}"
 			_descr="Debugging Symbols"
 			pkgdeps="${outname}"
+			runscripts="false"
 			;;
 		*-man)
 			outname="${outname%%-man}"
 			_descr="Manual Pages"
 			pkgdeps="${outname}"
+			runscripts="false"
 			;;
 		${origname})
 			;;
@@ -128,6 +136,7 @@ main() {
 		echo "desc=${desc}"
 		echo "comment=${comment}"
 		echo "vital=${vital}"
+		echo "runscripts=${runscripts}"
 		echo "cp ${uclsource} -> ${uclfile}"
 		echo "==============================================================="
 		echo ""
@@ -162,6 +171,7 @@ EOF
 		-e "s/%PKG_NAME_PREFIX%/${PKG_NAME_PREFIX}/" \
 		-e "s|%PKG_WWW%|${PKG_WWW}|" \
 		-e "s/%PKG_MAINTAINER%/${PKG_MAINTAINER}/" \
+		-e "s/%RUNSCRIPTS%/${runscripts}/" \
 		${uclfile}
 	return 0
 }
