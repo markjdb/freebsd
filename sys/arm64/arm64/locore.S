@@ -39,6 +39,11 @@
 
 #define	VIRT_BITS	48
 
+/*
+ * The size of our bootstrap stack.
+ */
+#define	BOOT_STACK_SIZE	(KSTACK_PAGES * PAGE_SIZE)
+
 	.globl	kernbase
 	.set	kernbase, KERNBASE
 
@@ -145,7 +150,9 @@ virtdone:
 	mov	x19, x0
 
 	/* Bootstrap an early shadow map for the boot stack. */
-	bl	pmap_san_bootstrap
+	ldr	x0, [x0, #BP_KERN_STACK]
+	ldr	x1, =BOOT_STACK_SIZE
+	bl	kasan_init_early
 
 	/* Restore bootparams */
 	mov	x0, x19
@@ -671,7 +678,7 @@ abort:
 .bss
 	.align	PAGE_SHIFT
 initstack:
-	.space	(PAGE_SIZE * KSTACK_PAGES)
+	.space	BOOT_STACK_SIZE
 initstack_end:
 
 	.section .init_pagetable, "aw", %nobits

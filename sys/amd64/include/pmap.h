@@ -481,7 +481,6 @@ void	pmap_thread_init_invl_gen(struct thread *td);
 int	pmap_vmspace_copy(pmap_t dst_pmap, pmap_t src_pmap);
 
 #if defined(KASAN) || defined(KMSAN)
-void	pmap_san_bootstrap(void);
 void	pmap_san_enter(vm_offset_t);
 #endif
 
