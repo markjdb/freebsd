@@ -912,9 +912,23 @@ kmsan_strlen(const char *str)
 	return (s - str);
 }
 
+int	kmsan_copystr(const void *, void *, size_t, size_t *);
 int	kmsan_copyin(const void *, void *, size_t);
 int	kmsan_copyout(const void *, void *, size_t);
 int	kmsan_copyinstr(const void *, void *, size_t, size_t *);
+
+int
+kmsan_copystr(const void *kfaddr, void *kdaddr, size_t len, size_t *lencopied)
+{
+	int ret;
+
+	kmsan_check_arg(sizeof(kfaddr) + sizeof(kdaddr) + sizeof(len) +
+	    sizeof(lencopied), "copystr():args");
+	ret = copystr(kfaddr, kdaddr, len, lencopied);
+	kmsan_shadow_fill((uintptr_t)kdaddr, KMSAN_STATE_INITED, *lencopied);
+	kmsan_init_ret(sizeof(int));
+	return (ret);
+}
 
 int
 kmsan_copyin(const void *uaddr, void *kaddr, size_t len)
