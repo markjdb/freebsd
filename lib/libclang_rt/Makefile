@@ -30,6 +30,11 @@ SUBDIR+=	xray-fdr
 SUBDIR+=	xray-profiling
 .endif # amd64
 
+.if ${MACHINE_CPUARCH} == "aarch64"
+SUBDIR+=	msan
+SUBDIR+=	msan_cxx
+.endif
+
 SUBDIR+=	profile
 
 SUBDIR_PARALLEL=
