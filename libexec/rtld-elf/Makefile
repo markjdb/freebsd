@@ -10,6 +10,7 @@ PACKAGE=	clibs
 MK_PIE=		no # Always position independent using local rules
 # Not compatible with sanitizer instrumentation or SSP.
 MK_ASAN=	no
+MK_MSAN=	no
 MK_SSP=		no
 MK_UBSAN=	no
 

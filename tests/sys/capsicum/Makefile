@@ -43,11 +43,14 @@ PROGS+=		$p
 NO_SHARED.$p=
 SRCS.$p=	mini-me.c
 .endfor
-.if ${MK_ASAN} != "no" || ${MK_UBSAN} != "no"
+.if ${MK_ASAN} != "no" || ${MK_MSAN} != "no" || ${MK_UBSAN} != "no"
 # mini-me.o is linked into a static binary so we can't use sanitizers.
 # Note: We have to set CFLAGS here since it will be built as part of
-# _PROGS_COMMON_OBJS and therefore NO_SHARED.$p does not disable ASAN/UBSAN.
-CFLAGS.mini-me.c+=	-fno-sanitize=address -fno-sanitize=undefined
+# _PROGS_COMMON_OBJS and therefore NO_SHARED.$p does not disable
+# ASAN/MSAN/UBSAN.
+CFLAGS.mini-me.c+=	-fno-sanitize=address \
+			-fno-sanitize=memory \
+			-fno-sanitize=undefined
 .endif
 
 BINDIR=	${TESTSDIR}

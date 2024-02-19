@@ -1,5 +1,9 @@
-
 .include <src.opts.mk>
+
+# We cannot build this test at all when MSAN is enabled, due to the getifaddrs()
+# symbol collision and since libatf might have been built with MSAN
+# instrumentation.
+.if ${MK_MSAN} != "yes"
 
 .PATH:	${.CURDIR}/..
 
@@ -20,5 +24,7 @@ WARNS?=	3
 # definition first in the symbol resolution order.
 LDFLAGS+=-shared-libasan
 .endif
+
+.endif # MK_MSAN != "yes"
 
 .include <bsd.test.mk>

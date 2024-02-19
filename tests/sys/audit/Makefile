@@ -1,3 +1,8 @@
+.include <src.opts.mk>
+
+# XXX-MJ these tests cannot be built with MSAN enabled so long as
+# libprivateauditd.a is not position-independent.
+.if ${MK_MSAN} != "yes"
 
 TESTSDIR=	${TESTSBASE}/sys/audit
 
@@ -57,11 +62,14 @@ TEST_METADATA+= is_exclusive="true"
 TEST_METADATA+=	required_files="/etc/rc.d/auditd /dev/auditpipe"
 
 MK_PIE:=	no	# XXX libprivateauditd.a is not PIE
+
 LDFLAGS+=	-lbsm -lutil
 OPENBSMDIR=${SRCTOP}/contrib/openbsm
 CFLAGS+=	-I${OPENBSMDIR}
 LDADD+=	${LIBAUDITD}
 
 CFLAGS.process-control.c+=	-I${SRCTOP}/tests
+
+.endif # ${MK_MSAN} != "yes"
 
 .include <bsd.test.mk>

@@ -19,6 +19,9 @@ CFLAGS+=	-DWANT_HYPERV
 .if ${MK_ASAN} != "no"
 CFLAGS.__vdso_gettc.c+=-fno-sanitize=address
 .endif
+.if ${MK_MSAN} != "no"
+CFLAGS.__vdso_gettc.c+=-fno-sanitize=memory
+.endif
 .if ${MK_UBSAN} != "no"
 CFLAGS.__vdso_gettc.c+=-fno-sanitize=undefined
 .endif

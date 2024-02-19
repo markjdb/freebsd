@@ -34,3 +34,8 @@ MDSRCS+= \
 # sanitizer runtime can initialize itself.
 CFLAGS.amd64_archlevel.c+=	-fno-sanitize=address
 .endif
+.if ${MK_MSAN} != "no"
+# Disable MSAN for amd64_archlevel.c since its code is executed before the
+# sanitizer runtime can initialize itself.
+CFLAGS.amd64_archlevel.c+=	-fno-sanitize=memory
+.endif

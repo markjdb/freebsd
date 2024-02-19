@@ -1,7 +1,8 @@
-
 .include <src.opts.mk>
 
+.if ${MK_MSAN} != "yes"
 MK_PIE:=	no	# Explicit libXXX.a references
+.endif
 
 .if ${MK_LLVM_FULL_DEBUGINFO} == "no"
 .if ${COMPILER_TYPE} == "clang"

@@ -11,6 +11,17 @@ SANITIZER_LDFLAGS+=	-fsanitize=address
 _use_sanitizers=	yes
 .endif # ${MK_ASAN} == "yes"
 
+.if ${MK_MSAN} == "yes" && ${NO_SHARED:Uno:tl} == "no"
+.if ${MK_PIE} != "no"
+SANITIZER_CFLAGS+=	-fsanitize=memory -fsanitize-memory-track-origins -fPIC
+# -fsanitize-memory-param-retval can raise false positives.
+SANITIZER_CFLAGS+=	-fno-sanitize-memory-param-retval
+_use_sanitizers=	yes
+.else
+.warning MSan is only supported for PIE executables
+.endif
+.endif
+
 .if ${MK_UBSAN} == "yes" && ${NO_SHARED:Uno:tl} == "no"
 # Unlike the other sanitizers, UBSan could also work for static libraries.
 # However, this currently results in linker errors (even with the

@@ -740,6 +740,7 @@ BSARGS= 	DESTDIR= \
 		MK_CLANG_FULL=no \
 		MK_HTML=no \
 		MK_MAN=no \
+		MK_MSAN=no \
 		MK_PROFILE=no \
 		MK_RETPOLINE=no \
 		MK_SSP=no \
@@ -771,6 +772,7 @@ TMAKE=		\
 		MK_CLANG_FORMAT=no \
 		MK_CLANG_FULL=no \
 		MK_LLDB=no \
+		MK_MSAN=no \
 		MK_RETPOLINE=no \
 		MK_SSP=no \
 		MK_TESTS=no \
@@ -3109,6 +3111,10 @@ _prereq_libs+=	lib/libclang_rt/asan
 _prereq_libs+=	lib/libclang_rt/asan-preinit
 _prereq_libs+=	lib/libclang_rt/asan_cxx
 _prereq_libs+=	lib/libclang_rt/asan_static
+.endif
+.if ${MK_MSAN} != "no"
+_prereq_libs+=	lib/libclang_rt/msan
+_prereq_libs+=	lib/libclang_rt/msan_cxx
 .endif
 .if ${MK_UBSAN} != "no"
 _prereq_libs+=	lib/libclang_rt/ubsan_minimal

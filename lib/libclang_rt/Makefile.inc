@@ -13,6 +13,7 @@ SHLIBDIR=	${LIBDIR}
 NO_PIC=
 MK_PROFILE=	no
 MK_ASAN:=	no
+MK_MSAN:=	no
 MK_SSP=		no
 MK_UBSAN:=	no
 

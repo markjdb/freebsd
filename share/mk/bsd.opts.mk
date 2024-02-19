@@ -77,6 +77,7 @@ __DEFAULT_NO_OPTIONS = \
     CCACHE_BUILD \
     CTF \
     INSTALL_AS_USER \
+    MSAN \
     PROFILE \
     RETPOLINE \
     STALE_STAGED \
