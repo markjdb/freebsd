@@ -199,6 +199,8 @@ static const u64 kWindowsShadowOffset32 = 3ULL << 28;  // 0x30000000
 #    define SHADOW_OFFSET __asan_shadow_memory_dynamic_address
 #  elif SANITIZER_MAC && defined(__aarch64__)
 #    define SHADOW_OFFSET __asan_shadow_memory_dynamic_address
+#  elif SANITIZER_FREEBSD && defined(__aarch64__)
+#    define ASAN_SHADOW_OFFSET_CONST 0x0000800000000000
 #elif SANITIZER_RISCV64
 #define SHADOW_OFFSET kRiscv64_ShadowOffset64
 #  elif defined(__aarch64__)
