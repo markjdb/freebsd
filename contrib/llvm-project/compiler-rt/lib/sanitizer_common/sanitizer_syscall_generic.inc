@@ -19,7 +19,8 @@
 # define SYSCALL(name) __NR_ ## name
 #endif
 
-#if defined(__x86_64__) && (SANITIZER_FREEBSD || SANITIZER_MAC)
+#if (defined(__x86_64__) && (SANITIZER_FREEBSD || SANITIZER_MAC)) || \
+    (defined(__aarch64__) && SANITIZER_FREEBSD)
 # define internal_syscall __syscall
 # else
 # define internal_syscall syscall
