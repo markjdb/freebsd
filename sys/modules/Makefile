@@ -685,7 +685,7 @@ _armv8_rng=	armv8_rng
 _dpaa2=		dpaa2
 _sff=		sff
 _em=		em
-_hyperv=  hyperv
+#_hyperv=  hyperv
 
 .if !empty(OPT_FDT)
 _allwinner=	allwinner
