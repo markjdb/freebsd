@@ -20,6 +20,9 @@
 cpu		ARM64
 ident		GENERIC
 
+options 	ZFS
+options 	ZSTDIO
+
 include		"std.arm64"
 include		"std.dev"
 

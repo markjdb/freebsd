@@ -4194,8 +4194,6 @@ pmap_pv_promote_l2(pmap_t pmap, vm_offset_t va, vm_paddr_t pa,
 	vm_offset_t va_last;
 	vm_page_t m;
 
-	KASSERT((va & L2_OFFSET) == 0,
-	    ("pmap_pv_promote_l2: va %#lx is not 2mpage aligned", va));
 	KASSERT((pa & L2_OFFSET) == 0,
 	    ("pmap_pv_promote_l2: pa %#lx is not 2mpage aligned", pa));
 	CHANGE_PV_LIST_LOCK_TO_PHYS(lockp, pa);
