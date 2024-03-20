@@ -101,9 +101,9 @@
 
 #ifndef KSTACK_PAGES
 #if defined(KASAN) || defined(KMSAN)
-#define	KSTACK_PAGES	2
+#define	KSTACK_PAGES	6
 #else
-#define	KSTACK_PAGES	1	/* pages of kernel stack (with pcb) */
+#define	KSTACK_PAGES	4	/* pages of kernel stack (with pcb) */
 #endif
 #endif
 

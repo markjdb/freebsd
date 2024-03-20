@@ -30,7 +30,6 @@
 #include <machine/asm.h>
 #include <sys/errno.h>
 
-#include <machine/param.h>
 #include <machine/vmparam.h>
 
 #include "assym.inc"
