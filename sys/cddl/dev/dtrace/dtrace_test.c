@@ -68,7 +68,9 @@ dtrace_test_sdttest(SYSCTL_HANDLER_ARGS)
 	else if (val == 0)
 		return (0);
 
+#if 0
 	SDT_PROBE7(test, , , sdttest, 1, 2, 3, 4, 5, 6, 7);
+#endif
 
 	return (error);
 }

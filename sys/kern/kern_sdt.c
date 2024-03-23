@@ -52,3 +52,15 @@ sdt_probe_stub(uint32_t id, uintptr_t arg0, uintptr_t arg1,
 	printf("sdt_probe_stub: unexpectedly called\n");
 	kdb_backtrace();
 }
+
+void
+sdt_probe(uint32_t id, uintptr_t arg0, uintptr_t arg1,
+    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4)
+{
+}
+
+void
+sdt_probe6(uint32_t id, uintptr_t arg0, uintptr_t arg1,
+    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4, uintptr_t arg5)
+{
+}
