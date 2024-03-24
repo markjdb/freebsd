@@ -77,8 +77,8 @@
 
 #else /* _KERNEL */
 
-#include <sys/cdefs.h>
 #include <sys/linker_set.h>
+#include <machine/sdt_machdep.h>
 
 extern volatile bool sdt_probes_enabled;
 
@@ -146,6 +146,8 @@ void sdt_probe(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
 void sdt_probe6(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
     uintptr_t, uintptr_t);
 
+#define	_SDT_PROBE_SECTION	"__sdt_probes"
+
 #define __sdt_used
 
 SET_DECLARE(sdt_providers_set, struct sdt_provider);
@@ -176,8 +178,10 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define __SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, c) do {\
 	asm goto(								\
-	    "0: nop; nop; nop; nop; nop\n"					\
-	    ".pushsection __sdt_probes\n"					\
+	    "0:\n"								\
+	    _SDT_PATCH_INSTR "\n"						\
+	    ".pushsection " _SDT_PROBE_SECTION "\n"				\
+	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
 	    ".popsection\n"							\
@@ -186,14 +190,14 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 __sdt_probe ## c:								\
 		sdt_probe(sdt_##prov##_##mod##_##func##_##name->id,		\
 		    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-		    (uintptr_t)arg3, (uintptr_t)arg4);		\
+		    (uintptr_t)arg3, (uintptr_t)arg4);				\
 	}									\
 } while (0)
-#define _SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, c)	\
-	__SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, c)
+#define _SDT_PROBE(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4)	\
+	__SDT_PROBE(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4)
 #define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)		\
-	_SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,		\
-	    __COUNTER__)
+	_SDT_PROBE(prov, mod, func, name, __COUNTER__,				\
+	    arg0, arg1, arg2, arg3, arg4)
 
 #define SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)		\
 	static struct sdt_argtype sdta_##prov##_##mod##_##func##_##name##num[1]	\
@@ -329,8 +333,10 @@ __sdt_probe ## c:								\
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 #define	__SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5, c) do {	\
 	asm goto(								\
-	    "0: nop; nop; nop; nop; nop\n"					\
-	    ".pushsection __sdt_probes\n"					\
+	    "0:\n"								\
+	    _SDT_PATCH_INSTR "\n"						\
+	    ".pushsection " _SDT_PROBE_SECTION "\n"				\
+	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
 	    ".popsection\n"							\

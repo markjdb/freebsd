@@ -19,7 +19,7 @@
  * CDDL HEADER END
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
- *
+ * Copyright 2024 Mark Johnston <markj@FreeBSD.org>
  */
 
 /*
@@ -96,6 +96,11 @@ static dtrace_pops_t sdt_pops = {
 	.dtps_getargval =	NULL,
 	.dtps_usermode =	NULL,
 	.dtps_destroy =		sdt_destroy,
+};
+
+struct sdt_patchpoint {
+	uintptr_t	tracepoint;
+	uintptr_t	target;
 };
 
 static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
@@ -419,7 +424,6 @@ sdt_unload(void)
 static int
 sdt_modevent(module_t mod __unused, int type, void *data __unused)
 {
-
 	switch (type) {
 	case MOD_LOAD:
 	case MOD_UNLOAD:
