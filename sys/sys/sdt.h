@@ -146,7 +146,7 @@ void sdt_probe(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
 void sdt_probe6(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
     uintptr_t, uintptr_t);
 
-#define	_SDT_PROBE_SECTION	"__sdt_probes"
+#define	_SDT_PATCHPOINT_SECTION		"__sdt_patchpoints_set"
 
 #define __sdt_used
 
@@ -180,18 +180,18 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	SDT_PROBES_ENABLED()	__predict_false(sdt_probes_enabled)
 
-#define __SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, c) do {\
+#define __SDT_PROBE(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4) do {\
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
-	    ".pushsection " _SDT_PROBE_SECTION "\n"				\
+	    ".pushsection " _SDT_PATCHPOINT_SECTION "\n"			\
 	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
 	    ".popsection\n"							\
-	    : : : : __sdt_probe ## c);						\
+	    : : : : __sdt_probe##c);						\
 	if (0) {								\
-__sdt_probe ## c:								\
+__sdt_probe##c:								\
 		sdt_probe(sdt_##prov##_##mod##_##func##_##name->id,		\
 		    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
 		    (uintptr_t)arg3, (uintptr_t)arg4);				\
@@ -339,28 +339,29 @@ __sdt_probe ## c:								\
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, 0)
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
-#define	__SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5, c) do {	\
+#define	__SDT_PROBE6(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4,	\
+    arg5) do {									\
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
-	    ".pushsection " _SDT_PROBE_SECTION "\n"				\
+	    ".pushsection " _SDT_PATCHPOINT_SECTION "\n"			\
 	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
 	    ".popsection\n"							\
-	    : : : : __sdt_probe ## c);						\
+	    : : : : __sdt_probe##c);						\
 	if (0) {								\
-__sdt_probe ## c:								\
+__sdt_probe##c:									\
 		sdt_probe6(sdt_##prov##_##mod##_##func##_##name->id,		\
 		    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
 		    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5);		\
 	}									\
 } while (0)
-#define	_SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5, c) \
-	__SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5, c)
+#define	_SDT_PROBE6(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4, arg5) \
+	__SDT_PROBE6(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4, arg5)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)	\
-	_SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5,	\
-	    __COUNTER__)
+	_SDT_PROBE6(prov, mod, func, name, __COUNTER__,				\
+	    arg0, arg1, arg2, arg3, arg4, arg5)
 #if 0
 #define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5,  \
     arg6)								       \
@@ -439,6 +440,13 @@ struct sdt_probe;
 struct sdt_provider;
 struct linker_file;
 
+struct sdt_patchpoint {
+	struct sdt_probe *probe;
+	uintptr_t	tracepoint;
+	uintptr_t	target;
+	TAILQ_ENTRY(sdt_patchpoint) patchpoint_entry;
+};
+
 struct sdt_argtype {
 	int		ndx;		/* Argument index. */
 	const char	*type;		/* Argument type string. */
@@ -454,6 +462,7 @@ struct sdt_probe {
 	TAILQ_ENTRY(sdt_probe)
 			probe_entry;	/* SDT probe list entry. */
 	TAILQ_HEAD(, sdt_argtype) argtype_list;
+	TAILQ_HEAD(, sdt_patchpoint) patchpoint_list;
 	const char	*mod;
 	const char	*func;
 	const char	*name;

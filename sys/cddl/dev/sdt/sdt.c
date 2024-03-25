@@ -98,11 +98,6 @@ static dtrace_pops_t sdt_pops = {
 	.dtps_destroy =		sdt_destroy,
 };
 
-struct sdt_patchpoint {
-	uintptr_t	tracepoint;
-	uintptr_t	target;
-};
-
 static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
 
 static eventhandler_tag	sdt_kld_load_tag;
@@ -289,25 +284,38 @@ sdt_kld_load_providers(struct linker_file *lf)
 static void
 sdt_kld_load_probes(struct linker_file *lf)
 {
-	struct sdt_probe **probe, **p_begin, **p_end;
-	struct sdt_argtype **argtype, **a_begin, **a_end;
+	struct sdt_probe **p_begin, **p_end;
+	struct sdt_argtype **a_begin, **a_end;
+	struct sdt_patchpoint **pp_begin, **pp_end;
 
 	if (linker_file_lookup_set(lf, "sdt_probes_set", &p_begin, &p_end,
 	    NULL) == 0) {
-		for (probe = p_begin; probe < p_end; probe++) {
+		for (struct sdt_probe **probe = p_begin; probe < p_end;
+		    probe++) {
 			(*probe)->sdtp_lf = lf;
 			sdt_create_probe(*probe);
 			TAILQ_INIT(&(*probe)->argtype_list);
+			TAILQ_INIT(&(*probe)->patchpoint_list);
 		}
 	}
 
 	if (linker_file_lookup_set(lf, "sdt_argtypes_set", &a_begin, &a_end,
 	    NULL) == 0) {
-		for (argtype = a_begin; argtype < a_end; argtype++) {
+		for (struct sdt_argtype **argtype = a_begin; argtype < a_end;
+		    argtype++) {
 			(*argtype)->probe->n_args++;
 			TAILQ_INSERT_TAIL(&(*argtype)->probe->argtype_list,
 			    *argtype, argtype_entry);
 		}
+	}
+
+	if (linker_file_lookup_set(lf, _SDT_PATCHPOINT_SECTION,
+	    &pp_begin, &pp_end, NULL) == 0) {
+		for (struct sdt_patchpoint **patchpoint = pp_begin;
+		    patchpoint < pp_end; patchpoint++)
+			TAILQ_INSERT_TAIL(
+			    &(*patchpoint)->probe->patchpoint_list,
+			    *patchpoint, patchpoint_entry);
 	}
 }
 
