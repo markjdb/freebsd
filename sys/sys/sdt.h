@@ -147,7 +147,7 @@ void sdt_probe6(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
     uintptr_t, uintptr_t);
 
 #define	_SDT_PATCHPOINT_SET		sdt_patchpoint_set
-#define	_SDT_PATCHPOINT_SECTION		set_sdt_patchpoint_set
+#define	_SDT_PATCHPOINT_SECTION		"set_sdt_patchpoint_set"
 
 #define __sdt_used
 
@@ -187,7 +187,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
-	    ".pushsection " #_SDT_PATCHPOINT_SECTION ", \"aw\"\n"			\
+	    ".pushsection " _SDT_PATCHPOINT_SECTION ", \"aw\"\n"			\
 	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
@@ -349,7 +349,7 @@ __sdt_probe##c:								\
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
-	    ".pushsection " #_SDT_PATCHPOINT_SECTION ", \"aw\"\n"			\
+	    ".pushsection " _SDT_PATCHPOINT_SECTION ", \"aw\"\n"			\
 	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
