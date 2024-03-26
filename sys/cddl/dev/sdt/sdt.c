@@ -310,7 +310,7 @@ sdt_kld_load_probes(struct linker_file *lf)
 	}
 
 	printf("%s:%d\n", __func__, __LINE__);
-	if (linker_file_lookup_set(lf, _SDT_PATCHPOINT_SECTION,
+	if (linker_file_lookup_set(lf, __STRING(_SDT_PATCHPOINT_SET),
 	    &pp_begin, &pp_end, NULL) == 0) {
 		printf("%s:%d %p %p\n", __func__, __LINE__, pp_begin, pp_end);
 		for (struct sdt_patchpoint **patchpoint = pp_begin;
