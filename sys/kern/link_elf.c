@@ -1737,10 +1737,13 @@ link_elf_lookup_set(linker_file_t lf, const char *name,
 	/* get address of first entry */
 	snprintf(setsym, len, "%s%s", "__start_set_", name);
 	error = link_elf_lookup_symbol(lf, setsym, &sym);
-	if (error != 0)
+	if (error != 0) {
+		printf("%s:%d\n", __func__, __LINE__);
 		goto out;
+	}
 	link_elf_symbol_values(lf, sym, &symval);
 	if (symval.value == 0) {
+		printf("%s:%d\n", __func__, __LINE__);
 		error = ESRCH;
 		goto out;
 	}
@@ -1749,10 +1752,13 @@ link_elf_lookup_set(linker_file_t lf, const char *name,
 	/* get address of last entry */
 	snprintf(setsym, len, "%s%s", "__stop_set_", name);
 	error = link_elf_lookup_symbol(lf, setsym, &sym);
-	if (error != 0)
+	if (error != 0) {
+		printf("%s:%d\n", __func__, __LINE__);
 		goto out;
+	}
 	link_elf_symbol_values(lf, sym, &symval);
 	if (symval.value == 0) {
+		printf("%s:%d\n", __func__, __LINE__);
 		error = ESRCH;
 		goto out;
 	}
