@@ -573,26 +573,13 @@ image_copyout_zeroes(int fd, size_t count)
 static int
 image_copyout_file(int fd, size_t size, int ifd, off_t iofs)
 {
-	void *mp;
-	char *buf;
-	size_t iosz, sz;
-	int error;
-	off_t iof;
-
-	iosz = secsz * image_swap_pgsz;
+	ssize_t n;
 
 	while (size > 0) {
-		sz = (size > iosz) ? iosz : size;
-		buf = mp = image_file_map(ifd, iofs, sz, &iof);
-		if (buf == NULL)
+		n = copy_file_range(ifd, &iofs, fd, NULL, size, 0);
+		if (n < 0)
 			return (errno);
-		buf += iof;
-		error = image_copyout_memory(fd, sz, buf);
-		image_file_unmap(mp, sz);
-		if (error)
-			return (error);
-		size -= sz;
-		iofs += sz;
+		size -= n;
 	}
 	return (0);
 }
