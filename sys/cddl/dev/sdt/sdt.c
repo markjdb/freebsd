@@ -311,11 +311,17 @@ sdt_kld_load_probes(struct linker_file *lf)
 
 	if (linker_file_lookup_set(lf, _SDT_PATCHPOINT_SECTION,
 	    &pp_begin, &pp_end, NULL) == 0) {
+		printf("%s:%d %p %p\n", __func__, __LINE__, pp_begin, pp_end);
 		for (struct sdt_patchpoint **patchpoint = pp_begin;
-		    patchpoint < pp_end; patchpoint++)
+		    patchpoint < pp_end; patchpoint++) {
+			printf("%s:%d found patchpoint for %s at %#lx\n", __func__, __LINE__,
+			    (*patchpoint)->probe->name, (*patchpoint)->tracepoint);
 			TAILQ_INSERT_TAIL(
 			    &(*patchpoint)->probe->patchpoint_list,
 			    *patchpoint, patchpoint_entry);
+		}
+	} else {
+		printf("%s:%d\n", __func__, __LINE__);
 	}
 }
 
