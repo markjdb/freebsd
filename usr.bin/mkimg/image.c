@@ -573,6 +573,7 @@ image_copyout_zeroes(int fd, size_t count)
 static int
 image_copyout_file(int fd, size_t size, int ifd, off_t iofs)
 {
+	printf("%s:%d copying %zu bytes\n", __func__, __LINE__, size); 
 	while (size > 0) {
 		ssize_t n;
 
