@@ -579,6 +579,9 @@ image_copyout_file(int fd, size_t size, int ifd, off_t iofs)
 		n = copy_file_range(ifd, &iofs, fd, NULL, size, 0);
 		if (n < 0)
 			return (errno);
+		if (n == 0)
+			/* End of input. */
+			break;
 		size -= n;
 	}
 	return (0);
