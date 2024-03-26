@@ -146,7 +146,8 @@ void sdt_probe(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
 void sdt_probe6(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
     uintptr_t, uintptr_t);
 
-#define	_SDT_PATCHPOINT_SECTION		"__sdt_patchpoints_set"
+#define	_SDT_PATCHPOINT_SET		sdt_patchpoint_set
+#define	_SDT_PATCHPOINT_SECTION		"set_sdt_patchpoint_set"
 
 #define __sdt_used
 
@@ -181,6 +182,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define	SDT_PROBES_ENABLED()	__predict_false(sdt_probes_enabled)
 
 #define __SDT_PROBE(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4) do {\
+	__WEAK(__CONCAT(__start_set_, _SDT_PATCHPOINT_SET));			\
+	__WEAK(__CONCAT(__stop_set_, _SDT_PATCHPOINT_SET));			\
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
@@ -341,6 +344,8 @@ __sdt_probe##c:								\
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 #define	__SDT_PROBE6(prov, mod, func, name, c, arg0, arg1, arg2, arg3, arg4,	\
     arg5) do {									\
+	__WEAK(__CONCAT(__start_set_, _SDT_PATCHPOINT_SET));			\
+	__WEAK(__CONCAT(__stop_set_, _SDT_PATCHPOINT_SET));			\
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
