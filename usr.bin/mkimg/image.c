@@ -573,15 +573,22 @@ image_copyout_zeroes(int fd, size_t count)
 static int
 image_copyout_file(int fd, size_t size, int ifd, off_t iofs)
 {
-	ssize_t n;
-
 	while (size > 0) {
+		ssize_t n;
+
 		n = copy_file_range(ifd, &iofs, fd, NULL, size, 0);
 		if (n < 0)
 			return (errno);
-		if (n == 0)
-			/* End of input. */
+		if (n == 0) {
+			struct stat sb;
+
+			/* End of input.  Extend the output file. */
+			if (fstat(fd, &sb) != 0)
+				return (errno);
+			if (ftruncate(fd, sb.st_size + size) != 0)
+				return (errno);
 			break;
+		}
 		size -= n;
 	}
 	return (0);
