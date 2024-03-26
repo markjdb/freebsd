@@ -184,7 +184,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
-	    ".pushsection " _SDT_PATCHPOINT_SECTION "\n"			\
+	    ".pushsection " _SDT_PATCHPOINT_SECTION ", \"a\"\n"			\
 	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
@@ -344,7 +344,7 @@ __sdt_probe##c:								\
 	asm goto(								\
 	    "0:\n"								\
 	    _SDT_PATCH_INSTR "\n"						\
-	    ".pushsection " _SDT_PATCHPOINT_SECTION "\n"			\
+	    ".pushsection " _SDT_PATCHPOINT_SECTION ", \"a\"\n"			\
 	    ".quad sdt_"#prov "_"#mod "_"#func "_"#name "\n"			\
 	    ".quad 0b\n"							\
 	    ".quad %l0\n"							\
