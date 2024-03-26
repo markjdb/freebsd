@@ -286,7 +286,7 @@ sdt_kld_load_probes(struct linker_file *lf)
 {
 	struct sdt_probe **p_begin, **p_end;
 	struct sdt_argtype **a_begin, **a_end;
-	struct sdt_patchpoint **pp_begin, **pp_end;
+	struct sdt_patchpoint *pp_begin, *pp_end;
 
 	if (linker_file_lookup_set(lf, "sdt_probes_set", &p_begin, &p_end,
 	    NULL) == 0) {
@@ -313,13 +313,13 @@ sdt_kld_load_probes(struct linker_file *lf)
 	if (linker_file_lookup_set(lf, __XSTRING(_SDT_PATCHPOINT_SET),
 	    &pp_begin, &pp_end, NULL) == 0) {
 		printf("%s:%d %p %p\n", __func__, __LINE__, pp_begin, pp_end);
-		for (struct sdt_patchpoint **patchpoint = pp_begin;
+		for (struct sdt_patchpoint *patchpoint = pp_begin;
 		    patchpoint < pp_end; patchpoint++) {
 			printf("%s:%d found patchpoint for %s at %#lx\n", __func__, __LINE__,
-			    (*patchpoint)->probe->name, (*patchpoint)->tracepoint);
+			    (patchpoint)->probe->name, (patchpoint)->tracepoint);
 			TAILQ_INSERT_TAIL(
-			    &(*patchpoint)->probe->patchpoint_list,
-			    *patchpoint, patchpoint_entry);
+			    &(patchpoint)->probe->patchpoint_list,
+			    patchpoint, patchpoint_entry);
 		}
 	} else {
 		printf("%s:%d\n", __func__, __LINE__);
