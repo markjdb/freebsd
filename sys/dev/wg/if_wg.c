@@ -2247,7 +2247,15 @@ wg_transmit(if_t ifp, struct mbuf *m)
 		xmit_err(ifp, m, NULL, AF_UNSPEC);
 		return (ret);
 	}
-	return (wg_xmit(ifp, m, af, if_getmtu(ifp)));
+
+	/*
+	 * netmap only gets to see transient errors, since it handles errors by
+	 * refusing to advance the transmit ring and retrying later.
+	 */
+	ret = wg_xmit(ifp, m, af, if_getmtu(ifp));
+	if (ret == ENOBUFS)
+		return (ret);
+	return (0);
 }
 
 /*
