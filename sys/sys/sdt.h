@@ -91,7 +91,7 @@ extern volatile bool sdt_probes_enabled;
 #define SDT_PROBE_DEFINE(prov, mod, func, name)
 #define SDT_PROBE_DECLARE(prov, mod, func, name)
 #define SDT_PROBES_ENABLED()	0
-#define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+#define SDT_PROBE(prov, mod, func, name, pre, arg0, arg1, arg2, arg3, arg4)
 #define SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)
 
 #define	SDT_PROBE_DEFINE0(prov, mod, func, name)
@@ -104,12 +104,21 @@ extern volatile bool sdt_probes_enabled;
     arg3, arg4, arg5)
 
 #define	SDT_PROBE0(prov, mod, func, name)
+#define	SDT_PROBE0_PRE(prov, mod, func, name, pre)
 #define	SDT_PROBE1(prov, mod, func, name, arg0)
+#define	SDT_PROBE1_PRE(prov, mod, func, name, pre, arg0)
 #define	SDT_PROBE2(prov, mod, func, name, arg0, arg1)
+#define	SDT_PROBE2_PRE(prov, mod, func, name, pre, arg0, arg1)
 #define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)
+#define	SDT_PROBE3_PRE(prov, mod, func, name, pre, arg0, arg1, arg2)
 #define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)
+#define	SDT_PROBE4_PRE(prov, mod, func, name, pre, arg0, arg1, arg2, arg3)
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+#define	SDT_PROBE5_PRE(prov, mod, func, name, pre, arg0, arg1, arg2, arg3, \
+    arg4)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)
+#define	SDT_PROBE6_PRE(prov, mod, func, name, pre, arg0, arg1, arg2, arg3, \
+    arg4, arg5)
 
 #define	MIB_SDT_PROBE1(...)
 #define	MIB_SDT_PROBE2(...)
@@ -210,7 +219,8 @@ struct sdt_tracepoint {
 	STAILQ_ENTRY(sdt_tracepoint) tracepoint_entry;
 };
 
-#define __SDT_PROBE(prov, mod, func, name, uniq, f, ...) do {		\
+/* XXX-MJ pre and the function call need to be one arg */
+#define __SDT_PROBE(prov, mod, func, name, uniq, f, pre, ...) do {	\
 	__WEAK(__CONCAT(__start_set_, _SDT_TRACEPOINT_SET));		\
 	__WEAK(__CONCAT(__stop_set_, _SDT_TRACEPOINT_SET));		\
 	asm goto(							\
@@ -229,13 +239,14 @@ struct sdt_tracepoint {
 	    : __sdt_probe##uniq);					\
 	if (0) {							\
 __sdt_probe##uniq:;							\
+		pre							\
 		f(_SDT_PROBE_NAME(prov, mod, func, name)->id, __VA_ARGS__); \
 	}								\
 } while (0)
-#define _SDT_PROBE(prov, mod, func, name, uniq, f, ...)			\
-	__SDT_PROBE(prov, mod, func, name, uniq, f, __VA_ARGS__)
-#define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
-	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe,	\
+#define _SDT_PROBE(prov, mod, func, name, uniq, f, pre, ...)		\
+	__SDT_PROBE(prov, mod, func, name, uniq, f, pre, __VA_ARGS__)
+#define SDT_PROBE(prov, mod, func, name, pre, arg0, arg1, arg2, arg3, arg4) \
+	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe, pre,	\
 	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
 	    (uintptr_t)arg3, (uintptr_t)arg4)
 
@@ -342,20 +353,28 @@ __sdt_probe##uniq:;							\
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 4, arg4, xarg4);	\
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 5, arg5, xarg5)
 
+#define	SDT_PROBE0_PRE(prov, mod, func, name, pre)			\
+	SDT_PROBE(prov, mod, func, name, pre, 0, 0, 0, 0, 0)
 #define	SDT_PROBE0(prov, mod, func, name)				\
-	SDT_PROBE(prov, mod, func, name, 0, 0, 0, 0, 0)
+	SDT_PROBE0_PRE(prov, mod, func, name, )
+#define	SDT_PROBE1_PRE(prov, mod, func, name, arg0, pre)		\
+	SDT_PROBE(prov, mod, func, name, pre, arg0, 0, 0, 0, 0)
 #define	SDT_PROBE1(prov, mod, func, name, arg0)				\
-	SDT_PROBE(prov, mod, func, name, arg0, 0, 0, 0, 0)
+	SDT_PROBE1_PRE(prov, mod, func, name, arg0, )
+#define	SDT_PROBE2_PRE(prov, mod, func, name, arg0, arg1, pre)		\
+	SDT_PROBE(prov, mod, func, name, pre, arg0, arg1, 0, 0, 0)
 #define	SDT_PROBE2(prov, mod, func, name, arg0, arg1)			\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, 0, 0, 0)
+	SDT_PROBE2_PRE(prov, mod, func, name, arg0, arg1, )
+#define	SDT_PROBE3_PRE(prov, mod, func, name, arg0, arg1, arg2, pre)	\
+	SDT_PROBE(prov, mod, func, name, pre, arg0, arg1, arg2, 0, 0)
 #define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)		\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2,  0, 0)
+	SDT_PROBE3_PRE(prov, mod, func, name, arg0, arg1, arg2, )
 #define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)	\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, 0)
+	SDT_PROBE(prov, mod, func, name, , arg0, arg1, arg2, arg3, 0)
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+	SDT_PROBE(prov, mod, func, name, , arg0, arg1, arg2, arg3, arg4)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) \
-	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe6,	\
+	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe6, ,	\
 	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
 	    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5)
 
@@ -369,7 +388,7 @@ __sdt_probe##uniq:;							\
 
 #define	DTRACE_PROBE_IMPL_START(name, arg0, arg1, arg2, arg3, arg4)	do { \
 	static SDT_PROBE_DEFINE(sdt, , , name);				     \
-	SDT_PROBE(sdt, , , name, arg0, arg1, arg2, arg3, arg4);
+	SDT_PROBE(sdt, , , name, , arg0, arg1, arg2, arg3, arg4);
 #define DTRACE_PROBE_IMPL_END	} while (0)
 
 #define DTRACE_PROBE(name)						\

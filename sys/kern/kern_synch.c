@@ -537,12 +537,9 @@ mi_switch(int flags)
 	PCPU_SET(switchticks, ticks);
 	CTR4(KTR_PROC, "mi_switch: old thread %ld (td_sched %p, pid %ld, %s)",
 	    td->td_tid, td_get_sched(td), td->td_proc->p_pid, td->td_name);
-#ifdef KDTRACE_HOOKS
-	if (SDT_PROBES_ENABLED() &&
-	    ((flags & SW_PREEMPT) != 0 || ((flags & SW_INVOL) != 0 &&
-	    (flags & SW_TYPE_MASK) == SWT_NEEDRESCHED)))
-		SDT_PROBE0(sched, , , preempt);
-#endif
+	SDT_PROBE0_PRE(sched, , , preempt,
+	    if ((flags & SW_PREEMPT) != 0 || ((flags & SW_INVOL) != 0 &&
+	        (flags & SW_TYPE_MASK) == SWT_NEEDRESCHED)));
 	sched_switch(td, flags);
 	CTR4(KTR_PROC, "mi_switch: new thread %ld (td_sched %p, pid %ld, %s)",
 	    td->td_tid, td_get_sched(td), td->td_proc->p_pid, td->td_name);

@@ -131,12 +131,11 @@ priv_check_cred_post(struct ucred *cred, int priv, int error, bool handled)
 	 */
 	error = EPERM;
 out:
-	if (SDT_PROBES_ENABLED()) {
-		if (error)
-			SDT_PROBE1(priv, kernel, priv_check, priv__err, priv);
-		else
-			SDT_PROBE1(priv, kernel, priv_check, priv__ok, priv);
-	}
+
+	SDT_PROBE1_PRE(priv, kernel, priv_check, priv__err, priv,
+	    if (error != 0));
+	SDT_PROBE1_PRE(priv, kernel, priv_check, priv__ok, priv,
+	    if (error == 0));
 	return (error);
 }
 

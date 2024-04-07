@@ -58,6 +58,7 @@
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/signalvar.h>
 #include <sys/sched.h>
 #include <sys/sx.h>
@@ -597,16 +598,15 @@ exit1(struct thread *td, int rval, int signo)
 		PROC_UNLOCK(q);
 	}
 
-#ifdef KDTRACE_HOOKS
-	if (SDT_PROBES_ENABLED()) {
-		int reason = CLD_EXITED;
+	SDT_PROBE1_PRE(proc, , , exit, reason,
+		int reason;
+
+		reason = CLD_EXITED;
 		if (WCOREDUMP(signo))
 			reason = CLD_DUMPED;
 		else if (WIFSIGNALED(signo))
 			reason = CLD_KILLED;
-		SDT_PROBE1(proc, , , exit, reason);
-	}
-#endif
+	);
 
 	/* Save exit status. */
 	PROC_LOCK(p);
