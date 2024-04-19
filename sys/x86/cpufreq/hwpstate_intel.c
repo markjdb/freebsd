@@ -25,23 +25,21 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/types.h>
 #include <sys/param.h>
-#include <sys/sbuf.h>
-#include <sys/module.h>
 #include <sys/systm.h>
-#include <sys/errno.h>
-#include <sys/param.h>
-#include <sys/kernel.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
+#include <sys/errno.h>
+#include <sys/kernel.h>
+#include <sys/module.h>
+#include <sys/sbuf.h>
+#include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/proc.h>
-#include <sys/sched.h>
 
 #include <machine/cpu.h>
-#include <machine/md_var.h>
 #include <machine/cputypes.h>
+#include <machine/md_var.h>
 #include <machine/specialreg.h>
 
 #include <contrib/dev/acpica/include/acpi.h>
