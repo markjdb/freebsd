@@ -111,9 +111,41 @@ SYSCTL_BOOL(_machdep, OID_AUTO, hwpstate_pkg_ctrl, CTLFLAG_RDTUN,
     &hwpstate_pkg_ctrl_enable, 0,
     "Set 1 (default) to enable package-level control, 0 to disable");
 
+struct dump_cb_arg {
+	struct hwp_softc *sc;
+	int ret;
+	uint64_t pmen;
+	uint64_t hwpcap;
+	uint64_t hwpreq;
+	uint64_t hwpreqpkg;
+};
+
+static void
+dump_cb(void *_arg)
+{
+	struct dump_cb_arg *arg;
+	struct hwp_softc *sc;
+	int ret;
+
+	arg = _arg;
+	sc = arg;
+
+	ret = rdmsr_safe(MSR_IA32_PM_ENABLE, &arg->pmen);
+	if (ret == 0)
+		ret = rdmsr_safe(MSR_IA32_HWP_CAPABILITIES, &arg->hwpcap);
+	if (ret == 0)
+		ret = rdmsr_safe(MSR_IA32_HWP_REQUEST, &arg->hwpreq);
+	if (ret == 0 && arg->sc->hwp_pkg_ctrl &&
+	    (arg->hwpreq & IA32_HWP_REQUEST_PACKAGE_CONTROL) != 0)
+		ret = rdmsr_safe(MSR_IA32_HWP_REQUEST_PKG, &arg->hwpreqpkg);
+	arg->ret = ret;
+}
+
 static int
 intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 {
+	cpuset_t cpus;
+	struct dump_cb cba;
 	device_t dev;
 	struct pcpu *pc;
 	struct sbuf *sb;
@@ -128,41 +160,41 @@ intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 	if (pc == NULL)
 		return (ENXIO);
 
+	cba.sc = sc;
+	CPU_SETOF(pc->pc_cpuid, &cpus);
+	smp_rendezvous_cpus(&cpus, smp_no_rendezvous_barrier,
+	    dump_cb, smp_no_rendezvous_barrier, &cba);
+	if (cba.ret != 0)
+		return (cba.ret);
+
 	sb = sbuf_new(NULL, NULL, 1024, SBUF_FIXEDLEN | SBUF_INCLUDENUL);
 	sbuf_putc(sb, '\n');
-	thread_lock(curthread);
-	sched_bind(curthread, pc->pc_cpuid);
-	thread_unlock(curthread);
 
-	rdmsr_safe(MSR_IA32_PM_ENABLE, &data);
 	sbuf_printf(sb, "CPU%d: HWP %sabled\n", pc->pc_cpuid,
-	    ((data & 1) ? "En" : "Dis"));
-
-	if (data == 0) {
+	    ((cba.pmen & 1) ? "En" : "Dis"));
+	if (cba.pmen == 0) {
 		ret = 0;
 		goto out;
 	}
 
-	rdmsr_safe(MSR_IA32_HWP_CAPABILITIES, &data);
-	sbuf_printf(sb, "\tHighest Performance: %03ju\n", data & 0xff);
-	sbuf_printf(sb, "\tGuaranteed Performance: %03ju\n", (data >> 8) & 0xff);
-	sbuf_printf(sb, "\tEfficient Performance: %03ju\n", (data >> 16) & 0xff);
-	sbuf_printf(sb, "\tLowest Performance: %03ju\n", (data >> 24) & 0xff);
-
-	rdmsr_safe(MSR_IA32_HWP_REQUEST, &data);
-	data2 = 0;
-	if (sc->hwp_pkg_ctrl && (data & IA32_HWP_REQUEST_PACKAGE_CONTROL))
-		rdmsr_safe(MSR_IA32_HWP_REQUEST_PKG, &data2);
+	sbuf_printf(sb, "\tHighest Performance: %03ju\n",
+	    cba.hwpcap & 0xff);
+	sbuf_printf(sb, "\tGuaranteed Performance: %03ju\n",
+	    (cba.hwpcap >> 8) & 0xff);
+	sbuf_printf(sb, "\tEfficient Performance: %03ju\n",
+	    (cba.hwpcap >> 16) & 0xff);
+	sbuf_printf(sb, "\tLowest Performance: %03ju\n",
+	    (cba.hwpcap >> 24) & 0xff);
 
 	sbuf_putc(sb, '\n');
 
 #define pkg_print(x, name, offset) do {					\
-	if (!sc->hwp_pkg_ctrl || (data & x) != 0) 			\
+	if (!sc->hwp_pkg_ctrl || (cba.hwpreq & x) != 0) 		\
 		sbuf_printf(sb, "\t%s: %03u\n", name,			\
 		    (unsigned)(data >> offset) & 0xff);			\
 	else								\
 		sbuf_printf(sb, "\t%s: %03u\n", name,			\
-		    (unsigned)(data2 >> offset) & 0xff);		\
+		    (unsigned)(cba.hwpreqpkg >> offset) & 0xff);	\
 } while (0)
 
 	pkg_print(IA32_HWP_REQUEST_EPP_VALID,
@@ -178,13 +210,11 @@ intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 	sbuf_putc(sb, '\n');
 
 out:
-	thread_lock(curthread);
-	sched_unbind(curthread);
-	thread_unlock(curthread);
-
-	ret = sbuf_finish(sb);
-	if (ret == 0)
-		ret = SYSCTL_OUT(req, sbuf_data(sb), sbuf_len(sb));
+	if (ret == 0) {
+		ret = sbuf_finish(sb);
+		if (ret == 0)
+			ret = SYSCTL_OUT(req, sbuf_data(sb), sbuf_len(sb));
+	}
 	sbuf_delete(sb);
 
 	return (ret);
@@ -238,9 +268,57 @@ raw_to_percent_perf_bias(int x)
 	return (((x * 20) / 0xf) * 5);
 }
 
+struct epp_cb_arg {
+	struct hwp_softc *sc;
+	int ret;
+};
+
+static void
+get_hwp_perf_bias(void *_arg)
+{
+	struct hwp_softc *sc;
+	struct epp_cb_arg *arg;
+	uint64_t epb;
+	int ret;
+
+	arg = _arg;
+	sc = arg->sc;
+
+	ret = rdmsr_safe(MSR_IA32_ENERGY_PERF_BIAS, &ebp);
+	if (ret == 0) {
+		sc->hwp_energy_perf_bias = epb;
+		sc->hwp_perf_bias_cached = true;
+	}
+	arg->ret = ret;
+}
+
+static void
+set_hwp_perf_ctrl(void *_arg)
+{
+	struct hwp_softc *sc;
+	struct epp_cb_arg *arg;
+	int ret;
+
+	arg = _arg;
+	sc = arg->sc;
+
+	if (sc->hwp_pref_ctrl) {
+		if (sc->hwp_pkg_ctrl_en)
+			ret = wrmsr_safe(MSR_IA32_HWP_REQUEST_PKG, sc->req);
+		else
+			ret = wrmsr_safe(MSR_IA32_HWP_REQUEST, sc->req);
+	} else {
+		ret = wrmsr_safe(MSR_IA32_ENERGY_PERF_BIAS,
+		    sc->hwp_energy_perf_bias);
+	}
+	ret = arg->ret;
+}
+
 static int
 sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 {
+	cpuset_t cpus;
+	struct epp_cb_arg cba;
 	struct hwp_softc *sc;
 	device_t dev;
 	struct pcpu *pc;
@@ -257,10 +335,6 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 	if (pc == NULL)
 		return (ENXIO);
 
-	thread_lock(curthread);
-	sched_bind(curthread, pc->pc_cpuid);
-	thread_unlock(curthread);
-
 	if (sc->hwp_pref_ctrl) {
 		val = (sc->req & IA32_HWP_REQUEST_ENERGY_PERFORMANCE_PREFERENCE) >> 24;
 		val = raw_to_percent(val);
@@ -271,11 +345,13 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 		 * This register is per-core (but not HT).
 		 */
 		if (!sc->hwp_perf_bias_cached) {
-			ret = rdmsr_safe(MSR_IA32_ENERGY_PERF_BIAS, &epb);
-			if (ret)
-				goto out;
-			sc->hwp_energy_perf_bias = epb;
-			sc->hwp_perf_bias_cached = true;
+			cba.sc = sc;
+			CPU_SETOF(pc->pc_cpuid, &cpus);
+			smp_rendezvous_cpus(&cpus, smp_no_rendezvous_barrier,
+			    get_hwp_perf_bias, smp_no_rendezvous_barrier, &cba);
+			if (cba.ret != 0)
+				return (cba.ret);
+
 		}
 		val = sc->hwp_energy_perf_bias &
 		    IA32_ENERGY_PERF_BIAS_POLICY_HINT_MASK;
@@ -286,12 +362,10 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 
 	ret = sysctl_handle_int(oidp, &val, 0, req);
 	if (ret || req->newptr == NULL)
-		goto out;
+		return (ret);
 
-	if (val > 100) {
-		ret = EINVAL;
-		goto out;
-	}
+	if (val > 100)
+		return (EINVAL);
 
 	if (sc->hwp_pref_ctrl) {
 		val = percent_to_raw(val);
@@ -299,11 +373,6 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 		sc->req =
 		    ((sc->req & ~IA32_HWP_REQUEST_ENERGY_PERFORMANCE_PREFERENCE)
 		    | (val << 24u));
-
-		if (sc->hwp_pkg_ctrl_en)
-			ret = wrmsr_safe(MSR_IA32_HWP_REQUEST_PKG, sc->req);
-		else
-			ret = wrmsr_safe(MSR_IA32_HWP_REQUEST, sc->req);
 	} else {
 		val = percent_to_raw_perf_bias(val);
 		MPASS((val & ~IA32_ENERGY_PERF_BIAS_POLICY_HINT_MASK) == 0);
@@ -311,16 +380,13 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 		sc->hwp_energy_perf_bias =
 		    ((sc->hwp_energy_perf_bias &
 		    ~IA32_ENERGY_PERF_BIAS_POLICY_HINT_MASK) | val);
-		ret = wrmsr_safe(MSR_IA32_ENERGY_PERF_BIAS,
-		    sc->hwp_energy_perf_bias);
 	}
 
-out:
-	thread_lock(curthread);
-	sched_unbind(curthread);
-	thread_unlock(curthread);
-
-	return (ret);
+	cba.sc = sc;
+	CPU_SETOF(pc->pc_cpuid, &cpus);
+	smp_rendezvous_cpus(&cpus, smp_no_rendezvous_barrier,
+	    set_hwp_perf_ctrl, smp_no_rendezvous_barrier, &cba);
+	return (cba.ret);
 }
 
 void
