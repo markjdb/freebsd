@@ -859,17 +859,18 @@ pci_emul_alloc_bar(struct pci_devinst *pdi, int idx, enum pcibar_type type,
 	 * updated as early as possible.
 	 */
 	uint16_t enbit = 0;
-	switch (type) {
-	case PCIBAR_IO:
-		enbit = PCIM_CMD_PORTEN;
-		break;
-	case PCIBAR_MEM64:
-	case PCIBAR_MEM32:
-		enbit = PCIM_CMD_MEMEN;
-		break;
-	default:
-		enbit = 0;
-		break;
+	if (get_config_bool_default("pci.enable_bars", true)) {
+		switch (type) {
+		case PCIBAR_IO:
+			enbit = PCIM_CMD_PORTEN;
+			break;
+		case PCIBAR_MEM64:
+		case PCIBAR_MEM32:
+			enbit = PCIM_CMD_MEMEN;
+			break;
+		default:
+			break;
+		}
 	}
 
 	const uint16_t cmd = pci_get_cfgdata16(pdi, PCIR_COMMAND);
@@ -966,8 +967,19 @@ pci_emul_assign_bar(struct pci_devinst *const pdi, const int idx,
 		pci_set_cfgdata32(pdi, PCIR_BAR(idx + 1), bar >> 32);
 	}
 
-	if (type != PCIBAR_ROM) {
-		register_bar(pdi, idx);
+	switch (type) {
+	case PCIBAR_IO:
+		if (porten(pdi))
+			register_bar(pdi, idx);
+		break;
+	case PCIBAR_MEM32:
+	case PCIBAR_MEM64:
+	case PCIBAR_MEMHI64:
+		if (memen(pdi))
+			register_bar(pdi, idx);
+		break;
+	default:
+		break;
 	}
 
 	return (0);

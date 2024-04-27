@@ -82,6 +82,14 @@ bhyve_init_config(void)
 	set_config_bool("acpi_tables", false);
 	set_config_bool("acpi_tables_in_memory", false);
 	set_config_value("memory.size", "256M");
+
+	/*
+	 * At least U-Boot (re-)maps BARs during device initialization.  Our PCI
+	 * emulation doesn't really handle the case where the guest creates a
+	 * BAR mapping that overlaps with an existing one.  The simplest thing
+	 * to do is to let the boot firmware handle BAR mapping on its own.
+	 */
+	set_config_bool("pci.enable_bars", false);
 }
 
 void
