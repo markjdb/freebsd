@@ -115,6 +115,7 @@ arm64/iommu/smmu_quirks.c			optional iommu
 dev/iommu/busdma_iommu.c			optional iommu
 dev/iommu/iommu_gas.c				optional iommu
 
+dev/vmm/vmm_ctl.c				optional vmm
 arm64/vmm/vmm.c					optional vmm
 arm64/vmm/vmm_dev.c				optional vmm
 arm64/vmm/vmm_instruction_emul.c		optional vmm

@@ -47,6 +47,8 @@
 #include <vm/vm_map.h>
 #include <vm/vm_object.h>
 
+#include <dev/vmm/vmm_ctl.h>
+
 #include <machine/machdep.h>
 #include <machine/vmparam.h>
 #include <machine/vmm.h>
@@ -76,7 +78,6 @@ struct vmmdev_softc {
 
 static SLIST_HEAD(, vmmdev_softc) head;
 
-static unsigned pr_allow_flag;
 static struct mtx vmmdev_mtx;
 MTX_SYSINIT(vmmdev_mtx, &vmmdev_mtx, "vmm device mutex", MTX_DEF);
 
@@ -84,20 +85,8 @@ static MALLOC_DEFINE(M_VMMDEV, "vmmdev", "vmmdev");
 
 SYSCTL_DECL(_hw_vmm);
 
-static int vmm_priv_check(struct ucred *ucred);
 static int devmem_create_cdev(const char *vmname, int id, char *devmem);
 static void devmem_destroy(void *arg);
-
-static int
-vmm_priv_check(struct ucred *ucred)
-{
-
-	if (jailed(ucred) &&
-	    !(ucred->cr_prison->pr_allow & pr_allow_flag))
-		return (EPERM);
-
-	return (0);
-}
 
 static int
 vcpu_lock_one(struct vcpu *vcpu)
@@ -943,26 +932,6 @@ SYSCTL_PROC(_hw_vmm, OID_AUTO, create,
     CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_PRISON | CTLFLAG_MPSAFE,
     NULL, 0, sysctl_vmm_create, "A",
     NULL);
-
-void
-vmmdev_init(void)
-{
-	pr_allow_flag = prison_add_allow(NULL, "vmm", NULL,
-	    "Allow use of vmm in a jail.");
-}
-
-int
-vmmdev_cleanup(void)
-{
-	int error;
-
-	if (SLIST_EMPTY(&head))
-		error = 0;
-	else
-		error = EBUSY;
-
-	return (error);
-}
 
 static int
 devmem_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t len,

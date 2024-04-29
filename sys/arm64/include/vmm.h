@@ -31,6 +31,7 @@
 #include <sys/cpuset.h>
 #include <vm/vm.h>
 #include <vm/pmap.h>
+#include <machine/machdep.h>
 
 #include "pte.h"
 #include "pmap.h"
