@@ -62,6 +62,55 @@ import_image()
 	echo "$ZFS_POOL_NAME" > $TEST_ZFS_POOL_NAME
 }
 
+atf_test_case attach cleanup
+attach_body()
+{
+	local extra_disk md
+
+	create_test_inputs
+
+	atf_check $MAKEFS -s 5g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
+	    $TEST_IMAGE $TEST_INPUTS_DIR
+
+	extra_disk=$(mktemp)
+	atf_check truncate -s $(stat -f %z $TEST_IMAGE) $extra_disk
+	atf_check -o save:attach_md mdconfig -a -t vnode -f $extra_disk
+	md=$(cat attach_md)
+
+	import_image
+
+	check_image_contents
+
+        atf_check -o not-empty zpool upgrade $ZFS_POOL_NAME
+        atf_check zpool attach $ZFS_POOL_NAME $(cat $TEST_MD_DEVICE_FILE) /dev/$md
+
+        zpool status
+	sleep 1
+        zpool status
+        sleep 1
+        zpool status
+
+	atf_check zpool scrub $ZFS_POOL_NAME
+
+        zpool status
+	sleep 1
+        zpool status
+        sleep 1
+        zpool status
+}
+attach_cleanup()
+{
+	local md
+
+	common_cleanup
+	if [ -f attach_md ]; then
+		md=$(cat attach_md)
+		if [ -c /dev/$md ]; then
+			mdconfig -d -u $md
+		fi
+	fi
+}
+
 #
 # Test autoexpansion of the vdev.
 #
@@ -839,6 +888,7 @@ perms_cleanup()
 
 atf_init_test_cases()
 {
+	atf_add_test_case attach
 	atf_add_test_case autoexpand
 	atf_add_test_case basic
 	atf_add_test_case dataset_removal
