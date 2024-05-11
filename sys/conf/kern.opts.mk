@@ -37,6 +37,7 @@ __DEFAULT_YES_OPTIONS = \
     DTRACE \
     EFI \
     FORMAT_EXTENSIONS \
+    HYPERV \
     INET \
     INET6 \
     IPFILTER \
