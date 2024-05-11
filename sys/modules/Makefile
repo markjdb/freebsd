@@ -697,7 +697,9 @@ _armv8_rng=	armv8_rng
 _dpaa2=		dpaa2
 _sff=		sff
 _em=		em
-_hyperv=  hyperv
+.if ${MK_HYPERV} != "no" || defined(ALL_MODULES)
+_hyperv=  	hyperv
+.endif
 _vf_i2c=	vf_i2c
 
 .if !empty(OPT_FDT)
@@ -789,7 +791,9 @@ _hptmv=		hptmv
 _hptnr=		hptnr
 _hptrr=		hptrr
 .endif
+.if ${MK_HYPERV} != "no" || defined(ALL_MODULES)
 _hyperv=	hyperv
+.endif
 _ichwd=		ichwd
 _ida=		ida
 _intelspi=	intelspi
