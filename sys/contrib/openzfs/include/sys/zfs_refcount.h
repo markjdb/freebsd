@@ -30,6 +30,7 @@
 #include <sys/avl.h>
 #include <sys/list.h>
 #include <sys/zfs_context.h>
+#include <sys/_stack.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -50,6 +51,7 @@ typedef struct reference {
 	} ref_link;
 	const void *ref_holder;
 	uint64_t ref_number;
+	struct stack ref_st;
 	boolean_t ref_search;
 } reference_t;
 

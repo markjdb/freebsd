@@ -673,6 +673,7 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 			 * VFS, which will handle faulting and will retry.
 			 */
 			if (error != 0 && error != EFAULT) {
+				printf("%s:%d\n", __func__, __LINE__);
 				zfs_clear_setid_bits_if_necessary(zfsvfs, zp,
 				    cr, &clear_setid_bits_txg, tx);
 				dmu_tx_commit(tx);
@@ -760,8 +761,10 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 
 		dmu_tx_commit(tx);
 
-		if (error != 0)
+		if (error != 0) {
+			printf("%s:%d\n", __func__, __LINE__);
 			break;
+		}
 		ASSERT3S(tx_bytes, ==, nbytes);
 		n -= nbytes;
 		pfbytes -= nbytes;

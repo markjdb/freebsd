@@ -124,6 +124,10 @@ zfs_refcount_count(zfs_refcount_t *rc)
 	return (atomic_load_64(&rc->rc_count));
 }
 
+#ifdef _KERNEL
+void		 stack_save(struct stack *);
+#endif
+
 int64_t
 zfs_refcount_add_many(zfs_refcount_t *rc, uint64_t number, const void *holder)
 {
@@ -140,6 +144,9 @@ zfs_refcount_add_many(zfs_refcount_t *rc, uint64_t number, const void *holder)
 	ref->ref_holder = holder;
 	ref->ref_number = number;
 	ref->ref_search = B_FALSE;
+#ifdef _KERNEL
+	stack_save(&ref->ref_st);
+#endif
 	mutex_enter(&rc->rc_mtx);
 	avl_add(&rc->rc_tree, ref);
 	rc->rc_count += number;
@@ -275,6 +282,9 @@ zfs_refcount_transfer_ownership_many(zfs_refcount_t *rc, uint64_t number,
 	ref = avl_find(&rc->rc_tree, &s, NULL);
 	ASSERT(ref);
 	ref->ref_holder = new_holder;
+#ifdef _KERNEL
+	stack_save(&ref->ref_st);
+#endif
 	avl_update(&rc->rc_tree, ref);
 	mutex_exit(&rc->rc_mtx);
 }
