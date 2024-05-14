@@ -306,6 +306,8 @@ dbuf_dest(void *vdb, void *unused)
 {
 	(void) unused;
 	dmu_buf_impl_t *db = vdb;
+	if (db->db_buf != NULL)
+		printf("%s:%d\n", __func__, __LINE__);
 	mutex_destroy(&db->db_mtx);
 	rw_destroy(&db->db_rwlock);
 	cv_destroy(&db->db_changed);
@@ -1246,6 +1248,7 @@ dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 {
 	ASSERT(MUTEX_HELD(&db->db_mtx));
 	ASSERT(buf != NULL);
+	ASSERT(db->db_buf == NULL);
 
 	db->db_buf = buf;
 	ASSERT(buf->b_data != NULL);
@@ -2014,6 +2017,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 		}
 		if (db->db_state == DB_READ || db->db_state == DB_FILL) {
 			/* will be handled in dbuf_read_done or dbuf_rele */
+			printf("%s:%d\n", __func__, __LINE__);
 			db->db_freed_in_flight = TRUE;
 			mutex_exit(&db->db_mtx);
 			continue;
@@ -2095,6 +2099,7 @@ dbuf_new_size(dmu_buf_impl_t *db, int size, dmu_tx_t *tx)
 		memset((uint8_t *)buf->b_data + osize, 0, size - osize);
 
 	mutex_enter(&db->db_mtx);
+	db->db_buf = NULL;
 	dbuf_set_data(db, buf);
 	arc_buf_destroy(old_buf, db);
 	db->db.db_size = size;
@@ -2770,6 +2775,7 @@ dmu_buf_will_fill(dmu_buf_t *db_fake, dmu_tx_t *tx, boolean_t canfail)
 		if (canfail && dbuf_find_dirty_eq(db, tx->tx_txg) != NULL) {
 			mutex_exit(&db->db_mtx);
 			dmu_buf_will_dirty(db_fake, tx);
+			printf("%s:%d\n", __func__, __LINE__);
 			return;
 		}
 		VERIFY(!dbuf_undirty(db, tx));
@@ -2842,6 +2848,7 @@ dmu_buf_fill_done(dmu_buf_t *dbuf, dmu_tx_t *tx, boolean_t failed)
 
 	if (db->db_state == DB_FILL) {
 		if (db->db_level == 0 && db->db_freed_in_flight) {
+			printf("%s:%d\n", __func__, __LINE__);
 			ASSERT(db->db_blkid != DMU_BONUS_BLKID);
 			/* we were freed while filling */
 			/* XXX dbuf_undirty? */
@@ -3787,6 +3794,7 @@ dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid,
 		dbuf_dirty_record_t *dr = db->db_data_pending;
 		if (dr->dt.dl.dr_data == db->db_buf) {
 			ASSERT3P(db->db_buf, !=, NULL);
+			db->db_buf = NULL;
 			dbuf_hold_copy(dn, db);
 		}
 	}
