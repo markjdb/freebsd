@@ -393,7 +393,7 @@ image_copyin_stream(lba_t blk, int fd, uint64_t *sizep)
 	return (0);
 }
 
-static int
+static int __unused
 image_copyin_mapped(lba_t blk, int fd, uint64_t *sizep)
 {
 	off_t cur, data, end, hole, pos, iof;
@@ -487,6 +487,8 @@ image_copyin_mapped(lba_t blk, int fd, uint64_t *sizep)
 	return (error);
 }
 
+#include <sys/param.h>
+
 int
 image_copyin(lba_t blk, int fd, uint64_t *sizep)
 {
@@ -497,8 +499,25 @@ image_copyin(lba_t blk, int fd, uint64_t *sizep)
 	if (!error) {
 		if (fstat(fd, &sb) == -1 || !S_ISREG(sb.st_mode))
 			error = image_copyin_stream(blk, fd, sizep);
-		else
+		else {
+#if 0
 			error = image_copyin_mapped(blk, fd, sizep);
+#endif
+			/*
+			 * We need the file opened for the duration and our
+			 * caller is going to close the file. Make a dup(2)
+			 * so that control the faith of the descriptor.
+			 */
+			fd = dup(fd);
+			if (fd == -1)
+				return (errno);
+
+			size_t sz = roundup2(sb.st_size, secsz);
+			error = image_chunk_append(blk, sz, 0, fd);
+			*sizep = sz;
+			if (error != 0)
+				close(fd);
+		}
 	}
 	return (error);
 }
@@ -573,6 +592,27 @@ image_copyout_zeroes(int fd, size_t count)
 static int
 image_copyout_file(int fd, size_t size, int ifd, off_t iofs)
 {
+	ssize_t n;
+
+	while (size > 0) {
+		n = copy_file_range(ifd, &iofs, fd, NULL, size, 0);
+		if (n == -1)
+			return (errno);
+		if (n == 0) {
+			char buf[4096];
+
+			while (size > 0) {
+				n = write(fd, buf, MIN(sizeof(buf), size));
+				if (n == -1)
+					return (errno);
+				size -= n;
+			}
+			break;
+		}
+		size -= n;
+	}
+	return (0);
+#if 0
 	void *mp;
 	char *buf;
 	size_t iosz, sz;
@@ -595,6 +635,7 @@ image_copyout_file(int fd, size_t size, int ifd, off_t iofs)
 		iofs += sz;
 	}
 	return (0);
+#endif
 }
 
 int
@@ -746,8 +787,12 @@ image_init(void)
 		tmpdir = _PATH_TMP;
 	snprintf(image_swap_file, sizeof(image_swap_file), "%s/mkimg-XXXXXX",
 	    tmpdir);
+#if 0
 	image_swap_fd = mkstemp(image_swap_file);
 	if (image_swap_fd == -1)
 		return (errno);
+#else
+	image_swap_fd = -1;
+#endif
 	return (0);
 }
