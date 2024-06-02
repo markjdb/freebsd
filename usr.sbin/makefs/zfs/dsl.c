@@ -213,8 +213,8 @@ dsl_metadir_alloc(zfs_opt_t *zfs, const char *name)
 static void
 dsl_origindir_init(zfs_opt_t *zfs)
 {
-	dnode_phys_t *clones;
-	uint64_t clonesid;
+	dnode_phys_t *clones, *nextclones;
+	uint64_t clonesid, nextclonesid;
 
 	zfs->origindsldir = dsl_metadir_alloc(zfs, "$ORIGIN");
 	zfs->originds = dsl_dataset_alloc(zfs, zfs->origindsldir);
@@ -223,6 +223,11 @@ dsl_origindir_init(zfs_opt_t *zfs)
 	clones = objset_dnode_alloc(zfs->mos, DMU_OT_DSL_CLONES, &clonesid);
 	zfs->cloneszap = zap_alloc(zfs->mos, clones);
 	zfs->origindsldir->phys->dd_clones = clonesid;
+
+	nextclones = objset_dnode_alloc(zfs->mos, DMU_OT_NEXT_CLONES,
+	    &nextclonesid);
+	zfs->nextcloneszap = zap_alloc(zfs->mos, nextclones);
+	zfs->snapds->phys->ds_next_clones_obj = nextclonesid;
 }
 
 void
@@ -519,6 +524,7 @@ dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 
 	zfs->snapds->phys->ds_num_children++;
 	zap_add_uint64_self(zfs->cloneszap, headds->dsid);
+	zap_add_uint64_self(zfs->nextcloneszap, headds->dsid);
 
 	bytes = objset_space(os);
 	headds->phys->ds_used_bytes = bytes;
@@ -574,6 +580,7 @@ dsl_write(zfs_opt_t *zfs)
 	zfs->snapds->phys->ds_num_children++;
 
 	zap_write(zfs, zfs->cloneszap);
+	zap_write(zfs, zfs->nextcloneszap);
 
 	/* XXX-MJ dirs and datasets are leaked */
 }

@@ -98,6 +98,7 @@ typedef struct {
 	zfs_dsl_dataset_t *originds;
 	zfs_dsl_dataset_t *snapds;
 	zfs_zap_t	*cloneszap;
+	zfs_zap_t	*nextcloneszap;
 	zfs_dsl_dir_t	*freedsldir;	/* $FREE */
 	zfs_dsl_dir_t	*mosdsldir;	/* $MOS */
 
