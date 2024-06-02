@@ -1851,19 +1851,15 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 
 #ifdef illumos
 	char ipath[20], opath[20]; /* big enough for /dev/fd/ + INT_MAX + \0 */
-#endif
 	char verdef[32]; /* big enough for -D__SUNW_D_VERSION=0x%08x + \0 */
+#endif
 
 	struct sigaction act, oact;
 	sigset_t mask, omask;
 
 	int wstat, estat;
 	pid_t pid;
-#ifdef illumos
-	off64_t off;
-#else
 	off_t off = 0;
-#endif
 	int c;
 
 	if (argv == NULL || ofp == NULL) {
@@ -1897,9 +1893,11 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 
 	bcopy(dtp->dt_cpp_argv, argv, sizeof (char *) * argc);
 
+#ifdef illumos
 	(void) snprintf(verdef, sizeof (verdef),
 	    "-D__SUNW_D_VERSION=0x%08x", dtp->dt_vmax);
 	argv[argc++] = verdef;
+#endif
 
 #ifdef illumos
 	switch (dtp->dt_stdcmode) {
@@ -1914,8 +1912,6 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 
 	argv[argc++] = ipath;
 	argv[argc++] = opath;
-#else
-	argv[argc++] = "-P";
 #endif
 	argv[argc] = NULL;
 
