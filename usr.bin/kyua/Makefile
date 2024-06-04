@@ -1,4 +1,3 @@
-
 .include <src.opts.mk>
 
 KYUA_CONFDIR=	/etc/kyua
@@ -14,7 +13,7 @@ KYUA_SRCDIR=	${SRCTOP}/contrib/kyua
 PACKAGE=	tests
 PROG_CXX=	kyua
 SRCS=		main.cpp
-LIBADD=		lutok sqlite3
+LIBADD=		lutok sqlite3 jail
 
 MAN=		kyua-about.1 \
 		kyua-config.1 \
@@ -121,6 +120,8 @@ SRCS+=	engine/atf.cpp			\
 	engine/atf_result.cpp		\
 	engine/config.cpp		\
 	engine/exceptions.cpp		\
+	engine/execenv/execenv.cpp	\
+	engine/execenv/execenv_host.cpp	\
 	engine/filters.cpp		\
 	engine/kyuafile.cpp		\
 	engine/plain.cpp		\
@@ -160,6 +161,11 @@ SRCS+=	cli/cmd_about.cpp		\
 	cli/common.cpp			\
 	cli/config.cpp			\
 	cli/main.cpp
+
+SRCS+=	os/freebsd/execenv_jail.cpp	\
+	os/freebsd/execenv_jail_manager.cpp	\
+	os/freebsd/main.cpp		\
+	os/freebsd/utils/jail.cpp
 
 FILESGROUPS=	DOCS MISC STORE
 
