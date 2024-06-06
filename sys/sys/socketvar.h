@@ -48,6 +48,8 @@ typedef uint64_t so_gen_t;
 #ifdef _KERNEL
 #include <sys/caprights.h>
 #include <sys/sockopt.h>
+#else
+#include <stdbool.h>
 #endif
 
 struct vnet;
