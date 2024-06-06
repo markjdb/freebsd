@@ -479,6 +479,7 @@ sowakeup(struct socket *so, const sb_which which)
 	int ret;
 
 	SOCK_BUF_LOCK_ASSERT(so, which);
+
 	sb = sobuf(so, which);
 	selwakeuppri(sb->sb_sel, PSOCK);
 	if (!SEL_WAITING(sb->sb_sel))
