@@ -546,14 +546,9 @@ splice_xfer(struct so_splice *so_splice)
 	int error, flags;
 	bool unsplice = false;
 
-
-	KASSERT(!so_splice->want_free,
-	    ("splice_xfer: want free\n"));
-	KASSERT(!so_splice->dead,
-	    ("splice_xfer: dead splice\n"));
-	KASSERT(so_splice->max != 0,
-	    ("splice_xfer: max == 0\n"));
-
+	KASSERT(!so_splice->want_free, ("splice_xfer: want free"));
+	KASSERT(!so_splice->dead, ("splice_xfer: dead splice"));
+	KASSERT(so_splice->max != 0, ("splice_xfer: max == 0"));
 
 	mtx_assert(&so_splice->mtx, MA_OWNED);
 	so_splice->queued = false;
