@@ -69,6 +69,19 @@ enum socket_qstate {
 	SQ_COMP = 0x1000,	/* on sol_comp */
 };
 
+
+struct so_splice {
+	struct socket *src;
+	struct socket *dst;
+	off_t max;
+	struct mtx mtx;
+	unsigned int wq_index;
+	bool queued;
+	bool want_free;
+	bool dead;
+	STAILQ_ENTRY(so_splice) next;;
+};
+
 /*-
  * Locking key to struct socket:
  * (a) constant after allocation, no locking required.
@@ -117,6 +130,8 @@ struct socket {
 
 	int so_ts_clock;	/* type of the clock used for timestamps */
 	uint32_t so_max_pacing_rate;	/* (f) TX rate limit in bytes/s */
+	struct so_splice *so_splice;
+	struct so_splice *so_splice_back;
 
 	/*
 	 * Mutexes to prevent interleaving of socket I/O.  These have to be
@@ -297,6 +312,11 @@ soeventmtx(struct socket *so, const sb_which which)
  * Macros for sockets and socket buffering.
  */
 
+
+#define	isspliced(so)		((so->so_splice != NULL &&		\
+					so->so_splice->src != NULL))
+#define	issplicedback(so)	((so->so_splice_back != NULL &&		\
+					so->so_splice_back->dst != NULL))
 /*
  * Flags to soiolock().
  */
@@ -327,8 +347,16 @@ soeventmtx(struct socket *so, const sb_which which)
 #define	soreadabledata(so) \
 	(sbavail(&(so)->so_rcv) >= (so)->so_rcv.sb_lowat || \
 	(so)->so_error || (so)->so_rerror)
-#define	soreadable(so) \
+#define	_soreadable(so) \
 	(soreadabledata(so) || ((so)->so_rcv.sb_state & SBS_CANTRCVMORE))
+
+static inline bool
+soreadable(struct socket *so)
+{
+       if (isspliced(so))
+               return 0;
+       return (_soreadable(so));
+}
 
 /* can we write something to so? */
 #define	sowriteable(so) \
