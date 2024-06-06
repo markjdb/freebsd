@@ -35,6 +35,7 @@
 #include <sys/cdefs.h>
 #include <sys/_types.h>
 #include <sys/_iovec.h>
+#include <sys/_timeval.h>
 #include <machine/_align.h>
 
 /*
@@ -673,9 +674,10 @@ struct mmsghdr {
 /*
  * Structure used for manipulating splice option.
  */
-struct	splice {
+struct splice {
 	int	sp_fd;			/* drain socket file descriptor */
 	off_t	sp_max;			/* if set, maximum bytes to splice */
+	struct timeval sp_idle;		/* idle timeout */
 };
 
 #endif /* __BSD_VISIBLE */
