@@ -330,10 +330,12 @@ splice_work_thread(void *ctx)
 		mtx_unlock(&wq->mtx);
 		STAILQ_FOREACH_SAFE(s, &local_head, next, s_temp) {
 			mtx_lock(&s->mtx);
+			CURVNET_SET(s->src->so_vnet);
 			if (s->want_free)
 				so_unsplice_work(s);
 			else
 				splice_xfer(s);
+			CURVNET_RESTORE();
 		}
 	}
 
@@ -1384,10 +1386,10 @@ so_splice(struct socket *so, struct splice *splice)
 	so2 = sock2_fp->f_data;
 
 	/* Handle only TCP for now; TODO: other streaming protos */
-	if (so->so_proto->pr_protocol != IPPROTO_TCP) {
-		printf("einval: bad proto\n");
+	if (so->so_proto->pr_protocol != IPPROTO_TCP)
 		return (EINVAL);
-	}
+	if (so->so_vnet != so2->so_vnet)
+		return (EINVAL);
 
 	SOCK_UNLOCK(so);
 	SOCK_LOCK(so2);
