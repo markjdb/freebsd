@@ -522,13 +522,9 @@ not_splicable(struct socket *so, short sb_flags, bool src)
 	if (src) 
 		return (0);
 
-	if (((state & (SS_ISCONNECTING )) != 0) ||
-		(state & SS_ISCONNECTED ) == 0) {
-		printf("not spliceable: %x %x\n",
-		    state & (SS_ISCONNECTING | SS_ISDISCONNECTING),
-		    state &  SS_ISCONNECTED);
+	/* XXX-MJ locking */
+	if ((state & SS_ISCONNECTING) != 0 || (state & SS_ISCONNECTED) == 0)
 		return (1);
-	}
 	return(0);
 }
 
