@@ -1371,6 +1371,9 @@ so_splice(struct socket *so, struct splice *splice)
 
 	SOCK_LOCK_ASSERT(so);
 
+	if (splice->sp_max < 0)
+		return (EINVAL);
+
 	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
 		return (EBUSY);
 
@@ -1415,7 +1418,7 @@ so_splice(struct socket *so, struct splice *splice)
 	mtx_init(&sp->mtx, "splice", NULL, MTX_DEF);
 	sp->src = so;
 	sp->dst = so2;
-	sp->max = splice->sp_max;
+	sp->resid = splice->sp_max > 0 ? splice->sp_max : -1;
 	soref(so);
 	soref(so2);
 	so2->so_splice_back = sp;
@@ -1425,7 +1428,7 @@ so_splice(struct socket *so, struct splice *splice)
 	SOCK_UNLOCK(so);
 	mtx_lock(&sp->mtx);
 	splice_xfer(sp);
-	if (sp->max != 0) {
+	if (sp->resid != 0) {
 		SOCK_BUF_LOCK(so, SO_RCV);
 		so->so_rcv.sb_flags |= SB_SPLICED;
 		SOCK_BUF_UNLOCK(so, SO_RCV);
