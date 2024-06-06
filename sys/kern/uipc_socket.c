@@ -271,11 +271,154 @@ SYSCTL_NODE(_kern, KERN_IPC, ipc, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
 static uma_zone_t socket_zone;
 int	maxsockets;
 
+static uma_zone_t splice_zone;
+
 static void
 socket_zone_change(void *tag)
 {
 
 	maxsockets = uma_zone_set_max(socket_zone, maxsockets);
+}
+
+#include <sys/kthread.h>
+#include <sys/smp.h>
+static struct proc *splice_proc;
+struct splice_wq {
+	struct mtx	mtx;
+	STAILQ_HEAD(, so_splice) head;
+	bool		running;
+} __aligned(CACHE_LINE_SIZE);
+
+static struct splice_wq *splice_wq;
+struct splice_domain_info {
+	int count;
+	int cpu[MAXCPU];
+};
+
+int splice_bind_threads = 1;
+int splice_number_threads;
+static uint16_t splice_cpuid_lookup[MAXCPU];
+
+struct splice_domain_info splice_domains[MAXMEMDOM];
+
+void splice_xfer(struct so_splice *s);
+void so_unsplice_work(struct so_splice *s);
+void so_unsplice(struct socket *so);
+
+static void
+splice_work_thread(void *ctx)
+{
+	struct splice_wq *wq = ctx;
+	struct so_splice *s, *s_temp;
+	STAILQ_HEAD(, so_splice) local_head;
+	int cpu;
+
+	cpu = wq - splice_wq;
+	if (1 || bootverbose)
+		printf("Starting Splice worker thread for CPU %d\n", cpu);
+
+	for (;;) {
+		mtx_lock(&wq->mtx);
+		while (STAILQ_EMPTY(&wq->head)) {
+			wq->running = false;
+			mtx_sleep(wq, &wq->mtx, 0, "-", 0);
+			wq->running = true;
+		}
+		STAILQ_INIT(&local_head);
+		STAILQ_CONCAT(&local_head, &wq->head);
+		STAILQ_INIT(&wq->head);
+		mtx_unlock(&wq->mtx);
+		STAILQ_FOREACH_SAFE(s, &local_head, next, s_temp) {
+			mtx_lock(&s->mtx);
+			if (s->want_free)
+				so_unsplice_work(s);
+			else
+				splice_xfer(s);
+		}
+	}
+
+}
+
+void splice_enqueue_work(struct so_splice *s, bool want_free);
+void
+splice_enqueue_work(struct so_splice *s, bool want_free)
+{
+	struct splice_wq *wq;
+	bool running, queued;
+
+	mtx_lock(&s->mtx);
+	queued = s->queued;
+	if (want_free)
+		s->want_free = true;
+	if (!queued)
+		s->queued = true;
+	mtx_unlock(&s->mtx);
+	if (queued)
+		return;
+
+	wq = &splice_wq[s->wq_index];
+	mtx_lock(&wq->mtx);
+	STAILQ_INSERT_TAIL(&wq->head, s, next);
+	running = wq->running;
+	mtx_unlock(&wq->mtx);
+	if (!running)
+		wakeup(wq);
+}
+
+static void
+splice_init(void)
+{
+	struct thread *td;
+	struct pcpu *pc;
+	int count, domain, error, i;
+
+
+	splice_zone = uma_zcreate("splice", sizeof(struct so_splice), NULL, NULL,
+	    NULL, NULL, UMA_ALIGN_CACHE, 0);
+
+	splice_wq = malloc(sizeof(*splice_wq) * (mp_maxid + 1), M_TEMP,
+	    M_WAITOK | M_ZERO);
+
+
+	/*
+	 * Initialize the workqueues to run the splice work.  We create a
+	 * work queue for each CPU.
+	 */
+	CPU_FOREACH(i) {
+		STAILQ_INIT(&splice_wq[i].head);
+		mtx_init(&splice_wq[i].mtx, "splice work queue", NULL, MTX_DEF);
+		if (splice_bind_threads > 1) {
+			pc = pcpu_find(i);
+			domain = pc->pc_domain;
+			count = splice_domains[domain].count;
+			splice_domains[domain].cpu[count] = i;
+			splice_domains[domain].count++;
+		}
+		splice_cpuid_lookup[splice_number_threads] = i;
+		splice_number_threads++;
+	}
+
+	/*
+	 * If we somehow have an empty domain, fall back to choosing
+	 * among all SPLICE threads.
+	 */
+	if (splice_bind_threads > 1) {
+		for (i = 0; i < vm_ndomains; i++) {
+			if (splice_domains[i].count == 0) {
+				splice_bind_threads = 1;
+				break;
+			}
+		}
+	}
+
+	/* Start kthreads for each workqueue. */
+	CPU_FOREACH(i) {
+		error = kproc_kthread_add(splice_work_thread, &splice_wq[i],
+		    &splice_proc, &td, 0, 0, "SPLICE", "thr_%d", i);
+		if (error) {
+			printf("Can't add Splice thread %d error %d\n", i, error);
+		}
+	}
 }
 
 static void
@@ -288,6 +431,7 @@ socket_init(void *tag)
 	uma_zone_set_warning(socket_zone, "kern.ipc.maxsockets limit reached");
 	EVENTHANDLER_REGISTER(maxsockets_change, socket_zone_change, NULL,
 	    EVENTHANDLER_PRI_FIRST);
+	splice_init();
 }
 SYSINIT(socket, SI_SUB_PROTO_DOMAININIT, SI_ORDER_ANY, socket_init, NULL);
 
@@ -1214,6 +1358,145 @@ solisten_dequeue(struct socket *head, struct socket **ret, int flags)
 }
 
 /*
+ * Splice the output from so to the input of the socket arg
+ */
+
+static int
+so_splice(struct socket *so, struct splice *splice)
+{
+	struct socket *so2;
+	struct file *sock2_fp;
+	struct so_splice *sp;
+	int error;
+
+	SOCK_LOCK_ASSERT(so);
+
+	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
+		return (EBUSY);
+
+	error = getsock(curthread, splice->sp_fd, &cap_send_rights, &sock2_fp);
+	if (error != 0)
+		return (error);
+
+	so2 = sock2_fp->f_data;
+
+	/* Handle only TCP for now; TODO: other streaming protos */
+	if (so->so_proto->pr_protocol != IPPROTO_TCP) {
+		printf("einval: bad proto\n");
+		return (EINVAL);
+	}
+
+	SOCK_UNLOCK(so);
+	SOCK_LOCK(so2);
+	/*
+	 * Only allow splicing to a spliced socket if no other sockets
+	 * are spliced to it, and it is either unspliced on transmit,
+	 * or it is spliced to us already.
+	 */
+	if ((so2->so_snd.sb_flags & SB_SPLICED) != 0) {
+		error = EBUSY;
+		SOCK_UNLOCK(so2);
+		SOCK_LOCK(so);
+		goto out_with_fp;
+	}
+	if (isspliced(so2) && so2->so_splice->dst != so) {
+		printf("einval: 0x%x  %p %p\n", so2->so_options, so2->so_splice->dst, so);
+		error = EINVAL;
+		SOCK_UNLOCK(so2);
+		SOCK_LOCK(so);
+		goto out_with_fp;
+	}
+	sp = uma_zalloc(splice_zone, M_NOWAIT|M_ZERO);
+	if (sp == NULL) {
+		SOCK_UNLOCK(so2);
+		SOCK_LOCK(so);
+		goto out_with_fp;
+	}
+	mtx_init(&sp->mtx, "splice", NULL, MTX_DEF);
+	sp->src = so;
+	sp->dst = so2;
+	sp->max = splice->sp_max;
+	soref(so);
+	soref(so2);
+	so2->so_splice_back = sp;
+	SOCK_UNLOCK(so2);
+	SOCK_LOCK(so);
+	so->so_splice = sp;
+	SOCK_UNLOCK(so);
+	mtx_lock(&sp->mtx);
+	splice_xfer(sp);
+	if (sp->max != 0) {
+		SOCK_BUF_LOCK(so, SO_RCV);
+		so->so_rcv.sb_flags |= SB_SPLICED;
+		SOCK_BUF_UNLOCK(so, SO_RCV);
+		SOCK_BUF_LOCK(so2, SO_SND);
+		so2->so_snd.sb_flags |= SB_SPLICED;
+		SOCK_BUF_UNLOCK(so2, SO_SND);
+
+	} else {
+		mtx_lock(&sp->mtx);
+		so_unsplice_work(sp);
+	}
+	SOCK_LOCK(so);
+out_with_fp:
+	fdrop(sock2_fp, curthread);
+
+	return (error);
+
+}
+
+void
+so_unsplice_work(struct so_splice *s)
+{
+	struct socket *so, *so2;
+
+
+	KASSERT(!s->dead, ("unsplice dead splice\n"));
+	s->dead = true;
+	so = s->src;
+	so2 = s->dst;
+	mtx_unlock(&s->mtx);
+
+
+	SOCK_BUF_LOCK(so, SO_RCV);
+	if (!isspliced(so)) {
+		printf("unsplice of unspliced %p\n", so);
+		SOCK_BUF_UNLOCK(so, SO_RCV);
+		return;
+	}
+	so->so_rcv.sb_flags &= ~SB_SPLICED;
+	so->so_splice = NULL;
+	SOCK_BUF_UNLOCK(so, SO_RCV);
+
+
+	SOCK_BUF_LOCK(so2, SO_SND);
+	if (issplicedback(so2)) {
+		so2->so_snd.sb_flags &= ~SB_SPLICED;
+		so2->so_splice_back = NULL;
+	}
+	SOCK_BUF_UNLOCK(so2, SO_SND);
+
+	seldrain(&so->so_rdsel);
+//	printf("wakeup rx %p, flags 0x%x\n",
+//	    so, so->so_rcv.sb_flags);
+	sorwakeup(so);
+//	printf("wakeup tx %p, flags 0x%x\n",
+//	    so2, so2->so_snd.sb_flags);
+	sowwakeup(so2);
+//	printf("releasing %p %p\n", so, so2);
+	sorele(so2);
+	sorele(so);
+	uma_zfree(splice_zone, s);
+}
+
+void
+so_unsplice(struct socket *so)
+{
+	splice_enqueue_work(so->so_splice, true);
+}
+
+
+/*
  * Free socket upon release of the very last reference.
  */
 static void
@@ -1227,6 +1510,8 @@ sofree(struct socket *so)
 	KASSERT(SOLISTENING(so) || so->so_qstate == SQ_NONE,
 	    ("%s: so %p is on listen queue", __func__, so));
 
+	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
+		so_unsplice(so);
 	SOCK_UNLOCK(so);
 
 	if (so->so_dtor != NULL)
@@ -1703,8 +1988,13 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		clen = control->m_len;
 
 	error = SOCK_IO_SEND_LOCK(so, SBLOCKWAIT(flags));
-	if (error)
+	if (error) {
+		if (error == EAGAIN) {
+			void *td = sx_xholder(&so->so_snd_sx);
+			printf("lock held by %p\n", td);
+		}
 		goto out;
+	}
 
 #ifdef KERN_TLS
 	tls_send_flag = 0;
@@ -1910,8 +2200,10 @@ out:
 	if (tls != NULL)
 		ktls_free(tls);
 #endif
-	if (top != NULL)
+	if (top != NULL) {
+		printf("m_freem(%p)\n", top);
 		m_freem(top);
+	}
 	if (control != NULL)
 		m_freem(control);
 	return (error);
@@ -1951,6 +2243,8 @@ sousrsend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 
 	td = uio->uio_td;
 	len = uio->uio_resid;
+	if ((so->so_snd.sb_flags & SB_SPLICED) != 0)
+		return (EINVAL);
 	CURVNET_SET(so->so_vnet);
 	error = so->so_proto->pr_sosend(so, addr, uio, NULL, control, flags,
 	    td);
@@ -2096,8 +2390,17 @@ soreceive_generic(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		flags = 0;
 	if (flags & MSG_OOB)
 		return (soreceive_rcvoob(so, uio, flags));
-	if (mp != NULL)
+	if (mp != NULL) {
 		*mp = NULL;
+	} else {
+		/* if we are spliced, don't allow userspace to read */
+		if ((so->so_rcv.sb_flags & SB_SPLICED) != 0) {
+			printf("%p: EINVAL 0x%x 0x%x\n", so,
+			    so->so_rcv.sb_state & SBS_CANTRCVMORE,
+			    so->so_rcv.sb_state);
+			return (EINVAL);
+		}
+	}
 
 	error = SOCK_IO_RECV_LOCK(so, SBLOCKWAIT(flags));
 	if (error)
@@ -3109,6 +3412,7 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 	int	error, optval;
 	struct	linger l;
 	struct	timeval tv;
+	struct  splice splice;
 	sbintime_t val, *valp;
 	uint32_t val32;
 #ifdef MAC
@@ -3279,6 +3583,17 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 			so->so_max_pacing_rate = val32;
 			break;
 
+		case SO_SPLICE:
+			error = sooptcopyin(sopt, &splice, sizeof(splice),
+			    sizeof(splice));
+			if (error)
+				goto bad;
+			SOCK_LOCK(so);
+			error = so_splice(so, &splice);
+			SOCK_UNLOCK(so);
+			if (error)
+				goto bad;
+			break;
 		default:
 #ifdef SOCKET_HHOOK
 			if (V_socket_hhh[HHOOK_SOCKET_OPT]->hhh_nhooks > 0)
@@ -3648,6 +3963,10 @@ sopoll(struct socket *so, int events, struct ucred *active_cred,
 	 * We do not need to set or assert curvnet as long as everyone uses
 	 * sopoll_generic().
 	 */
+	if (isspliced(so)) {
+//		printf("SOPOLL SPLICED\n");
+//		return (0);
+	}
 	return (so->so_proto->pr_sopoll(so, events, active_cred, td));
 }
 
@@ -3673,11 +3992,11 @@ sopoll_generic(struct socket *so, int events, struct ucred *active_cred,
 		revents = 0;
 		SOCK_SENDBUF_LOCK(so);
 		SOCK_RECVBUF_LOCK(so);
-		if (events & (POLLIN | POLLRDNORM))
-			if (soreadabledata(so))
+		if (events & (POLLIN | POLLRDNORM)) 
+			if (soreadabledata(so) && !isspliced(so))
 				revents |= events & (POLLIN | POLLRDNORM);
 		if (events & (POLLOUT | POLLWRNORM))
-			if (sowriteable(so))
+			if (sowriteable(so) && !issplicedback(so))
 				revents |= events & (POLLOUT | POLLWRNORM);
 		if (events & (POLLPRI | POLLRDBAND))
 			if (so->so_oobmark ||
@@ -3783,6 +4102,11 @@ filt_soread(struct knote *kn, long hint)
 			return (1);
 		}
 		return (!TAILQ_EMPTY(&so->sol_comp));
+	}
+
+	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0) {
+		printf("spliced, returning 0\n");
+		return (0);
 	}
 
 	SOCK_RECVBUF_LOCK_ASSERT(so);
@@ -4014,6 +4338,10 @@ soisdisconnecting(struct socket *so)
 		SOCK_SENDBUF_LOCK(so);
 		socantsendmore_locked(so);
 	}
+	if (isspliced(so))
+		so_unsplice(so);
+//	if (issplicedback(so))
+//		so_unsplice(so->so_splice_back->src);
 	SOCK_UNLOCK(so);
 	wakeup(&so->so_timeo);
 }
