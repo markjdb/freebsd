@@ -367,6 +367,7 @@ splice_enqueue_work(struct so_splice *s, bool want_free)
 		wakeup(wq);
 }
 
+/* XXX-MJ want to do lazy initialization like we do for KTLS */
 static void
 splice_init(void)
 {
@@ -374,13 +375,11 @@ splice_init(void)
 	struct pcpu *pc;
 	int count, domain, error, i;
 
-
 	splice_zone = uma_zcreate("splice", sizeof(struct so_splice), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_CACHE, 0);
 
-	splice_wq = malloc(sizeof(*splice_wq) * (mp_maxid + 1), M_TEMP,
+	splice_wq = mallocarray(mp_maxid + 1, sizeof(*splice_wq), M_TEMP,
 	    M_WAITOK | M_ZERO);
-
 
 	/*
 	 * Initialize the workqueues to run the splice work.  We create a
@@ -416,7 +415,7 @@ splice_init(void)
 	/* Start kthreads for each workqueue. */
 	CPU_FOREACH(i) {
 		error = kproc_kthread_add(splice_work_thread, &splice_wq[i],
-		    &splice_proc, &td, 0, 0, "SPLICE", "thr_%d", i);
+		    &splice_proc, &td, 0, 0, "so_splice", "thr_%d", i);
 		if (error) {
 			printf("Can't add Splice thread %d error %d\n", i, error);
 		}
@@ -1379,6 +1378,7 @@ so_splice(struct socket *so, struct splice *splice)
 	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
 		return (EBUSY);
 
+	/* XXX-MJ need to check recv rights on socket */
 	error = getsock(curthread, splice->sp_fd, &cap_send_rights, &sock2_fp);
 	if (error != 0)
 		return (error);
@@ -1392,6 +1392,9 @@ so_splice(struct socket *so, struct splice *splice)
 		return (EINVAL);
 
 	SOCK_UNLOCK(so);
+
+	sp = uma_zalloc(splice_zone, M_WAITOK | M_ZERO);
+
 	SOCK_LOCK(so2);
 	/*
 	 * Only allow splicing to a spliced socket if no other sockets
@@ -1399,6 +1402,7 @@ so_splice(struct socket *so, struct splice *splice)
 	 * or it is spliced to us already.
 	 */
 	if ((so2->so_snd.sb_flags & SB_SPLICED) != 0) {
+		uma_zfree(splice_zone, sp);
 		error = EBUSY;
 		SOCK_UNLOCK(so2);
 		SOCK_LOCK(so);
@@ -1406,13 +1410,8 @@ so_splice(struct socket *so, struct splice *splice)
 	}
 	if (isspliced(so2) && so2->so_splice->dst != so) {
 		printf("einval: 0x%x  %p %p\n", so2->so_options, so2->so_splice->dst, so);
+		uma_zfree(splice_zone, sp);
 		error = EINVAL;
-		SOCK_UNLOCK(so2);
-		SOCK_LOCK(so);
-		goto out_with_fp;
-	}
-	sp = uma_zalloc(splice_zone, M_NOWAIT|M_ZERO);
-	if (sp == NULL) {
 		SOCK_UNLOCK(so2);
 		SOCK_LOCK(so);
 		goto out_with_fp;
@@ -1447,7 +1446,6 @@ out_with_fp:
 	fdrop(sock2_fp, curthread);
 
 	return (error);
-
 }
 
 void
