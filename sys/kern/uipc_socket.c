@@ -122,6 +122,7 @@
 #include <sys/hhook.h>
 #include <sys/kernel.h>
 #include <sys/khelp.h>
+#include <sys/kthread.h>
 #include <sys/ktls.h>
 #include <sys/event.h>
 #include <sys/eventhandler.h>
@@ -134,6 +135,7 @@
 #include <sys/resourcevar.h>
 #include <net/route.h>
 #include <sys/signalvar.h>
+#include <sys/smp.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
@@ -271,8 +273,6 @@ SYSCTL_NODE(_kern, KERN_IPC, ipc, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
 static uma_zone_t socket_zone;
 int	maxsockets;
 
-static uma_zone_t splice_zone;
-
 static void
 socket_zone_change(void *tag)
 {
@@ -280,26 +280,25 @@ socket_zone_change(void *tag)
 	maxsockets = uma_zone_set_max(socket_zone, maxsockets);
 }
 
-#include <sys/kthread.h>
-#include <sys/smp.h>
+static int splice_init_state;
+static struct sx splice_init_lock;
+SX_SYSINIT(splice_init_lock, &splice_init_lock, "splice_init");
+
+static uma_zone_t splice_zone;
 static struct proc *splice_proc;
 struct splice_wq {
 	struct mtx	mtx;
 	STAILQ_HEAD(, so_splice) head;
 	bool		running;
 } __aligned(CACHE_LINE_SIZE);
-
 static struct splice_wq *splice_wq;
 struct splice_domain_info {
 	int count;
 	int cpu[MAXCPU];
 };
-
-int splice_bind_threads = 1;
-int splice_number_threads;
+static int splice_bind_threads = 1;
 static uint16_t splice_cpuid_lookup[MAXCPU];
-
-struct splice_domain_info splice_domains[MAXMEMDOM];
+static struct splice_domain_info splice_domains[MAXMEMDOM];
 
 void splice_xfer(struct so_splice *s);
 void so_unsplice_work(struct so_splice *s);
@@ -314,8 +313,8 @@ splice_work_thread(void *ctx)
 	int cpu;
 
 	cpu = wq - splice_wq;
-	if (1 || bootverbose)
-		printf("Starting Splice worker thread for CPU %d\n", cpu);
+	if (bootverbose)
+		printf("starting so_splice worker thread for CPU %d\n", cpu);
 
 	for (;;) {
 		mtx_lock(&wq->mtx);
@@ -367,13 +366,23 @@ splice_enqueue_work(struct so_splice *s, bool want_free)
 		wakeup(wq);
 }
 
-/* XXX-MJ want to do lazy initialization like we do for KTLS */
-static void
+static int
 splice_init(void)
 {
 	struct thread *td;
 	struct pcpu *pc;
-	int count, domain, error, i;
+	int count, domain, error, i, nthr, state;
+
+	state = atomic_load_acq_int(&splice_init_state);
+	if (__predict_true(state > 0))
+		return (0);
+	if (state < 0)
+		return (ENXIO);
+	sx_xlock(&splice_init_lock);
+	if (splice_init_state != 0) {
+		sx_xunlock(&splice_init_lock);
+		return (0);
+	}
 
 	splice_zone = uma_zcreate("splice", sizeof(struct so_splice), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_CACHE, 0);
@@ -385,6 +394,7 @@ splice_init(void)
 	 * Initialize the workqueues to run the splice work.  We create a
 	 * work queue for each CPU.
 	 */
+	nthr = 0;
 	CPU_FOREACH(i) {
 		STAILQ_INIT(&splice_wq[i].head);
 		mtx_init(&splice_wq[i].mtx, "splice work queue", NULL, MTX_DEF);
@@ -395,8 +405,7 @@ splice_init(void)
 			splice_domains[domain].cpu[count] = i;
 			splice_domains[domain].count++;
 		}
-		splice_cpuid_lookup[splice_number_threads] = i;
-		splice_number_threads++;
+		splice_cpuid_lookup[nthr++] = i;
 	}
 
 	/*
@@ -413,13 +422,20 @@ splice_init(void)
 	}
 
 	/* Start kthreads for each workqueue. */
+	error = 0;
 	CPU_FOREACH(i) {
 		error = kproc_kthread_add(splice_work_thread, &splice_wq[i],
 		    &splice_proc, &td, 0, 0, "so_splice", "thr_%d", i);
 		if (error) {
-			printf("Can't add Splice thread %d error %d\n", i, error);
+			printf("Can't add so_splice thread %d error %d\n",
+			    i, error);
+			break;
 		}
 	}
+
+	splice_init_state = error != 0 ? -1 : 1;
+	sx_xunlock(&splice_init_lock);
+	return (error);
 }
 
 static void
@@ -432,7 +448,6 @@ socket_init(void *tag)
 	uma_zone_set_warning(socket_zone, "kern.ipc.maxsockets limit reached");
 	EVENTHANDLER_REGISTER(maxsockets_change, socket_zone_change, NULL,
 	    EVENTHANDLER_PRI_FIRST);
-	splice_init();
 }
 SYSINIT(socket, SI_SUB_PROTO_DOMAININIT, SI_ORDER_ANY, socket_init, NULL);
 
@@ -3590,6 +3605,9 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyin(sopt, &splice, sizeof(splice),
 			    sizeof(splice));
 			if (error)
+				goto bad;
+			error = splice_init();
+			if (error != 0)
 				goto bad;
 			SOCK_LOCK(so);
 			error = so_splice(so, &splice);
