@@ -479,7 +479,6 @@ sowakeup(struct socket *so, const sb_which which)
 	int ret;
 
 	SOCK_BUF_LOCK_ASSERT(so, which);
-
 	sb = sobuf(so, which);
 	selwakeuppri(sb->sb_sel, PSOCK);
 	if (!SEL_WAITING(sb->sb_sel))
@@ -508,6 +507,186 @@ sowakeup(struct socket *so, const sb_which which)
 	SOCK_BUF_UNLOCK_ASSERT(so, which);
 }
 
+static int
+not_splicable(struct socket *so, short sb_flags, bool src)
+{
+	int state = so->so_state;
+
+	if ((sb_flags & SB_SPLICED) == 0) {
+		printf("not spliceable: %x\n", src);
+		return (1);
+	}
+
+	/* we only care if the sink is connected */
+	if (src) 
+		return (0);
+
+	if (((state & (SS_ISCONNECTING )) != 0) ||
+		(state & SS_ISCONNECTED ) == 0) {
+		printf("not spliceable: %x %x\n",
+		    state & (SS_ISCONNECTING | SS_ISDISCONNECTING),
+		    state &  SS_ISCONNECTED);
+		return (1);
+	}
+	return(0);
+}
+
+void so_unsplice(struct socket *so);
+void splice_xfer(struct so_splice *so_splice);
+
+void
+splice_xfer(struct so_splice *so_splice)
+{
+	struct mbuf *top;
+	unsigned int len;
+	struct uio uio;
+	struct socket *so_src, *so_dst;
+	struct sockbuf *src, *dst;
+	int error, flags;
+	bool unsplice = false;
+
+
+	KASSERT(!so_splice->want_free,
+	    ("splice_xfer: want free\n"));
+	KASSERT(!so_splice->dead,
+	    ("splice_xfer: dead splice\n"));
+	KASSERT(so_splice->max != 0,
+	    ("splice_xfer: max == 0\n"));
+
+
+	mtx_assert(&so_splice->mtx, MA_OWNED);
+	so_splice->queued = false;
+	mtx_unlock(&so_splice->mtx);
+	so_src = so_splice->src;
+	so_dst = so_splice->dst;
+	src = &so_src->so_rcv;
+	dst = &so_dst->so_snd;
+	len = MIN(sbspace(dst), sbavail(src));
+	if (so_splice->max > 0)
+		len = MIN(so_splice->max, len);
+
+//	printf("splice_xfer: len=%d (%d %d)\n", len, (int)sbavail(src), (int)sbspace(dst));
+	if (len == 0 || src->sb_mb == NULL) {
+		return;
+	}
+
+	/* XXX could race for sorecv/sosend, not the cause of the current bug; will fix later */
+	flags = MSG_DONTWAIT | MSG_PEEK;
+	top = NULL;
+	bzero(&uio, sizeof(uio));
+	uio.uio_resid = len;
+	error = soreceive_stream(so_src, NULL, &uio, &top, NULL, &flags);
+	if (error != 0 || top == NULL) {
+		printf("soreceive_stream returned %d, flags=%x\n", error, flags);
+		return;
+	}
+	if (flags & MSG_TRUNC ) {
+		printf("msg trunc set\n");
+		m_freem(top);
+		return;
+	}
+
+	error = sosend(so_dst, NULL, NULL, top, NULL, MSG_DONTWAIT, curthread);
+	if (error != 0) {
+		printf("sosend returns %d\n", error);
+		return;
+	}
+	/* drop what we put into the dst sockbuf, unless conn, was disconnected */
+	SOCKBUF_LOCK(src);
+	if ((src->sb_state & SBS_CANTRCVMORE) && sbavail(src) == 0)
+		unsplice = true;
+	else
+		sbdrop_locked(src, len);
+
+	if (so_splice->max > 0) {
+		so_splice->max -= len;
+//		printf("max now %zd\n", so_splice->max);
+		if (so_splice->max == 0 &&
+		    (so_src->so_rcv.sb_flags & SB_SPLICED) != 0) {
+			unsplice = true;
+		}
+	}
+	SOCKBUF_UNLOCK(src);
+
+	if (unsplice) {
+		SOCK_LOCK(so_src);		
+//		printf("unsplicing due to max == 0\n");
+		so_unsplice(so_src);
+		SOCK_UNLOCK(so_src);
+	}
+
+}
+
+
+void splice_enqueue_work(struct so_splice *s, bool free);
+static bool so_splice_direct = true;
+
+static void
+splice_push(struct socket *so_src)
+{
+	struct so_splice *sp = so_src->so_splice;
+	struct socket *so_dst = sp->dst;
+	struct sockbuf *dst = &so_dst->so_snd;
+	struct sockbuf *src = &so_src->so_rcv;
+	bool unsplice = false;
+
+//	printf("push: %p %p\n", so_src, so_dst);
+	SOCKBUF_LOCK_ASSERT(src);
+	if (not_splicable(so_src, src->sb_flags, true) ||
+	    not_splicable(so_dst, dst->sb_flags, false)) {
+		SOCKBUF_UNLOCK(src);
+		return;
+	}
+	if (src->sb_state & SBS_CANTRCVMORE && sbavail(src) == 0)
+		unsplice = true;
+	SOCKBUF_UNLOCK(src);
+	
+	mtx_lock(&sp->mtx);
+	if (!unsplice && (sp->queued || sp->dead || sp->want_free)) {
+		mtx_unlock(&sp->mtx);
+		return;
+	}
+	if (!so_splice_direct || unsplice || sp->want_free) {
+		mtx_unlock(&sp->mtx);
+		splice_enqueue_work(sp, unsplice);		
+		return;
+	}
+	sp->queued = 1;
+	splice_xfer(sp); /* unlocks sp */
+}
+
+static void
+splice_pull(struct socket *so_dst)
+{
+	struct socket *so_src = so_dst->so_splice_back->src;
+	struct so_splice *sp = so_src->so_splice;
+	struct sockbuf *dst = &so_dst->so_snd;
+	struct sockbuf *src = &so_src->so_rcv;
+
+
+//	printf("pull: %p %p\n", so_src, so_dst);
+	SOCKBUF_LOCK_ASSERT(dst);
+	if (not_splicable(so_src, src->sb_flags, true) ||
+	    not_splicable(so_dst, dst->sb_flags, false)) {
+		SOCKBUF_UNLOCK(dst);
+		return;
+	}
+	SOCKBUF_UNLOCK(dst);
+
+	mtx_lock(&sp->mtx);
+	if (sp->queued || sp->dead || sp->want_free) {
+		mtx_unlock(&sp->mtx);
+		return;
+	}
+	if (!so_splice_direct) {
+		mtx_unlock(&sp->mtx);
+		splice_enqueue_work(sp, false);		
+		return;
+	}
+	sp->queued = 1;
+	splice_xfer(sp); /* unlocks sp */
+
+}
 /*
  * Do we need to notify the other side when I/O is possible?
  */
@@ -522,6 +701,10 @@ void
 sorwakeup_locked(struct socket *so)
 {
 	SOCK_RECVBUF_LOCK_ASSERT(so);
+	if (so->so_rcv.sb_flags & SB_SPLICED) {
+		splice_push(so);
+		return;
+	}
 	if (sb_notify(&so->so_rcv))
 		sowakeup(so, SO_RCV);
 	else
@@ -532,6 +715,11 @@ void
 sowwakeup_locked(struct socket *so)
 {
 	SOCK_SENDBUF_LOCK_ASSERT(so);
+	if (so->so_snd.sb_flags & SB_SPLICED) {
+		splice_pull(so);
+		return;
+	}
+
 	if (sb_notify(&so->so_snd))
 		sowakeup(so, SO_SND);
 	else

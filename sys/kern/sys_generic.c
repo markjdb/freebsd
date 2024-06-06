@@ -1378,7 +1378,7 @@ selsetbits(fd_mask **ibits, fd_mask **obits, int idx, fd_mask bit, int events)
  * Traverse the list of fds attached to this thread's seltd and check for
  * completion.
  */
-static int
+static __noinline int
 selrescan(struct thread *td, fd_mask **ibits, fd_mask **obits)
 {
 	struct filedesc *fdp;
