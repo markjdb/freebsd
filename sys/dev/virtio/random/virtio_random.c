@@ -34,6 +34,7 @@
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/msan.h>
 #include <sys/sglist.h>
 #include <sys/random.h>
 #include <sys/stdatomic.h>
@@ -303,6 +304,7 @@ vtrnd_harvest(struct vtrnd_softc *sc, void *buf, size_t *sz)
 
 	*sz = MIN(rdlen, *sz);
 	memcpy(buf, sc->vtrnd_value, *sz);
+	kmsan_mark(buf, *sz, KMSAN_STATE_INITED);
 
 	vtrnd_enqueue(sc);
 
