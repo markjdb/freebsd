@@ -66,6 +66,20 @@ tcp_socketpair(int out[2], int lport)
 	out[1] = sd[1];
 }
 
+static off_t
+nspliced(int sd)
+{
+	off_t n;
+	socklen_t len;
+	int error;
+
+	len = sizeof(n);
+	error = getsockopt(sd, SOL_SOCKET, SO_SPLICE, &n, &len);
+	ATF_REQUIRE_MSG(error == 0, "getsockopt failed: %s", strerror(errno));
+	ATF_REQUIRE_MSG(len == sizeof(n), "unexpected length: %d", len);
+	return (n);
+}
+
 /*
  * A structure representing a spliced pair of connections.  left[1] is
  * bidirectionally spliced with right[0].
@@ -148,6 +162,9 @@ ATF_TC_BODY(splice_basic, tc)
 
 	splice_conn_init(&sc);
 
+	ATF_REQUIRE(nspliced(sc.left[1]) == 0);
+	ATF_REQUIRE(nspliced(sc.right[0]) == 0);
+
 	/* Left-to-right. */
 	c = 'M';
 	n = write(sc.left[0], &c, 1);
@@ -155,6 +172,8 @@ ATF_TC_BODY(splice_basic, tc)
 	n = read(sc.right[1], &c, 1);
 	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
 	ATF_REQUIRE_MSG(c == 'M', "unexpected character: %c", c);
+	ATF_REQUIRE(nspliced(sc.left[1]) == 1);
+	ATF_REQUIRE(nspliced(sc.right[0]) == 0);
 
 	/* Right-to-left. */
 	c = 'J';
@@ -163,6 +182,8 @@ ATF_TC_BODY(splice_basic, tc)
 	n = read(sc.left[0], &c, 1);
 	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
 	ATF_REQUIRE_MSG(c == 'J', "unexpected character: %c", c);
+	ATF_REQUIRE(nspliced(sc.left[1]) == 1);
+	ATF_REQUIRE(nspliced(sc.right[0]) == 1);
 
 	splice_conn_fini(&sc);
 }
