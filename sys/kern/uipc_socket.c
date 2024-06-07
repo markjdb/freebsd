@@ -1434,7 +1434,8 @@ so_splice(struct socket *so, struct splice *splice)
 	mtx_init(&sp->mtx, "splice", NULL, MTX_DEF);
 	sp->src = so;
 	sp->dst = so2;
-	sp->resid = splice->sp_max > 0 ? splice->sp_max : -1;
+	sp->max = splice->sp_max > 0 ? splice->sp_max : -1;
+	sp->sent = 0;
 	soref(so);
 	soref(so2);
 	so2->so_splice_back = sp;
@@ -1444,14 +1445,13 @@ so_splice(struct socket *so, struct splice *splice)
 	SOCK_UNLOCK(so);
 	mtx_lock(&sp->mtx);
 	splice_xfer(sp);
-	if (sp->resid != 0) {
+	if (sp->max != 0) {
 		SOCK_BUF_LOCK(so, SO_RCV);
 		so->so_rcv.sb_flags |= SB_SPLICED;
 		SOCK_BUF_UNLOCK(so, SO_RCV);
 		SOCK_BUF_LOCK(so2, SO_SND);
 		so2->so_snd.sb_flags |= SB_SPLICED;
 		SOCK_BUF_UNLOCK(so2, SO_SND);
-
 	} else {
 		mtx_lock(&sp->mtx);
 		so_unsplice_work(sp);

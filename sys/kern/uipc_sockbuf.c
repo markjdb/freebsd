@@ -544,7 +544,7 @@ splice_xfer(struct so_splice *so_splice)
 
 	KASSERT(!so_splice->want_free, ("splice_xfer: want free"));
 	KASSERT(!so_splice->dead, ("splice_xfer: dead splice"));
-	KASSERT(so_splice->resid != 0, ("splice_xfer: resid == 0"));
+	KASSERT(so_splice->max != 0, ("splice_xfer: max == 0"));
 
 	mtx_assert(&so_splice->mtx, MA_OWNED);
 	so_splice->queued = false;
@@ -554,8 +554,8 @@ splice_xfer(struct so_splice *so_splice)
 	src = &so_src->so_rcv;
 	dst = &so_dst->so_snd;
 	len = MIN(sbspace(dst), sbavail(src));
-	if (so_splice->resid > 0)
-		len = MIN(so_splice->resid, len);
+	if (so_splice->max > 0)
+		len = MIN(so_splice->max - so_splice->sent, len);
 
 //	printf("splice_xfer: len=%d (%d %d)\n", len, (int)sbavail(src), (int)sbspace(dst));
 	if (len == 0 || src->sb_mb == NULL) {
@@ -590,14 +590,10 @@ splice_xfer(struct so_splice *so_splice)
 	else
 		sbdrop_locked(src, len);
 
-	if (so_splice->resid > 0) {
-		so_splice->resid -= len;
-//		printf("max now %zd\n", so_splice->max);
-		if (so_splice->resid == 0 &&
-		    (so_src->so_rcv.sb_flags & SB_SPLICED) != 0) {
-			unsplice = true;
-		}
-	}
+	so_splice->sent += len;
+	if (so_splice->max > 0 && so_splice->sent >= so_splice->max &&
+	    (so_src->so_rcv.sb_flags & SB_SPLICED) != 0)
+		unsplice = true;
 	SOCKBUF_UNLOCK(src);
 
 	if (unsplice) {
