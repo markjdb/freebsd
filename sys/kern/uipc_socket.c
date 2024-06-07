@@ -3834,6 +3834,23 @@ integer:
 			optval = so->so_max_pacing_rate;
 			goto integer;
 
+		case SO_SPLICE: {
+			off_t n;
+
+			if (SOLISTENING(so)) {
+				n = 0;
+			} else {
+				SOCK_RECVBUF_LOCK(so);
+				if (so->so_splice == NULL)
+					n = 0;
+				else
+					n = so->so_splice->sent;
+				SOCK_RECVBUF_UNLOCK(so);
+			}
+			error = sooptcopyout(sopt, &n, sizeof(n));
+			break;
+		}
+
 		default:
 #ifdef SOCKET_HHOOK
 			if (V_socket_hhh[HHOOK_SOCKET_OPT]->hhh_nhooks > 0)
