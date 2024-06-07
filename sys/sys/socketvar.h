@@ -75,7 +75,8 @@ enum socket_qstate {
 struct so_splice {
 	struct socket *src;
 	struct socket *dst;
-	off_t resid;		/* number of bytes remaining, or -1 */
+	off_t max;		/* maximum bytes to splice, or -1 */
+	off_t sent;		/* number of bytes sent so far */
 	struct mtx mtx;
 	unsigned int wq_index;
 	bool queued;
