@@ -1,14 +1,30 @@
-# VNET/jail utility functions
-##
+# VNET/jail utility functions.  These assume that the consumer is using the
+# ATF framework.
 
-list_interface()
+_list_interface()
 {
 	echo $1 >> created_interfaces.lst
 }
 
-unlist_interface()
+_unlist_interface()
 {
 	sed -i "" /^$1\$/d created_interfaces.lst
+}
+
+_make_interface()
+{
+	local ifname tmp type
+
+	type=$1
+	tmp=$(mktemp vnet.XXXXXX)
+	# atf_check prints an advisory message to standard output, which breaks
+	# callers, so redirect it to standard error instead.  This makes test
+	# reports confusing since other atf_check calls will print to standard
+	# output, but I think it's the best we can do.
+	atf_check -o save:${tmp} ifconfig $type create >&2
+	ifname=$(cat ${tmp})
+	_list_interface $ifname
+	echo $ifname
 }
 
 vnet_init()
@@ -20,9 +36,10 @@ vnet_init()
 
 vnet_mkepair()
 {
-	ifname=$(ifconfig epair create)
-	list_interface $ifname
-	list_interface ${ifname%a}b
+	local ifname
+
+	ifname=$(_make_interface epair)
+	_list_interface ${ifname%a}b
 	echo ${ifname%a}
 }
 
@@ -35,27 +52,23 @@ vnet_init_bridge()
 
 vnet_mkbridge()
 {
-	ifname=$(ifconfig bridge create)
-	list_interface $ifname
-	echo ${ifname}
+	_make_interface bridge
 }
 
 vnet_mkvlan()
 {
-	ifname=$(ifconfig vlan create)
-	list_interface $ifname
-	echo ${ifname}
+	_make_interface vlan
 }
 
 vnet_mkloopback()
 {
-	ifname=$(ifconfig lo create)
-	list_interface $ifname
-	echo ${ifname}
+	_make_interface lo
 }
 
 vnet_mkjail()
 {
+	local ifname jailname vnet_interfaces
+
 	jailname=$1
 	shift
 
@@ -63,20 +76,23 @@ vnet_mkjail()
 	for ifname in $@
 	do
 		vnet_interfaces="${vnet_interfaces} vnet.interface=${ifname}"
-		unlist_interface $ifname
+		_unlist_interface $ifname
 	done
-	jail -c name=${jailname} persist vnet ${vnet_interfaces}
+	echo "jailname $jailname vnet_interfaces $vnet_interfaces" >&2
+	atf_check jail -c name=${jailname} persist vnet ${vnet_interfaces}
 
 	echo $jailname $@ >> created_jails.lst
 }
 
 vnet_ifmove()
 {
+	local ifname jailname
+
 	ifname=$1
 	jailname=$2
 
-	ifconfig ${ifname} vnet ${jailname}
-	unlist_interface $ifname
+	atf_check ifconfig ${ifname} vnet ${jailname}
+	_unlist_interface $ifname
 	sed -i "" "/^${jailname}/s/\$/ ${ifname}/" created_jails.lst
 }
 
@@ -86,12 +102,14 @@ vnet_ifrename_jail()
 	ifname=$2
 	ifnewname=$3
 
-	ifconfig -j ${jailname} $ifname name $ifnewname
+	atf_check -o match:$ifnewname ifconfig -j ${jailname} $ifname name $ifnewname
 	sed -i "" "/^${jailname}/s/${ifname}/${ifnewname}/" created_jails.lst
 }
 
 vnet_cleanup()
 {
+	local ifname ifnames jailname
+
 	if [ -f created_jails.lst ]; then
 		while read jailname ifnames; do
 			for ifname in ${ifnames}; do
