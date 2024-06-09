@@ -42,6 +42,9 @@ for i in $(seq 1 10); do
 	esac
 	sleep 0.1
 done
+while ! test -f "${PWD}/${base}_1_1.pid" -o ! -f "${PWD}/${base}_1_2.pid" ; do
+    sleep 0.1
+done
 sleep 0.5
 
 if pkill -f -j "$jid" $sleep && sleep 0.5 &&
