@@ -37,7 +37,7 @@ fionread(int fd)
  * Create a pair of connected TCP sockets, returned via the "out" array.
  */
 static void
-tcp_socketpair(int out[2], int lport)
+tcp_socketpair(int out[2])
 {
 	struct sockaddr_in sin;
 	int error, sd[2];
@@ -51,12 +51,16 @@ tcp_socketpair(int out[2], int lport)
 	sin.sin_family = AF_INET;
 	sin.sin_len = sizeof(sin);
 	sin.sin_addr.s_addr = htonl(INADDR_ANY);
-	sin.sin_port = lport;
+	sin.sin_port = htons(0);
 
 	error = bind(sd[0], (struct sockaddr *)&sin, sizeof(sin));
 	ATF_REQUIRE_MSG(error == 0, "bind failed: %s", strerror(errno));
 	error = listen(sd[0], 1);
 	ATF_REQUIRE_MSG(error == 0, "listen failed: %s", strerror(errno));
+
+	error = getsockname(sd[0], (struct sockaddr *)&sin,
+	    &(socklen_t){ sizeof(sin) });
+	ATF_REQUIRE_MSG(error == 0, "getsockname failed: %s", strerror(errno));
 
 	error = connect(sd[1], (struct sockaddr *)&sin, sizeof(sin));
 	ATF_REQUIRE_MSG(error == 0, "connect failed: %s", strerror(errno));
@@ -103,9 +107,8 @@ splice_conn_init_limits(struct splice_conn *sc, off_t max, struct timeval *tv)
 
 	memset(sc, 0, sizeof(*sc));
 
-	/* XXX-MJ it'd be nicer to try random ports in the ephemeral range */
-	tcp_socketpair(sc->left, 3456);
-	tcp_socketpair(sc->right, 3457);
+	tcp_socketpair(sc->left);
+	tcp_socketpair(sc->right);
 
 	sp.sp_fd = sc->right[0];
 	sp.sp_max = max;
