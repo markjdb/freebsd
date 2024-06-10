@@ -18,6 +18,13 @@ ATF_TESTS_SH=		exthdr \
 
 # Tests assign the same IP addresses on the host.
 TEST_METADATA.forward6+= is_exclusive="true"
+# These tests use scapy, which prints warnings if interfaces
+# are being destroyed while it is starting up.
+TEST_METADATA.divert+= is_exclusive="true"
+TEST_METADATA.exthdr+= is_exclusive="true"
+TEST_METADATA.mld+= is_exclusive="true"
+TEST_METADATA.redirect+= is_exclusive="true"
+TEST_METADATA.scapyi386+= is_exclusive="true"
 TEST_METADATA.output6+=	required_programs="python"
 
 ${PACKAGE}FILES+=	exthdr.py \
