@@ -607,7 +607,11 @@ splice_xfer(struct so_splice *so_splice)
 
 
 void splice_enqueue_work(struct so_splice *s, bool free);
+
 static bool so_splice_direct = true;
+SYSCTL_BOOL(_kern_ipc, OID_AUTO, so_splice_direct, CTLFLAG_RWTUN,
+    &so_splice_direct, 0,
+    "Perform socket splice work in the current thread");
 
 static void
 splice_push(struct socket *so_src)
