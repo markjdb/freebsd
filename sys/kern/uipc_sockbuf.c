@@ -693,11 +693,9 @@ void
 sorwakeup_locked(struct socket *so)
 {
 	SOCK_RECVBUF_LOCK_ASSERT(so);
-	if (so->so_rcv.sb_flags & SB_SPLICED) {
+	if (so->so_rcv.sb_flags & SB_SPLICED)
 		splice_push(so);
-		return;
-	}
-	if (sb_notify(&so->so_rcv))
+	else if (sb_notify(&so->so_rcv))
 		sowakeup(so, SO_RCV);
 	else
 		SOCK_RECVBUF_UNLOCK(so);
@@ -707,12 +705,9 @@ void
 sowwakeup_locked(struct socket *so)
 {
 	SOCK_SENDBUF_LOCK_ASSERT(so);
-	if (so->so_snd.sb_flags & SB_SPLICED) {
+	if (so->so_snd.sb_flags & SB_SPLICED)
 		splice_pull(so);
-		return;
-	}
-
-	if (sb_notify(&so->so_snd))
+	else if (sb_notify(&so->so_snd))
 		sowakeup(so, SO_SND);
 	else
 		SOCK_SENDBUF_UNLOCK(so);
