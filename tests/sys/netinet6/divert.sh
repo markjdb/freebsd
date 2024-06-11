@@ -85,7 +85,7 @@ ipdivert_ip6_output_remote_success_body() {
 
 	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
 		--dip ${ip6b} --test_name ipdivert_ip6_output_remote_success
-	
+	jexec ${jname} netstat -s -p icmp6
 	count=`jexec ${jname} netstat -s -p icmp6 | grep 'Input histogram:' -A1 | grep -c 'echo:'`
 	# Verify redirect got installed
 	atf_check_equal "1" "${count}"
