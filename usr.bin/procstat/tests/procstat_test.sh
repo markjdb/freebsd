@@ -145,10 +145,11 @@ kernel_stacks_head()
 }
 kernel_stacks_body()
 {
-	atf_check -o save:procstat.out procstat -a kstack
+	# procstat might generate harmless warnings if processes are exiting.
+	atf_check -o save:procstat.out -e ignore procstat -a kstack
 	atf_check -o not-empty awk '{if ($3 == "procstat") print}' procstat.out
 
-	atf_check -o save:procstat.out procstat -kka
+	atf_check -o save:procstat.out -e ignore procstat -kka
 	atf_check -o not-empty awk '{if ($3 == "procstat") print}' procstat.out
 }
 
