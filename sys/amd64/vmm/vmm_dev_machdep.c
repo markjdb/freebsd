@@ -130,9 +130,11 @@ struct vmmdev_softc {
 };
 #define	VSC_LINKED		0x01
 
+#if 0
 static SLIST_HEAD(, vmmdev_softc) head;
 
 static unsigned pr_allow_flag;
+#endif
 static struct mtx vmmdev_mtx;
 MTX_SYSINIT(vmmdev_mtx, &vmmdev_mtx, "vmm device mutex", MTX_DEF);
 
@@ -140,10 +142,13 @@ static MALLOC_DEFINE(M_VMMDEV, "vmmdev", "vmmdev");
 
 SYSCTL_DECL(_hw_vmm);
 
-static int vmm_priv_check(struct ucred *ucred);
-static int devmem_create_cdev(const char *vmname, int id, char *devmem);
-static void devmem_destroy(void *arg);
+extern int vmm_priv_check(struct ucred *ucred);
+extern struct vmmdev_softc *vmmdev_lookup(const char *name);
+extern struct vmmdev_softc *vmmdev_lookup2(struct cdev *cdev);
+extern int devmem_create_cdev(const char *vmname, int id, char *devmem);
+extern void devmem_destroy(void *arg);
 
+#if 0
 static int
 vmm_priv_check(struct ucred *ucred)
 {
@@ -154,6 +159,7 @@ vmm_priv_check(struct ucred *ucred)
 
 	return (0);
 }
+#endif
 
 static int
 vcpu_lock_one(struct vcpu *vcpu)
@@ -223,6 +229,7 @@ vcpu_unlock_all(struct vmmdev_softc *sc)
 	vm_unlock_vcpus(sc->vm);
 }
 
+#if 0
 static struct vmmdev_softc *
 vmmdev_lookup(const char *name)
 {
@@ -304,6 +311,7 @@ vmmdev_rw(struct cdev *cdev, struct uio *uio, int flags)
 	vm_unlock_memsegs(sc->vm);
 	return (error);
 }
+#endif
 
 CTASSERT(sizeof(((struct vm_memseg *)0)->name) >= VM_MAX_SUFFIXLEN + 1);
 
@@ -1100,6 +1108,7 @@ done:
 	return (error);
 }
 
+#if 0
 static int
 vmmdev_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t mapsize,
     struct vm_object **objp, int nprot)
@@ -1452,3 +1461,4 @@ devmem_destroy(void *arg)
 	dsc->cdev = NULL;
 	dsc->sc = NULL;
 }
+#endif
