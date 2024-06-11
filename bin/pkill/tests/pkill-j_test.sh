@@ -13,7 +13,7 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 0
 fi
 
-echo "1..4"
+echo "1..5"
 
 sleep=$(pwd)/sleep.txt
 ln -sf /bin/sleep $sleep
@@ -47,12 +47,18 @@ while ! test -f "${PWD}/${base}_1_1.pid" -o ! -f "${PWD}/${base}_1_2.pid" ; do
 done
 sleep 0.5
 
-if pkill -f -j "$jid" $sleep && sleep 0.5 &&
-    ! test -f "${PWD}/${base}_1_1.pid" &&
-    ! test -f "${PWD}/${base}_1_2.pid" ; then
+if pkill -f -j "$jid" $sleep ; then
 	echo "ok 1 - $name"
 else
 	echo "not ok 1 - $name"
+fi
+
+sleep 0.5
+if ! test -f "${PWD}/${base}_1_1.pid" &&
+   ! test -f "${PWD}/${base}_1_2.pid" ; then
+	echo "ok 2 - $name"
+else
+	echo "not ok 2 - $name"
 fi 2>/dev/null
 [ -f ${PWD}/${base}_1_1.pid ] && kill "$(cat ${PWD}/${base}_1_1.pid)"
 [ -f ${PWD}/${base}_1_2.pid ] && kill "$(cat ${PWD}/${base}_1_2.pid)"
@@ -72,9 +78,9 @@ sleep 0.5
 if pkill -f -j any $sleep && sleep 0.5 &&
     ! test -f ${PWD}/${base}_2_1.pid &&
     ! test -f ${PWD}/${base}_2_2.pid && kill $chpid3; then
-	echo "ok 2 - $name"
+	echo "ok 3 - $name"
 else
-	echo "not ok 2 - $name"
+	echo "not ok 3 - $name"
 fi 2>/dev/null
 [ -f ${PWD}/${base}_2_1.pid ] && kill "$(cat ${PWD}/${base}_2_1.pid)"
 [ -f ${PWD}/${base}_2_2.pid ] && kill "$(cat ${PWD}/${base}_2_2.pid)"
@@ -88,10 +94,10 @@ jail -c path=/ name=${base}_3_2 ip4.addr=127.0.0.1 \
 sleep 1
 if pkill -f -j none "$sleep $sleep_amount" && sleep 1 &&
     [ ! -f ${PWD}/${base}_3_1.pid -a -f ${PWD}/${base}_3_2.pid ] ; then
-	echo "ok 3 - $name"
+	echo "ok 4 - $name"
 else
 	ls ${PWD}/*.pid
-	echo "not ok 3 - $name"
+	echo "not ok 4 - $name"
 fi 2>/dev/null
 [ -f ${PWD}/${base}_3_1.pid ] && kill "$(cat ${base}_3_1.pid)"
 [ -f ${PWD}/${base}_3_2.pid ] && kill "$(cat ${base}_3_2.pid)"
@@ -114,9 +120,9 @@ jname="${base}_4_1,${base}_4_2"
 if pkill -f -j "$jname" $sleep && sleep 0.5 &&
     ! test -f ${PWD}/${base}_4_1.pid &&
     ! test -f ${PWD}/${base}_4_2.pid ; then
-	echo "ok 4 - $name"
+	echo "ok 5 - $name"
 else
-	echo "not ok 4 - $name"
+	echo "not ok 5 - $name"
 fi 2>/dev/null
 [ -f ${PWD}/${base}_4_1.pid ] && kill "$(cat ${PWD}/${base}_4_1.pid)"
 [ -f ${PWD}/${base}_4_2.pid ] && kill "$(cat ${PWD}/${base}_4_2.pid)"
