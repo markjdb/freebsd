@@ -403,8 +403,8 @@ splice_init(void)
 		return (0);
 	}
 
-	splice_zone = uma_zcreate("splice", sizeof(struct so_splice), NULL, NULL,
-	    splice_zinit, splice_zfini, UMA_ALIGN_CACHE, 0);
+	splice_zone = uma_zcreate("splice", sizeof(struct so_splice), NULL,
+	    NULL, splice_zinit, splice_zfini, UMA_ALIGN_CACHE, 0);
 
 	splice_wq = mallocarray(mp_maxid + 1, sizeof(*splice_wq), M_TEMP,
 	    M_WAITOK | M_ZERO);
@@ -4097,7 +4097,7 @@ sopoll_generic(struct socket *so, int events, struct ucred *active_cred,
 		revents = 0;
 		SOCK_SENDBUF_LOCK(so);
 		SOCK_RECVBUF_LOCK(so);
-		if (events & (POLLIN | POLLRDNORM)) 
+		if (events & (POLLIN | POLLRDNORM))
 			if (soreadabledata(so) && !isspliced(so))
 				revents |= events & (POLLIN | POLLRDNORM);
 		if (events & (POLLOUT | POLLWRNORM))

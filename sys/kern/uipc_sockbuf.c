@@ -519,13 +519,13 @@ not_splicable(struct socket *so, short sb_flags, bool src)
 	}
 
 	/* we only care if the sink is connected */
-	if (src) 
+	if (src)
 		return (0);
 
 	/* XXX-MJ locking */
 	if ((state & SS_ISCONNECTING) != 0 || (state & SS_ISCONNECTED) == 0)
 		return (1);
-	return(0);
+	return (0);
 }
 
 void so_unsplice(struct socket *so);
@@ -569,7 +569,8 @@ splice_xfer(struct so_splice *so_splice)
 	uio.uio_resid = len;
 	error = soreceive_stream(so_src, NULL, &uio, &top, NULL, &flags);
 	if (error != 0 || top == NULL) {
-		printf("soreceive_stream returned %d, flags=%x\n", error, flags);
+		printf("soreceive_stream returned %d, flags=%x\n",
+		    error, flags);
 		return;
 	}
 	if (flags & MSG_TRUNC ) {
@@ -583,7 +584,7 @@ splice_xfer(struct so_splice *so_splice)
 		printf("sosend returns %d\n", error);
 		return;
 	}
-	/* drop what we put into the dst sockbuf, unless conn, was disconnected */
+	/* drop what we put into the dst sb, unless conn, was disconnected */
 	SOCKBUF_LOCK(src);
 	if ((src->sb_state & SBS_CANTRCVMORE) && sbavail(src) == 0)
 		unsplice = true;
@@ -597,7 +598,7 @@ splice_xfer(struct so_splice *so_splice)
 	SOCKBUF_UNLOCK(src);
 
 	if (unsplice) {
-		SOCK_LOCK(so_src);		
+		SOCK_LOCK(so_src);
 //		printf("unsplicing due to max == 0\n");
 		so_unsplice(so_src);
 		SOCK_UNLOCK(so_src);
@@ -632,7 +633,7 @@ splice_push(struct socket *so_src)
 	if (src->sb_state & SBS_CANTRCVMORE && sbavail(src) == 0)
 		unsplice = true;
 	SOCKBUF_UNLOCK(src);
-	
+
 	mtx_lock(&sp->mtx);
 	if (!unsplice && (sp->queued || sp->dead || sp->want_free)) {
 		mtx_unlock(&sp->mtx);
@@ -640,7 +641,7 @@ splice_push(struct socket *so_src)
 	}
 	if (!so_splice_direct || unsplice || sp->want_free) {
 		mtx_unlock(&sp->mtx);
-		splice_enqueue_work(sp, unsplice);		
+		splice_enqueue_work(sp, unsplice);
 		return;
 	}
 	sp->queued = 1;
@@ -672,7 +673,7 @@ splice_pull(struct socket *so_dst)
 	}
 	if (!so_splice_direct) {
 		mtx_unlock(&sp->mtx);
-		splice_enqueue_work(sp, false);		
+		splice_enqueue_work(sp, false);
 		return;
 	}
 	sp->queued = 1;
