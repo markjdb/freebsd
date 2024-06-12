@@ -4442,11 +4442,11 @@ soisdisconnecting(struct socket *so)
 		socantrcvmore_locked(so);
 		SOCK_SENDBUF_LOCK(so);
 		socantsendmore_locked(so);
+		if (isspliced(so))
+			so_unsplice(so);
+//		if (issplicedback(so))
+//			so_unsplice(so->so_splice_back->src);
 	}
-	if (isspliced(so))
-		so_unsplice(so);
-//	if (issplicedback(so))
-//		so_unsplice(so->so_splice_back->src);
 	SOCK_UNLOCK(so);
 	wakeup(&so->so_timeo);
 }
