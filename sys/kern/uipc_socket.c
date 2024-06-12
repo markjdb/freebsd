@@ -1986,9 +1986,11 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	tls = NULL;
 	tls_rtype = TLS_RLTYPE_APP;
 #endif
-	if (uio != NULL)
+	if (uio != NULL) {
 		resid = uio->uio_resid;
-	else if ((top->m_flags & M_PKTHDR) != 0)
+		if (isspliced(so))
+			return (EINVAL);
+	} else if ((top->m_flags & M_PKTHDR) != 0)
 		resid = top->m_pkthdr.len;
 	else
 		resid = m_length(top, NULL);
