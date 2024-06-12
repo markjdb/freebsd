@@ -1989,9 +1989,11 @@ sosend_generic_locked(struct socket *so, struct sockaddr *addr, struct uio *uio,
 
 	SOCK_IO_SEND_ASSERT_LOCKED(so);
 
-	if (uio != NULL)
+	if (uio != NULL) {
 		resid = uio->uio_resid;
-	else if ((top->m_flags & M_PKTHDR) != 0)
+		if (isspliced(so))
+			return (EINVAL);
+	} else if ((top->m_flags & M_PKTHDR) != 0)
 		resid = top->m_pkthdr.len;
 	else
 		resid = m_length(top, NULL);
