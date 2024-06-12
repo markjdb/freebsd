@@ -82,7 +82,7 @@ struct so_splice {
 	bool queued;
 	bool want_free;
 	bool dead;
-	STAILQ_ENTRY(so_splice) next;;
+	STAILQ_ENTRY(so_splice) next;
 };
 
 /*-
@@ -355,7 +355,7 @@ static inline bool
 soreadable(struct socket *so)
 {
        if (isspliced(so))
-               return 0;
+               return (0);
        return (_soreadable(so));
 }
 
