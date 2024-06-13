@@ -161,8 +161,17 @@
 #include <compat/freebsd32/freebsd32.h>
 #endif
 
+static int	soreceive_generic_locked(struct socket *so,
+		    struct sockaddr **psa, struct uio *uio, struct mbuf **mp,
+		    struct mbuf **controlp, int *flagsp);
 static int	soreceive_rcvoob(struct socket *so, struct uio *uio,
 		    int flags);
+static int	soreceive_stream_locked(struct socket *so, struct sockbuf *sb,
+		    struct sockaddr **psa, struct uio *uio, struct mbuf **mp,
+		    struct mbuf **controlp, int flags);
+static int	sosend_generic_locked(struct socket *so, struct sockaddr *addr,
+		    struct uio *uio, struct mbuf *top, struct mbuf *control,
+		    int flags, struct thread *td);
 static void	so_rdknl_lock(void *);
 static void	so_rdknl_unlock(void *);
 static void	so_rdknl_assert_lock(void *, int);
@@ -300,7 +309,7 @@ static int splice_bind_threads = 1;
 static uint16_t splice_cpuid_lookup[MAXCPU];
 static struct splice_domain_info splice_domains[MAXMEMDOM];
 
-void splice_xfer(struct so_splice *s);
+void so_splice_xfer(struct so_splice *s);
 void so_unsplice_work(struct so_splice *s);
 void so_unsplice(struct socket *so);
 
@@ -333,7 +342,7 @@ splice_work_thread(void *ctx)
 			if (s->want_free)
 				so_unsplice_work(s);
 			else
-				splice_xfer(s);
+				so_splice_xfer(s);
 			CURVNET_RESTORE();
 		}
 	}
@@ -455,6 +464,103 @@ splice_init(void)
 	splice_init_state = error != 0 ? -1 : 1;
 	sx_xunlock(&splice_init_lock);
 	return (error);
+}
+
+/*
+ * Lock a pair of socket's I/O locks for splicing.
+ */
+static void
+splice_lock_pair(struct socket *so_src, struct socket *so_dst)
+{
+	int error;
+
+	for (;;) {
+		error = SOCK_IO_SEND_LOCK(so_dst, SBL_WAIT | SBL_NOINTR);
+		KASSERT(error == 0,
+		    ("%s: failed to lock send I/O lock: %d", __func__, error));
+		error = SOCK_IO_RECV_LOCK(so_src, 0);
+		KASSERT(error == 0 || error == EWOULDBLOCK,
+		    ("%s: failed to lock recv I/O lock: %d", __func__, error));
+		if (error == 0)
+			break;
+		SOCK_IO_SEND_UNLOCK(so_dst);
+
+		error = SOCK_IO_RECV_LOCK(so_src, SBL_WAIT | SBL_NOINTR);
+		KASSERT(error == 0,
+		    ("%s: failed to lock recv I/O lock: %d", __func__, error));
+		error = SOCK_IO_SEND_LOCK(so_dst, 0);
+		KASSERT(error == 0 || error == EWOULDBLOCK,
+		    ("%s: failed to lock send I/O lock: %d", __func__, error));
+		if (error == 0)
+			break;
+		SOCK_IO_RECV_UNLOCK(so_src);
+	}
+}
+
+static void
+splice_unlock_pair(struct socket *so_src, struct socket *so_dst)
+{
+	SOCK_IO_RECV_UNLOCK(so_src);
+	SOCK_IO_SEND_UNLOCK(so_dst);
+}
+
+void
+so_splice_xfer(struct so_splice *sp)
+{
+	struct uio uio;
+	struct mbuf *m;
+	struct socket *so_src, *so_dst;
+	struct sockbuf *sb_src, *sb_dst;
+	off_t max;
+	size_t len;
+	int error;
+
+	KASSERT(!sp->want_free, ("so_splice_xfer: want free"));
+	KASSERT(!sp->dead, ("so_splice_xfer: dead splice"));
+	KASSERT(sp->max != 0, ("so_splice_xfer: max == 0"));
+	mtx_assert(&sp->mtx, MA_OWNED);
+
+	sp->queued = false;
+	max = sp->max > 0 ? sp->max - sp->sent : OFF_MAX;
+	mtx_unlock(&sp->mtx);
+
+	so_src = sp->src;
+	sb_src = &so_src->so_rcv;
+	so_dst = sp->dst;
+	sb_dst = &so_dst->so_snd;
+
+	m = NULL;
+	memset(&uio, 0, sizeof(uio));
+
+	splice_lock_pair(so_src, so_dst);
+	len = MIN(max, MIN(sbspace(sb_dst), sbavail(sb_src)));
+	if (len == 0) {
+		splice_unlock_pair(so_src, so_dst);
+		return;
+	}
+
+	uio.uio_resid = len;
+	error = soreceive_stream_locked(so_src, sb_src, NULL, &uio, &m, NULL,
+	    MSG_DONTWAIT);
+	if (error != 0) {
+		splice_unlock_pair(so_src, so_dst);
+		printf("%s:%d error %d\n", __func__, __LINE__, error);
+		return;
+	}
+	SOCK_IO_RECV_UNLOCK(so_src);
+
+	error = sosend_generic_locked(so_dst, NULL, NULL, m, NULL, MSG_DONTWAIT,
+	    curthread);
+	if (error != 0) {
+		SOCK_IO_SEND_UNLOCK(so_dst);
+		printf("%s:%d error %d\n", __func__, __LINE__, error);
+		return;
+	}
+
+	mtx_lock(&sp->mtx);
+	SOCK_IO_SEND_UNLOCK(so_dst);
+	sp->sent += len;
+	mtx_unlock(&sp->mtx);
 }
 
 static void
@@ -1467,7 +1573,7 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	SOCK_UNLOCK(so2);
 
 	mtx_lock(&sp->mtx);
-	splice_xfer(sp);
+	so_splice_xfer(sp);
 	return (0);
 }
 
@@ -2279,8 +2385,6 @@ sousrsend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 
 	td = uio->uio_td;
 	len = uio->uio_resid;
-	if ((so->so_snd.sb_flags & SB_SPLICED) != 0)
-		return (EINVAL);
 	CURVNET_SET(so->so_vnet);
 	error = so->so_proto->pr_sosend(so, addr, uio, NULL, control, flags,
 	    td);
@@ -2425,11 +2529,6 @@ soreceive_generic_locked(struct socket *so, struct sockaddr **psa,
 
 restart:
 	SOCKBUF_LOCK(&so->so_rcv);
-	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0) {
-		SOCKBUF_UNLOCK(&so->so_rcv);
-		error = EINVAL;
-		goto release;
-	}
 	m = so->so_rcv.sb_mb;
 	/*
 	 * If we have less data than requested, block awaiting more (subject
