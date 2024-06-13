@@ -2418,17 +2418,8 @@ soreceive_generic(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		flags = 0;
 	if (flags & MSG_OOB)
 		return (soreceive_rcvoob(so, uio, flags));
-	if (mp != NULL) {
+	if (mp != NULL)
 		*mp = NULL;
-	} else {
-		/* if we are spliced, don't allow userspace to read */
-		if ((so->so_rcv.sb_flags & SB_SPLICED) != 0) {
-			printf("%p: EINVAL 0x%x 0x%x\n", so,
-			    so->so_rcv.sb_state & SBS_CANTRCVMORE,
-			    so->so_rcv.sb_state);
-			return (EINVAL);
-		}
-	}
 
 	error = SOCK_IO_RECV_LOCK(so, SBLOCKWAIT(flags));
 	if (error)
@@ -2436,6 +2427,11 @@ soreceive_generic(struct socket *so, struct sockaddr **psa, struct uio *uio,
 
 restart:
 	SOCKBUF_LOCK(&so->so_rcv);
+	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0) {
+		SOCKBUF_UNLOCK(&so->so_rcv);
+		error = EINVAL;
+		goto release;
+	}
 	m = so->so_rcv.sb_mb;
 	/*
 	 * If we have less data than requested, block awaiting more (subject
