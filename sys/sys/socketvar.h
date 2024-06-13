@@ -133,8 +133,8 @@ struct socket {
 
 	int so_ts_clock;	/* type of the clock used for timestamps */
 	uint32_t so_max_pacing_rate;	/* (f) TX rate limit in bytes/s */
-	struct so_splice *so_splice;
-	struct so_splice *so_splice_back;
+	struct so_splice *so_splice;	/* (b) splice state for sink */
+	struct so_splice *so_splice_back; /* (b) splice state for source */
 
 	/*
 	 * Mutexes to prevent interleaving of socket I/O.  These have to be

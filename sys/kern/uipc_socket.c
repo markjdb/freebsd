@@ -1535,9 +1535,11 @@ sofree(struct socket *so)
 	    ("%s: so %p has references", __func__, so));
 	KASSERT(SOLISTENING(so) || so->so_qstate == SQ_NONE,
 	    ("%s: so %p is on listen queue", __func__, so));
+	KASSERT(SOLISTENING(so) || (so->so_rcv.sb_flags & SB_SPLICED) == 0,
+	    ("%s: so %p rcvbuf is spliced", __func__, so));
+	KASSERT(SOLISTENING(so) || (so->so_snd.sb_flags & SB_SPLICED) == 0,
+	    ("%s: so %p sndbuf is spliced", __func__, so));
 
-	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
-		so_unsplice(so);
 	SOCK_UNLOCK(so);
 
 	if (so->so_dtor != NULL)
