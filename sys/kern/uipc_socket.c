@@ -2018,13 +2018,8 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		clen = control->m_len;
 
 	error = SOCK_IO_SEND_LOCK(so, SBLOCKWAIT(flags));
-	if (error) {
-		if (error == EAGAIN) {
-			void *td = sx_xholder(&so->so_snd_sx);
-			printf("lock held by %p\n", td);
-		}
+	if (error)
 		goto out;
-	}
 
 #ifdef KERN_TLS
 	tls_send_flag = 0;
@@ -2230,10 +2225,8 @@ out:
 	if (tls != NULL)
 		ktls_free(tls);
 #endif
-	if (top != NULL) {
-		printf("m_freem(%p)\n", top);
+	if (top != NULL)
 		m_freem(top);
-	}
 	if (control != NULL)
 		m_freem(control);
 	return (error);
