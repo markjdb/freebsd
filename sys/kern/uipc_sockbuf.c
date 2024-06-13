@@ -529,87 +529,10 @@ not_splicable(struct socket *so, short sb_flags, bool src)
 }
 
 void so_unsplice(struct socket *so);
-void splice_xfer(struct so_splice *so_splice);
-
-void
-splice_xfer(struct so_splice *so_splice)
-{
-	struct mbuf *top;
-	unsigned int len;
-	struct uio uio;
-	struct socket *so_src, *so_dst;
-	struct sockbuf *src, *dst;
-	int error, flags;
-	bool unsplice = false;
-
-	KASSERT(!so_splice->want_free, ("splice_xfer: want free"));
-	KASSERT(!so_splice->dead, ("splice_xfer: dead splice"));
-	KASSERT(so_splice->max != 0, ("splice_xfer: max == 0"));
-
-	mtx_assert(&so_splice->mtx, MA_OWNED);
-	so_splice->queued = false;
-	mtx_unlock(&so_splice->mtx);
-	so_src = so_splice->src;
-	so_dst = so_splice->dst;
-	src = &so_src->so_rcv;
-	dst = &so_dst->so_snd;
-	len = MIN(sbspace(dst), sbavail(src));
-	if (so_splice->max > 0)
-		len = MIN(so_splice->max - so_splice->sent, len);
-
-//	printf("splice_xfer: len=%d (%d %d)\n", len, (int)sbavail(src), (int)sbspace(dst));
-	if (len == 0 || src->sb_mb == NULL) {
-		return;
-	}
-
-	/* XXX could race for sorecv/sosend, not the cause of the current bug; will fix later */
-	flags = MSG_DONTWAIT | MSG_PEEK;
-	top = NULL;
-	bzero(&uio, sizeof(uio));
-	uio.uio_resid = len;
-	error = soreceive_stream(so_src, NULL, &uio, &top, NULL, &flags);
-	if (error != 0 || top == NULL) {
-		printf("soreceive_stream returned %d, flags=%x\n",
-		    error, flags);
-		return;
-	}
-	if (flags & MSG_TRUNC ) {
-		printf("msg trunc set\n");
-		m_freem(top);
-		return;
-	}
-
-	error = sosend(so_dst, NULL, NULL, top, NULL, MSG_DONTWAIT, curthread);
-	if (error != 0) {
-		printf("sosend returns %d\n", error);
-		return;
-	}
-	/* drop what we put into the dst sb, unless conn, was disconnected */
-	SOCKBUF_LOCK(src);
-	if ((src->sb_state & SBS_CANTRCVMORE) && sbavail(src) == 0)
-		unsplice = true;
-	else
-		sbdrop_locked(src, len);
-
-	so_splice->sent += len;
-	if (so_splice->max > 0 && so_splice->sent >= so_splice->max &&
-	    (so_src->so_rcv.sb_flags & SB_SPLICED) != 0)
-		unsplice = true;
-	SOCKBUF_UNLOCK(src);
-
-	if (unsplice) {
-		SOCK_LOCK(so_src);
-//		printf("unsplicing due to max == 0\n");
-		so_unsplice(so_src);
-		SOCK_UNLOCK(so_src);
-	}
-
-}
-
-
+void so_splice_xfer(struct so_splice *so_splice);
 void splice_enqueue_work(struct so_splice *s, bool free);
 
-static bool so_splice_direct = true;
+static bool so_splice_direct = false;
 SYSCTL_BOOL(_kern_ipc, OID_AUTO, so_splice_direct, CTLFLAG_RWTUN,
     &so_splice_direct, 0,
     "Perform socket splice work in the current thread");
@@ -645,7 +568,7 @@ splice_push(struct socket *so_src)
 		return;
 	}
 	sp->queued = 1;
-	splice_xfer(sp); /* unlocks sp */
+	so_splice_xfer(sp); /* unlocks sp */
 }
 
 static void
@@ -677,7 +600,7 @@ splice_pull(struct socket *so_dst)
 		return;
 	}
 	sp->queued = 1;
-	splice_xfer(sp); /* unlocks sp */
+	so_splice_xfer(sp); /* unlocks sp */
 
 }
 /*
