@@ -1969,8 +1969,8 @@ out:
  * counts if EINTR/ERESTART are returned.  Data and control buffers are freed
  * on return.
  */
-int
-sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
+static int
+sosend_generic_locked(struct socket *so, struct sockaddr *addr, struct uio *uio,
     struct mbuf *top, struct mbuf *control, int flags, struct thread *td)
 {
 	long space;
@@ -2017,10 +2017,6 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	if (control != NULL)
 		clen = control->m_len;
 
-	error = SOCK_IO_SEND_LOCK(so, SBLOCKWAIT(flags));
-	if (error)
-		goto out;
-
 #ifdef KERN_TLS
 	tls_send_flag = 0;
 	tls = ktls_hold(so->so_snd.sb_tls_info);
@@ -2043,7 +2039,7 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 
 		if (resid == 0 && !ktls_permit_empty_frames(tls)) {
 			error = EINVAL;
-			goto release;
+			goto out;
 		}
 	}
 #endif
@@ -2054,13 +2050,13 @@ restart:
 		if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
 			SOCKBUF_UNLOCK(&so->so_snd);
 			error = EPIPE;
-			goto release;
+			goto out;
 		}
 		if (so->so_error) {
 			error = so->so_error;
 			so->so_error = 0;
 			SOCKBUF_UNLOCK(&so->so_snd);
-			goto release;
+			goto out;
 		}
 		if ((so->so_state & SS_ISCONNECTED) == 0) {
 			/*
@@ -2074,7 +2070,7 @@ restart:
 				if (!(resid == 0 && clen != 0)) {
 					SOCKBUF_UNLOCK(&so->so_snd);
 					error = ENOTCONN;
-					goto release;
+					goto out;
 				}
 			} else if (addr == NULL) {
 				SOCKBUF_UNLOCK(&so->so_snd);
@@ -2082,7 +2078,7 @@ restart:
 					error = ENOTCONN;
 				else
 					error = EDESTADDRREQ;
-				goto release;
+				goto out;
 			}
 		}
 		space = sbspace(&so->so_snd);
@@ -2092,7 +2088,7 @@ restart:
 		    clen > so->so_snd.sb_hiwat) {
 			SOCKBUF_UNLOCK(&so->so_snd);
 			error = EMSGSIZE;
-			goto release;
+			goto out;
 		}
 		if (space < resid + clen &&
 		    (atomic || space < so->so_snd.sb_lowat || space < clen)) {
@@ -2100,12 +2096,12 @@ restart:
 			    (flags & (MSG_NBIO | MSG_DONTWAIT)) != 0) {
 				SOCKBUF_UNLOCK(&so->so_snd);
 				error = EWOULDBLOCK;
-				goto release;
+				goto out;
 			}
 			error = sbwait(so, SO_SND);
 			SOCKBUF_UNLOCK(&so->so_snd);
 			if (error)
-				goto release;
+				goto out;
 			goto restart;
 		}
 		SOCKBUF_UNLOCK(&so->so_snd);
@@ -2150,7 +2146,7 @@ restart:
 					    ((flags & MSG_EOR) ? M_EOR : 0));
 				if (top == NULL) {
 					error = EFAULT; /* only possible error */
-					goto release;
+					goto out;
 				}
 				space -= resid - uio->uio_resid;
 				resid = uio->uio_resid;
@@ -2214,12 +2210,10 @@ restart:
 			control = NULL;
 			top = NULL;
 			if (error)
-				goto release;
+				goto out;
 		} while (resid && space > 0);
 	} while (resid);
 
-release:
-	SOCK_IO_SEND_UNLOCK(so);
 out:
 #ifdef KERN_TLS
 	if (tls != NULL)
@@ -2229,6 +2223,20 @@ out:
 		m_freem(top);
 	if (control != NULL)
 		m_freem(control);
+	return (error);
+}
+
+int
+sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
+    struct mbuf *top, struct mbuf *control, int flags, struct thread *td)
+{
+	int error;
+
+	error = SOCK_IO_SEND_LOCK(so, 0);
+	if (error)
+		return (error);
+	error = sosend_generic_locked(so, addr, uio, top, control, flags, td);
+	SOCK_IO_SEND_UNLOCK(so);
 	return (error);
 }
 
