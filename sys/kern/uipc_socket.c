@@ -367,6 +367,25 @@ splice_enqueue_work(struct so_splice *s, bool want_free)
 }
 
 static int
+splice_zinit(void *mem, int size __unused, int flags __unused)
+{
+	struct so_splice *s;
+
+	s = (struct so_splice *)mem;
+	mtx_init(&s->mtx, "so_splice", NULL, MTX_DEF);
+	return (0);
+}
+
+static void
+splice_zfini(void *mem, int size)
+{
+	struct so_splice *s;
+
+	s = (struct so_splice *)mem;
+	mtx_destroy(&s->mtx);
+}
+
+static int
 splice_init(void)
 {
 	struct thread *td;
@@ -385,7 +404,7 @@ splice_init(void)
 	}
 
 	splice_zone = uma_zcreate("splice", sizeof(struct so_splice), NULL, NULL,
-	    NULL, NULL, UMA_ALIGN_CACHE, 0);
+	    splice_zinit, splice_zfini, UMA_ALIGN_CACHE, 0);
 
 	splice_wq = mallocarray(mp_maxid + 1, sizeof(*splice_wq), M_TEMP,
 	    M_WAITOK | M_ZERO);
@@ -1373,94 +1392,83 @@ solisten_dequeue(struct socket *head, struct socket **ret, int flags)
 	return (0);
 }
 
-/*
- * Splice the output from so to the input of the socket arg
- */
-
-static int
-so_splice(struct socket *so, struct splice *splice)
+static struct so_splice *
+so_splice_alloc(off_t max)
 {
-	struct socket *so2;
-	struct file *sock2_fp;
 	struct so_splice *sp;
-	int error;
 
-	SOCK_LOCK_ASSERT(so);
+	sp = uma_zalloc(splice_zone, M_WAITOK);
+	sp->src = NULL;
+	sp->dst = NULL;
+	sp->max = max > 0 ? max : -1;
+	sp->sent = 0;
+	sp->wq_index = 0;
+	sp->queued = sp->want_free = sp->dead = false;
+	return (sp);
+}
+
+/*
+ * Splice the output from so to the input of so2.
+ */
+static int
+so_splice(struct socket *so, struct socket *so2, struct splice *splice)
+{
+	struct so_splice *sp;
 
 	if (splice->sp_max < 0)
 		return (EINVAL);
-
-	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
-		return (EBUSY);
-
-	/* XXX-MJ need to check recv rights on socket */
-	error = getsock(curthread, splice->sp_fd, &cap_send_rights, &sock2_fp);
-	if (error != 0)
-		return (error);
-
-	so2 = sock2_fp->f_data;
-
 	/* Handle only TCP for now; TODO: other streaming protos */
-	if (so->so_proto->pr_protocol != IPPROTO_TCP)
+	if (so->so_proto->pr_protocol != IPPROTO_TCP ||
+	    so2->so_proto != so->so_proto)
 		return (EINVAL);
 	if (so->so_vnet != so2->so_vnet)
 		return (EINVAL);
 
-	SOCK_UNLOCK(so);
-
-	sp = uma_zalloc(splice_zone, M_WAITOK | M_ZERO);
-
-	SOCK_LOCK(so2);
-	/*
-	 * Only allow splicing to a spliced socket if no other sockets
-	 * are spliced to it, and it is either unspliced on transmit,
-	 * or it is spliced to us already.
-	 */
-	if ((so2->so_snd.sb_flags & SB_SPLICED) != 0) {
-		uma_zfree(splice_zone, sp);
-		error = EBUSY;
-		SOCK_UNLOCK(so2);
-		SOCK_LOCK(so);
-		goto out_with_fp;
-	}
-	if (isspliced(so2) && so2->so_splice->dst != so) {
-		printf("einval: 0x%x  %p %p\n", so2->so_options, so2->so_splice->dst, so);
-		uma_zfree(splice_zone, sp);
-		error = EINVAL;
-		SOCK_UNLOCK(so2);
-		SOCK_LOCK(so);
-		goto out_with_fp;
-	}
-	mtx_init(&sp->mtx, "splice", NULL, MTX_DEF);
+	sp = so_splice_alloc(splice->sp_max);
 	sp->src = so;
 	sp->dst = so2;
-	sp->max = splice->sp_max > 0 ? splice->sp_max : -1;
-	sp->sent = 0;
+
+	SOCK_LOCK(so);
+	if (SOLISTENING(so)) {
+		SOCK_UNLOCK(so);
+		uma_zfree(splice_zone, sp);
+		return (EINVAL);
+	}
+	if (so->so_splice != NULL) {
+		SOCK_UNLOCK(so);
+		uma_zfree(splice_zone, sp);
+		return (EBUSY);
+	}
 	soref(so);
+	so->so_splice = sp;
+	SOCK_RECVBUF_LOCK(so);
+	so->so_rcv.sb_flags |= SB_SPLICED;
+	SOCK_RECVBUF_UNLOCK(so);
+	SOCK_UNLOCK(so);
+
+	SOCK_LOCK(so2);
+	if (so2->so_splice_back != NULL) {
+		SOCK_UNLOCK(so2);
+		SOCK_LOCK(so);
+		so->so_splice = NULL;
+		SOCK_RECVBUF_LOCK(so);
+		so->so_rcv.sb_flags &= ~SB_SPLICED;
+		SOCK_RECVBUF_UNLOCK(so);
+		SOCK_UNLOCK(so);
+		sorele(so);
+		uma_zfree(splice_zone, sp);
+		return (EBUSY);
+	}
 	soref(so2);
 	so2->so_splice_back = sp;
+	SOCK_SENDBUF_LOCK(so2);
+	so2->so_snd.sb_flags |= SB_SPLICED;
+	SOCK_SENDBUF_UNLOCK(so2);
 	SOCK_UNLOCK(so2);
-	SOCK_LOCK(so);
-	so->so_splice = sp;
-	SOCK_UNLOCK(so);
+
 	mtx_lock(&sp->mtx);
 	splice_xfer(sp);
-	if (sp->max != 0) {
-		SOCK_BUF_LOCK(so, SO_RCV);
-		so->so_rcv.sb_flags |= SB_SPLICED;
-		SOCK_BUF_UNLOCK(so, SO_RCV);
-		SOCK_BUF_LOCK(so2, SO_SND);
-		so2->so_snd.sb_flags |= SB_SPLICED;
-		SOCK_BUF_UNLOCK(so2, SO_SND);
-	} else {
-		mtx_lock(&sp->mtx);
-		so_unsplice_work(sp);
-	}
-	SOCK_LOCK(so);
-out_with_fp:
-	fdrop(sock2_fp, curthread);
-
-	return (error);
+	return (0);
 }
 
 void
@@ -3457,7 +3465,6 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 	int	error, optval;
 	struct	linger l;
 	struct	timeval tv;
-	struct  splice splice;
 	sbintime_t val, *valp;
 	uint32_t val32;
 #ifdef MAC
@@ -3628,20 +3635,44 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 			so->so_max_pacing_rate = val32;
 			break;
 
-		case SO_SPLICE:
+		case SO_SPLICE: {
+			struct splice splice;
+			struct file *fp;
+			struct socket *so2;
+
 			error = sooptcopyin(sopt, &splice, sizeof(splice),
 			    sizeof(splice));
 			if (error)
 				goto bad;
+
 			error = splice_init();
 			if (error != 0)
 				goto bad;
-			SOCK_LOCK(so);
-			error = so_splice(so, &splice);
-			SOCK_UNLOCK(so);
-			if (error)
+
+			if (!cap_rights_contains(sopt->sopt_rights,
+			    &cap_recv_rights)) {
+				error = ENOTCAPABLE;
 				goto bad;
+			}
+
+			if (splice.sp_fd >= 0) {
+				error = getsock(sopt->sopt_td, splice.sp_fd,
+				    &cap_send_rights, &fp);
+				if (error != 0)
+					goto bad;
+				so2 = fp->f_data;
+
+				error = so_splice(so, so2, &splice);
+				fdrop(fp, sopt->sopt_td);
+				if (error)
+					goto bad;
+			} else {
+				/* OpenBSD unsplices in this case. */
+				error = EBADF;
+				goto bad;
+			}
 			break;
+		}
 		default:
 #ifdef SOCKET_HHOOK
 			if (V_socket_hhh[HHOOK_SOCKET_OPT]->hhh_nhooks > 0)
