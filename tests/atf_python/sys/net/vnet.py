@@ -267,7 +267,7 @@ class VnetFactory(object):
     def _wait_interfaces(vnet_name: str, ifaces: List[str]) -> List[str]:
         cmd = "/usr/sbin/jexec {} /sbin/ifconfig -l".format(vnet_name)
         not_matched: List[str] = []
-        for i in range(50):
+        for i in range(500):
             vnet_ifaces = run_cmd(cmd).strip().split(" ")
             not_matched = []
             for iface_name in ifaces:
