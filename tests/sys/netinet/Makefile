@@ -27,6 +27,8 @@ ATF_TESTS_SH=	arp \
 ATF_TESTS_PYTEST+=	carp.py
 ATF_TESTS_PYTEST+=	igmp.py
 
+TEST_METADATA.carp+=	is_exclusive="true"
+
 # Some of these tests look for log messages in the dmesg buffer.
 TEST_METADATA.arp+=	is_exclusive="true"
 TEST_METADATA.divert+=	required_programs="python"	\
