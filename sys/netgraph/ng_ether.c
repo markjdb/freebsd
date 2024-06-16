@@ -280,11 +280,17 @@ ng_ether_input_orphan(struct ifnet *ifp, struct mbuf *m)
 static int
 ng_ether_output(struct ifnet *ifp, struct mbuf **mp)
 {
-	const node_p node = IFP2NG(ifp);
-	const priv_p priv = NG_NODE_PRIVATE(node);
+	node_p node;
+	priv_p priv;
 	int error = 0;
 
+	/* If the interface was detached, let the packet continue. */
+	node = IFP2NG(ifp);
+	if (node == NULL)
+		return (0);
+
 	/* If "upper" hook not connected, let packet continue */
+	priv = NG_NODE_PRIVATE(node);
 	if (priv->upper == NULL)
 		return (0);
 
