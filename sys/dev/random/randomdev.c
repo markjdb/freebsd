@@ -35,6 +35,7 @@
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/lock.h>
+#include <sys/msan.h>
 #include <sys/module.h>
 #include <sys/malloc.h>
 #include <sys/poll.h>
@@ -207,6 +208,7 @@ int
 		read_len = MIN((size_t)uio->uio_resid, bufsize);
 
 		p_random_alg_context->ra_read(random_buf, read_len);
+		kmsan_mark(random_buf, read_len, KMSAN_STATE_INITED);
 
 		/*
 		 * uiomove() may yield the CPU before each 'read_len' bytes (up
@@ -283,6 +285,7 @@ void
 		(void)randomdev_wait_until_seeded(SEEDWAIT_UNINTERRUPTIBLE);
 	}
 	p_random_alg_context->ra_read(random_buf, len);
+	kmsan_mark(random_buf, len, KMSAN_STATE_INITED);
 }
 
 bool
