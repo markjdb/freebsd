@@ -1317,6 +1317,8 @@ zfs_aclset_common(znode_t *zp, zfs_acl_t *aclp, cred_t *cr, dmu_tx_t *tx)
 	return (sa_bulk_update(zp->z_sa_hdl, bulk, count, tx));
 }
 
+#include <sys/msan.h>
+
 static void
 zfs_acl_chmod(vtype_t vtype, uint64_t mode, boolean_t split, boolean_t trim,
     zfs_acl_t *aclp)
@@ -1430,6 +1432,7 @@ zfs_acl_chmod(vtype_t vtype, uint64_t mode, boolean_t split, boolean_t trim,
 
 	new_count += 3;
 	new_bytes += abstract_size * 3;
+	kmsan_check(newnode->z_acldata, new_bytes, "zfsacl");
 	zfs_acl_release_nodes(aclp);
 	aclp->z_acl_count = new_count;
 	aclp->z_acl_bytes = new_bytes;
