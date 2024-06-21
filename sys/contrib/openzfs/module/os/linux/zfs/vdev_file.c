@@ -210,11 +210,11 @@ vdev_file_io_strategy(void *arg)
 	resid = 0;
 
 	if (zio->io_type == ZIO_TYPE_READ) {
-		buf = abd_borrow_buf(zio->io_abd, zio->io_size);
+		buf = abd_borrow_buf(zio->io_abd, size);
 		err = zfs_file_pread(vf->vf_file, buf, size, off, &resid);
 		abd_return_buf_copy(zio->io_abd, buf, size);
 	} else {
-		buf = abd_borrow_buf_copy(zio->io_abd, zio->io_size);
+		buf = abd_borrow_buf_copy(zio->io_abd, size);
 		err = zfs_file_pwrite(vf->vf_file, buf, size, off, &resid);
 		abd_return_buf(zio->io_abd, buf, size);
 	}
