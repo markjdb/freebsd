@@ -872,9 +872,11 @@ zfs_set_ace(zfs_acl_t *aclp, void *acep, uint32_t access_mask,
 	aclp->z_ops->ace_mask_set(acep, access_mask);
 	aclp->z_ops->ace_type_set(acep, access_type);
 	aclp->z_ops->ace_flags_set(acep, entry_type);
-	if ((type != ACE_OWNER && type != OWNING_GROUP &&
-	    type != ACE_EVERYONE))
+	if (type != ACE_OWNER && type != OWNING_GROUP &&
+	    type != ACE_EVERYONE)
 		aclp->z_ops->ace_who_set(acep, fuid);
+	else
+		aclp->z_ops->ace_who_set(acep, (uint64_t)-1);
 }
 
 /*
