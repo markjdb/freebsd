@@ -206,6 +206,7 @@ vdev_file_io_intr(zio_t *zio)
 	zio_delay_interrupt(zio);
 }
 
+#include <sys/msan.h>
 static void
 vdev_file_io_strategy(void *arg)
 {
@@ -231,6 +232,7 @@ vdev_file_io_strategy(void *arg)
 		abd_return_buf_copy(zio->io_abd, buf, size);
 	} else {
 		buf = abd_borrow_buf_copy(zio->io_abd, size);
+		kmsan_check(buf, size, "fileio");
 		err = zfs_file_pwrite(vf->vf_file, buf, size, off, &resid);
 		abd_return_buf(zio->io_abd, buf, size);
 	}
