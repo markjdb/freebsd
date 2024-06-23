@@ -489,6 +489,8 @@ contigmalloc_domainset(unsigned long size, struct malloc_type *type,
 void
 contigfree(void *addr, unsigned long size, struct malloc_type *type)
 {
+	KASSERT(round_page(size) >= size,
+	    ("contigfree: size %#lx overflow", size));
 
 	kmem_free(addr, size);
 	malloc_type_freed(type, round_page(size));
@@ -581,12 +583,15 @@ malloc_large_size(uma_slab_t slab)
 }
 
 static caddr_t __noinline
-malloc_large(size_t size, struct malloc_type *mtp, struct domainset *policy,
+malloc_large(size_t _size, struct malloc_type *mtp, struct domainset *policy,
     int flags DEBUG_REDZONE_ARG_DEF)
 {
 	void *va;
+	size_t size;
 
-	size = roundup(size, PAGE_SIZE);
+	size = round_page(_size);
+	if (__predict_false(size < _size))
+		return (NULL);
 	va = kmem_malloc_domainset(policy, size, flags);
 	if (va != NULL) {
 		/* The low bit is unused for slab pointers. */
@@ -1061,10 +1066,14 @@ reallocf(void *addr, size_t size, struct malloc_type *mtp, int flags)
  * 		     specified size
  */
 size_t
-malloc_size(size_t size)
+malloc_size(size_t _size)
 {
+	size_t size;
 	int indx;
 
+	size = round_page(_size);
+	if (size < _size)
+		return (0);
 	if (size > kmem_zmax)
 		return (round_page(size));
 	if (size & KMEM_ZMASK)
