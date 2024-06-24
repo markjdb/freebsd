@@ -518,7 +518,7 @@ kmem_malloc_domainset(struct domainset *ds, vm_size_t size, int flags)
 
 	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
 	do {
-		addr = kmem_malloc_domain(domain, size, flags);
+		addr = kmem_malloc_domain(domain, asize, flags);
 		if (addr != NULL)
 			break;
 	} while (vm_domainset_iter_policy(&di, &domain) == 0);
