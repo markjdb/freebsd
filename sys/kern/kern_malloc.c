@@ -490,7 +490,7 @@ void
 contigfree(void *addr, unsigned long size, struct malloc_type *type)
 {
 	KASSERT(round_page(size) >= size,
-	    ("contigfree: size %#zx overflow", size));
+	    ("contigfree: size %#lx overflow", size));
 
 	kmem_free(addr, size);
 	malloc_type_freed(type, round_page(size));
