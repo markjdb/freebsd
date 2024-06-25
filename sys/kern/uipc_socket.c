@@ -1520,6 +1520,7 @@ static int
 so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 {
 	struct so_splice *sp;
+	int error;
 
 	if (splice->sp_max < 0)
 		return (EINVAL);
@@ -1530,20 +1531,29 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	if (so->so_vnet != so2->so_vnet)
 		return (EINVAL);
 
+	/* so_splice_xfer() assumes that we're using these implementations. */
+	KASSERT(so->so_proto->pr_sosend == sosend_generic,
+	    ("so_splice: sosend not sosend_generic"));
+	KASSERT(so2->so_proto->pr_soreceive == soreceive_generic ||
+	    so2->so_proto->pr_soreceive == soreceive_stream,
+	    ("so_splice: soreceive not soreceive_generic/stream"));
+
 	sp = so_splice_alloc(splice->sp_max);
 	sp->src = so;
 	sp->dst = so2;
 
+	error = 0;
 	SOCK_LOCK(so);
-	if (SOLISTENING(so)) {
+	if (SOLISTENING(so))
+		error = EINVAL;
+	else if ((so->so_state & (SS_ISCONNECTED | SS_ISCONNECTING)) == 0)
+		error = ENOTCONN;
+	else if (so->so_splice != NULL)
+		error = EBUSY;
+	if (error != 0) {
 		SOCK_UNLOCK(so);
 		uma_zfree(splice_zone, sp);
-		return (EINVAL);
-	}
-	if (so->so_splice != NULL) {
-		SOCK_UNLOCK(so);
-		uma_zfree(splice_zone, sp);
-		return (EBUSY);
+		return (error);
 	}
 	soref(so);
 	so->so_splice = sp;
@@ -1552,8 +1562,15 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	SOCK_RECVBUF_UNLOCK(so);
 	SOCK_UNLOCK(so);
 
+	error = 0;
 	SOCK_LOCK(so2);
-	if (so2->so_splice_back != NULL) {
+	if (SOLISTENING(so2))
+		error = EINVAL;
+	else if ((so2->so_state & (SS_ISCONNECTED | SS_ISCONNECTING)) == 0)
+		error = ENOTCONN;
+	else if (so2->so_splice_back != NULL)
+		error = EBUSY;
+	if (error != 0) {
 		SOCK_UNLOCK(so2);
 		SOCK_LOCK(so);
 		so->so_splice = NULL;
@@ -1563,7 +1580,7 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 		SOCK_UNLOCK(so);
 		sorele(so);
 		uma_zfree(splice_zone, sp);
-		return (EBUSY);
+		return (error);
 	}
 	soref(so2);
 	so2->so_splice_back = sp;
