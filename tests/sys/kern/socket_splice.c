@@ -84,6 +84,18 @@ nspliced(int sd)
 	return (n);
 }
 
+static void
+splice_init(struct splice *sp, int fd, off_t max, struct timeval *tv)
+{
+	memset(sp, 0, sizeof(*sp));
+	sp->sp_fd = fd;
+	sp->sp_max = max;
+	if (tv != NULL)
+		sp->sp_idle = *tv;
+	else
+		sp->sp_idle.tv_sec = sp->sp_idle.tv_usec = 0;
+}
+
 /*
  * A structure representing a spliced pair of connections.  left[1] is
  * bidirectionally spliced with right[0].
@@ -106,21 +118,14 @@ splice_conn_init_limits(struct splice_conn *sc, off_t max, struct timeval *tv)
 	int error;
 
 	memset(sc, 0, sizeof(*sc));
-
 	tcp_socketpair(sc->left);
 	tcp_socketpair(sc->right);
 
-	sp.sp_fd = sc->right[0];
-	sp.sp_max = max;
-	if (tv != NULL)
-		sp.sp_idle = *tv;
-	else
-		sp.sp_idle.tv_sec = sp.sp_idle.tv_usec = 0;
-
+	splice_init(&sp, sc->right[0], max, tv);
 	error = setsockopt(sc->left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
 	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
 
-	sp.sp_fd = sc->left[1];
+	splice_init(&sp, sc->left[1], max, tv);
 	error = setsockopt(sc->right[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
 	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
 }
@@ -191,8 +196,49 @@ ATF_TC_BODY(splice_basic, tc)
 	splice_conn_fini(&sc);
 }
 
+/*
+ * Make sure that listen() fails on spliced sockets, and that SO_SPLICE can't be
+ * used with listening sockets.
+ */
+ATF_TC_WITHOUT_HEAD(splice_listen);
+ATF_TC_BODY(splice_listen, tc)
+{
+	struct splice sp;
+	struct splice_conn sc;
+	int error, sd[3];
+
+	/*
+	 * These should fail regardless since the sockets are connected, but it
+	 * doesn't hurt to check.
+	 */
+	splice_conn_init(&sc);
+	error = listen(sc.left[1], 1);
+	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
+	error = listen(sc.right[0], 1);
+	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
+	splice_conn_fini(&sc);
+
+	tcp_socketpair(sd);
+	sd[2] = socket(PF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(sd[2] >= 0, "socket failed: %s", strerror(errno));
+	error = listen(sd[2], 1);
+	ATF_REQUIRE_MSG(error == 0, "listen failed: %s", strerror(errno));
+
+	splice_init(&sp, sd[2], 0, NULL);
+	error = setsockopt(sd[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
+	splice_init(&sp, sd[1], 0, NULL);
+	error = setsockopt(sd[2], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
+
+	checked_close(sd[0]);
+	checked_close(sd[1]);
+	checked_close(sd[2]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, splice_basic);
+	ATF_TP_ADD_TC(tp, splice_listen);
 	return (atf_no_error());
 }
