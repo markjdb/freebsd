@@ -75,10 +75,15 @@ dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
 	state.pc = (uintptr_t)dtrace_getpcstack;
 
 	while (depth < pcstack_limit) {
-		if (!unwind_frame(curthread, &state))
+		printf("%s:%d aframes %d pc %#lx\n", __func__, __LINE__, aframes, state.pc);
+		if (!unwind_frame(curthread, &state)) {
+			printf("%s:%d\n", __func__, __LINE__);
 			break;
-		if (!INKERNEL(state.pc))
+		}
+		if (!INKERNEL(state.pc)) {
+			printf("%s:%d\n", __func__, __LINE__);
 			break;
+		}
 
 		/*
 		 * NB: Unlike some other architectures, we don't need to
