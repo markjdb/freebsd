@@ -4,6 +4,7 @@
  * Copyright (c) 2024 Stormshield
  */
 
+#include <sys/capsicum.h>
 #include <sys/filio.h>
 #include <sys/socket.h>
 
@@ -96,6 +97,39 @@ splice_init(struct splice *sp, int fd, off_t max, struct timeval *tv)
 		sp->sp_idle.tv_sec = sp->sp_idle.tv_usec = 0;
 }
 
+static void
+unsplice(int fd)
+{
+	struct splice sp;
+	int error;
+
+	splice_init(&sp, -1, 0, NULL);
+	error = setsockopt(fd, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+}
+
+static void
+unsplice_pair(int fd1, int fd2)
+{
+	unsplice(fd1);
+	unsplice(fd2);
+}
+
+static void
+splice_pair(int fd1, int fd2, off_t max, struct timeval *tv)
+{
+	struct splice sp;
+	int error;
+
+	splice_init(&sp, fd1, max, tv);
+	error = setsockopt(fd2, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+
+	splice_init(&sp, fd2, max, tv);
+	error = setsockopt(fd1, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+}
+
 /*
  * A structure representing a spliced pair of connections.  left[1] is
  * bidirectionally spliced with right[0].
@@ -114,20 +148,11 @@ struct splice_conn {
 static void
 splice_conn_init_limits(struct splice_conn *sc, off_t max, struct timeval *tv)
 {
-	struct splice sp;
-	int error;
 
 	memset(sc, 0, sizeof(*sc));
 	tcp_socketpair(sc->left);
 	tcp_socketpair(sc->right);
-
-	splice_init(&sp, sc->right[0], max, tv);
-	error = setsockopt(sc->left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
-	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
-
-	splice_init(&sp, sc->left[1], max, tv);
-	error = setsockopt(sc->right[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
-	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+	splice_pair(sc->left[1], sc->right[0], max, tv);
 }
 
 static void
@@ -196,6 +221,86 @@ ATF_TC_BODY(splice_basic, tc)
 	splice_conn_fini(&sc);
 }
 
+static void
+remove_rights(int fd, const cap_rights_t *toremove)
+{
+	cap_rights_t rights;
+	int error;
+
+	error = cap_rights_get(fd, &rights);
+	ATF_REQUIRE_MSG(error == 0, "cap_rights_get failed: %s",
+	    strerror(errno));
+	cap_rights_remove(&rights, toremove);
+	error = cap_rights_limit(fd, &rights);
+	ATF_REQUIRE_MSG(error == 0, "cap_rights_limit failed: %s",
+	    strerror(errno));
+}
+
+/*
+ * Verify that splicing fails when the socket is missing the necessary rights.
+ */
+ATF_TC_WITHOUT_HEAD(splice_capsicum);
+ATF_TC_BODY(splice_capsicum, tc)
+{
+	struct splice sp;
+	cap_rights_t rights;
+	off_t n;
+	int error, left[2], right[2];
+
+	tcp_socketpair(left);
+	tcp_socketpair(right);
+
+	/*
+	 * Make sure that we splice a socket that's missing recv rights.
+	 */
+	remove_rights(left[1], cap_rights_init(&rights, CAP_RECV));
+	splice_init(&sp, right[0], 0, NULL);
+	error = setsockopt(left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE, error == -1);
+
+	/* Make sure we can still splice left[1] in the other direction. */
+	splice_init(&sp, left[1], 0, NULL);
+	error = setsockopt(right[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+	splice_init(&sp, -1, 0, NULL);
+	error = setsockopt(right[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+
+	/*
+	 * Now remove send rights from left[1] and verify that splicing is no
+	 * longer possible.
+	 */
+	remove_rights(left[1], cap_rights_init(&rights, CAP_SEND));
+	splice_init(&sp, left[1], 0, NULL);
+	error = setsockopt(right[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE, error == -1);
+
+	/*
+	 * It's still ok to query the SO_SPLICE state though.
+	 */
+	n = -1;
+	error = getsockopt(left[1], SOL_SOCKET, SO_SPLICE, &n,
+	    &(socklen_t){ sizeof(n) });
+	ATF_REQUIRE_MSG(error == 0, "getsockopt failed: %s", strerror(errno));
+	ATF_REQUIRE(n == 0);
+
+	/*
+	 * Make sure that we can unsplice a spliced pair without any rights
+	 * other than CAP_SETSOCKOPT.
+	 */
+	splice_pair(left[0], right[1], 0, NULL);
+	error = cap_rights_limit(left[0],
+	    cap_rights_init(&rights, CAP_SETSOCKOPT));
+	ATF_REQUIRE_MSG(error == 0, "cap_rights_limit failed: %s",
+	    strerror(errno));
+	unsplice(left[0]);
+
+	checked_close(left[0]);
+	checked_close(left[1]);
+	checked_close(right[0]);
+	checked_close(right[1]);
+}
+
 /*
  * Make sure that listen() fails on spliced sockets, and that SO_SPLICE can't be
  * used with listening sockets.
@@ -224,10 +329,20 @@ ATF_TC_BODY(splice_listen, tc)
 	error = listen(sd[2], 1);
 	ATF_REQUIRE_MSG(error == 0, "listen failed: %s", strerror(errno));
 
+	/*
+	 * Make sure a listening socket can't be spliced in either direction.
+	 */
 	splice_init(&sp, sd[2], 0, NULL);
 	error = setsockopt(sd[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
 	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
 	splice_init(&sp, sd[1], 0, NULL);
+	error = setsockopt(sd[2], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
+
+	/*
+	 * Make sure we can't try to unsplice a listening socket.
+	 */
+	splice_init(&sp, -1, 0, NULL);
 	error = setsockopt(sd[2], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
 	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
 
@@ -239,6 +354,7 @@ ATF_TC_BODY(splice_listen, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, splice_basic);
+	ATF_TP_ADD_TC(tp, splice_capsicum);
 	ATF_TP_ADD_TC(tp, splice_listen);
 	return (atf_no_error());
 }
