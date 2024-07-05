@@ -13,6 +13,7 @@
 
 #include <errno.h>
 #include <string.h>
+#include <time.h>
 
 #include <atf-c.h>
 
@@ -334,6 +335,8 @@ ATF_TC_BODY(splice_limit_bytes, tc)
 
 	sofar = nspliced(sc.left[1]);
 	ATF_REQUIRE(sofar == sizeof(buf));
+	sofar = nspliced(sc.right[0]);
+	ATF_REQUIRE(sofar == 0);
 
 	/* Trigger an unsplice by writing the last byte. */
 	b = 'B';
@@ -355,6 +358,59 @@ ATF_TC_BODY(splice_limit_bytes, tc)
 	ATF_REQUIRE(b == 'C');
 
 	splice_conn_check_empty(&sc);
+
+	splice_conn_fini(&sc);
+}
+
+/*
+ * Verify that a splice timeout limit is applied.
+ */
+ATF_TC_WITHOUT_HEAD(splice_limit_timeout);
+ATF_TC_BODY(splice_limit_timeout, tc)
+{
+	struct splice_conn sc;
+	off_t sofar;
+	ssize_t n;
+	int error;
+	uint8_t b, buf[128];
+
+	splice_conn_init_limits(&sc, 0,
+	    &(struct timeval){ .tv_sec = 0, .tv_usec = 500000 /* 500ms */ });
+
+	/* Write some data through the splice. */
+	memset(buf, 'A', sizeof(buf));
+	for (size_t total = sizeof(buf); total > 0; total -= n) {
+		n = write(sc.left[0], buf, total);
+		ATF_REQUIRE_MSG(n > 0, "write failed: %s", strerror(errno));
+	}
+	for (size_t total = sizeof(buf); total > 0; total -= n) {
+		n = read(sc.right[1], buf, sizeof(buf));
+		ATF_REQUIRE_MSG(n > 0, "read failed: %s", strerror(errno));
+	}
+
+	sofar = nspliced(sc.left[1]);
+	ATF_REQUIRE(sofar == sizeof(buf));
+	sofar = nspliced(sc.right[0]);
+	ATF_REQUIRE(sofar == 0);
+
+	/* Wait for the splice to time out. */
+	error = usleep(550000);
+	ATF_REQUIRE_MSG(error == 0, "usleep failed: %s", strerror(errno));
+
+	/* getsockopt(SO_SPLICE) should return 0 for an unspliced socket. */
+	sofar = nspliced(sc.left[1]);
+	ATF_REQUIRE(sofar == 0);
+
+	/*
+	 * The next byte should appear on the other side of the connection
+	 * rather than the splice.
+	 */
+	b = 'C';
+	n = write(sc.left[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.left[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'C');
 
 	splice_conn_fini(&sc);
 }
@@ -414,6 +470,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, splice_basic);
 	ATF_TP_ADD_TC(tp, splice_capsicum);
 	ATF_TP_ADD_TC(tp, splice_limit_bytes);
+	ATF_TP_ADD_TC(tp, splice_limit_timeout);
 	ATF_TP_ADD_TC(tp, splice_listen);
 	return (atf_no_error());
 }
