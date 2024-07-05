@@ -309,9 +309,8 @@ static int splice_bind_threads = 1;
 static uint16_t splice_cpuid_lookup[MAXCPU];
 static struct splice_domain_info splice_domains[MAXMEMDOM];
 
-void so_splice_xfer(struct so_splice *s);
-void so_unsplice_work(struct so_splice *s);
-void so_unsplice(struct socket *so);
+static void so_splice_xfer(struct so_splice *s);
+static int so_unsplice(struct socket *);
 
 static void
 splice_work_thread(void *ctx)
@@ -339,36 +338,31 @@ splice_work_thread(void *ctx)
 		STAILQ_FOREACH_SAFE(s, &local_head, next, s_temp) {
 			mtx_lock(&s->mtx);
 			CURVNET_SET(s->src->so_vnet);
-			if (s->want_free)
-				so_unsplice_work(s);
-			else
-				so_splice_xfer(s);
+			so_splice_xfer(s);
 			CURVNET_RESTORE();
 		}
 	}
 
 }
 
-void splice_enqueue_work(struct so_splice *s, bool want_free);
 void
-splice_enqueue_work(struct so_splice *s, bool want_free)
+so_splice_enqueue_work(struct so_splice *sp)
 {
 	struct splice_wq *wq;
-	bool running, queued;
+	bool running;
 
-	mtx_lock(&s->mtx);
-	queued = s->queued;
-	if (want_free)
-		s->want_free = true;
-	if (!queued)
-		s->queued = true;
-	mtx_unlock(&s->mtx);
-	if (queued)
+	mtx_assert(&sp->mtx, MA_OWNED);
+
+	if (sp->state != SPLICE_IDLE) {
+		mtx_unlock(&sp->mtx);
 		return;
+	}
+	sp->state = SPLICE_QUEUED;
+	mtx_unlock(&sp->mtx);
 
-	wq = &splice_wq[s->wq_index];
+	wq = &splice_wq[sp->wq_index];
 	mtx_lock(&wq->mtx);
-	STAILQ_INSERT_TAIL(&wq->head, s, next);
+	STAILQ_INSERT_TAIL(&wq->head, sp, next);
 	running = wq->running;
 	mtx_unlock(&wq->mtx);
 	if (!running)
@@ -467,7 +461,8 @@ splice_init(void)
 }
 
 /*
- * Lock a pair of socket's I/O locks for splicing.
+ * Lock a pair of socket's I/O locks for splicing.  Avoid blocking while holding
+ * one lock in order to avoid deadlocks.
  */
 static void
 splice_lock_pair(struct socket *so_src, struct socket *so_dst)
@@ -504,7 +499,11 @@ splice_unlock_pair(struct socket *so_src, struct socket *so_dst)
 	SOCK_IO_SEND_UNLOCK(so_dst);
 }
 
-void
+/*
+ * Transfer data from the source to the sink.  This is only ever called from one
+ * thread for a given spliced pair of sockets.
+ */
+static void
 so_splice_xfer(struct so_splice *sp)
 {
 	struct uio uio;
@@ -514,13 +513,19 @@ so_splice_xfer(struct so_splice *sp)
 	off_t max;
 	size_t len;
 	int error;
+	bool unsplice;
 
-	KASSERT(!sp->want_free, ("so_splice_xfer: want free"));
-	KASSERT(!sp->dead, ("so_splice_xfer: dead splice"));
+	KASSERT(sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
+	    ("so_splice_xfer: invalid state %d", sp->state));
 	KASSERT(sp->max != 0, ("so_splice_xfer: max == 0"));
 	mtx_assert(&sp->mtx, MA_OWNED);
 
-	sp->queued = false;
+	if (sp->state == SPLICE_CLOSING) {
+		/* Userspace asked us to close the splice. */
+		goto closing;
+	}
+
+	sp->state = SPLICE_RUNNING;
 	max = sp->max > 0 ? sp->max - sp->sent : OFF_MAX;
 	mtx_unlock(&sp->mtx);
 
@@ -529,38 +534,72 @@ so_splice_xfer(struct so_splice *sp)
 	so_dst = sp->dst;
 	sb_dst = &so_dst->so_snd;
 
+	error = 0;
 	m = NULL;
 	memset(&uio, 0, sizeof(uio));
 
+	/*
+	 * Lock the sockets in order to block userspace from doing anything
+	 * sneaky.  If an error occurs or one of the sockets can no longer
+	 * transfer data, we will automatically unsplice.
+	 */
 	splice_lock_pair(so_src, so_dst);
 	len = MIN(max, MIN(sbspace(sb_dst), sbavail(sb_src)));
 	if (len == 0) {
-		splice_unlock_pair(so_src, so_dst);
-		return;
+		SOCK_RECVBUF_LOCK(so_src);
+		if ((so_src->so_rcv.sb_state & SBS_CANTRCVMORE) != 0)
+			error = EPIPE;
+		SOCK_RECVBUF_UNLOCK(so_src);
+	} else {
+		uio.uio_resid = len;
+		error = soreceive_stream_locked(so_src, sb_src, NULL, &uio, &m,
+		    NULL, MSG_DONTWAIT);
+		if (error != 0 && m != NULL) {
+			m_freem(m);
+			m = NULL;
+		}
 	}
-
-	uio.uio_resid = len;
-	error = soreceive_stream_locked(so_src, sb_src, NULL, &uio, &m, NULL,
-	    MSG_DONTWAIT);
-	if (error != 0) {
-		splice_unlock_pair(so_src, so_dst);
-		printf("%s:%d error %d\n", __func__, __LINE__, error);
-		return;
+	if (m != NULL) {
+		error = sosend_generic_locked(so_dst, NULL, NULL, m, NULL,
+		    MSG_DONTWAIT, curthread);
+	} else if (error == 0) {
+		SOCK_SENDBUF_LOCK(so_dst);
+		if ((so_dst->so_snd.sb_state & SBS_CANTSENDMORE) != 0)
+			error = EPIPE;
+		SOCK_SENDBUF_UNLOCK(so_dst);
 	}
-	SOCK_IO_RECV_UNLOCK(so_src);
-
-	error = sosend_generic_locked(so_dst, NULL, NULL, m, NULL, MSG_DONTWAIT,
-	    curthread);
-	if (error != 0) {
-		SOCK_IO_SEND_UNLOCK(so_dst);
-		printf("%s:%d error %d\n", __func__, __LINE__, error);
-		return;
-	}
+	splice_unlock_pair(so_src, so_dst);
 
 	mtx_lock(&sp->mtx);
-	SOCK_IO_SEND_UNLOCK(so_dst);
-	sp->sent += len;
+	if (error == 0)
+		sp->sent += len;
+	switch (sp->state) {
+	case SPLICE_CLOSING:
+closing:
+		sp->state = SPLICE_CLOSED;
+		wakeup(sp);
+		unsplice = false;
+		break;
+	case SPLICE_RUNNING:
+		if (error != 0 || (sp->max > 0 && sp->sent >= sp->max)) {
+			sp->state = SPLICE_EXCEPTION;
+			unsplice = true;
+			soref(so_src);
+		} else {
+			/* XXX-MJ need to requeue here? */
+			sp->state = SPLICE_IDLE;
+			unsplice = false;
+		}
+		break;
+	default:
+		__assert_unreachable();
+	}
 	mtx_unlock(&sp->mtx);
+
+	if (unsplice) {
+		(void)so_unsplice(so_src);
+		sorele(so_src);
+	}
 }
 
 static void
@@ -1509,8 +1548,16 @@ so_splice_alloc(off_t max)
 	sp->max = max > 0 ? max : -1;
 	sp->sent = 0;
 	sp->wq_index = 0;
-	sp->queued = sp->want_free = sp->dead = false;
+	sp->state = SPLICE_IDLE;
 	return (sp);
+}
+
+static void
+so_splice_free(struct so_splice *sp)
+{
+	KASSERT(sp->state == SPLICE_CLOSED,
+	    ("so_splice_free: sp %p not closed", sp));
+	uma_zfree(splice_zone, sp);
 }
 
 /*
@@ -1590,60 +1637,85 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	SOCK_UNLOCK(so2);
 
 	mtx_lock(&sp->mtx);
+	sp->state = SPLICE_QUEUED;	/* satisfy an assertion */
 	so_splice_xfer(sp);
 	return (0);
 }
 
-void
-so_unsplice_work(struct so_splice *s)
-{
-	struct socket *so, *so2;
-
-
-	KASSERT(!s->dead, ("unsplice dead splice\n"));
-	s->dead = true;
-	so = s->src;
-	so2 = s->dst;
-	mtx_unlock(&s->mtx);
-
-
-	SOCK_BUF_LOCK(so, SO_RCV);
-	if (!isspliced(so)) {
-		printf("unsplice of unspliced %p\n", so);
-		SOCK_BUF_UNLOCK(so, SO_RCV);
-		return;
-	}
-	so->so_rcv.sb_flags &= ~SB_SPLICED;
-	so->so_splice = NULL;
-	SOCK_BUF_UNLOCK(so, SO_RCV);
-
-
-	SOCK_BUF_LOCK(so2, SO_SND);
-	if (issplicedback(so2)) {
-		so2->so_snd.sb_flags &= ~SB_SPLICED;
-		so2->so_splice_back = NULL;
-	}
-	SOCK_BUF_UNLOCK(so2, SO_SND);
-
-	seldrain(&so->so_rdsel);
-//	printf("wakeup rx %p, flags 0x%x\n",
-//	    so, so->so_rcv.sb_flags);
-	sorwakeup(so);
-//	printf("wakeup tx %p, flags 0x%x\n",
-//	    so2, so2->so_snd.sb_flags);
-	sowwakeup(so2);
-//	printf("releasing %p %p\n", so, so2);
-	sorele(so2);
-	sorele(so);
-	uma_zfree(splice_zone, s);
-}
-
-void
+static int
 so_unsplice(struct socket *so)
 {
-	splice_enqueue_work(so->so_splice, true);
-}
+	struct socket *so2;
+	struct so_splice *sp;
 
+	/*
+	 * First unset SB_SPLICED and hide the splice structure so that
+	 * wakeup routines will stop enqueuing work.  This also ensures that
+	 * a only a single thread will proceed with the unsplice.
+	 */
+	SOCK_LOCK(so);
+	if (SOLISTENING(so)) {
+		SOCK_UNLOCK(so);
+		return (EINVAL);
+	}
+	SOCK_RECVBUF_LOCK(so);
+	if ((so->so_rcv.sb_flags & SB_SPLICED) == 0) {
+		SOCK_RECVBUF_UNLOCK(so);
+		SOCK_UNLOCK(so);
+		return (ENOTCONN);
+	}
+	so->so_rcv.sb_flags &= ~SB_SPLICED;
+	sp = so->so_splice;
+	so->so_splice = NULL;
+	SOCK_RECVBUF_UNLOCK(so);
+	SOCK_UNLOCK(so);
+
+	so2 = sp->dst;
+	SOCK_LOCK(so2);
+	KASSERT(!SOLISTENING(so2), ("%s: so2 is listening", __func__));
+	SOCK_SENDBUF_LOCK(so2);
+	KASSERT((so2->so_snd.sb_flags & SB_SPLICED) != 0,
+	    ("%s: so2 is not spliced", __func__));
+	KASSERT(so2->so_splice_back == sp,
+	    ("%s: so_splice_back != sp", __func__));
+	so2->so_snd.sb_flags &= ~SB_SPLICED;
+	so2->so_splice_back = NULL;
+	SOCK_SENDBUF_UNLOCK(so2);
+	SOCK_UNLOCK(so2);
+
+	/*
+	 * No new work is being enqueued.  The worker thread might be
+	 * splicing data right now, in which case we want to wait for it to
+	 * finish before proceeding.
+	 */
+	mtx_lock(&sp->mtx);
+	switch (sp->state) {
+	case SPLICE_QUEUED:
+	case SPLICE_RUNNING:
+		sp->state = SPLICE_CLOSING;
+		while (sp->state == SPLICE_CLOSING)
+			msleep(sp, &sp->mtx, PSOCK, "unsplice", 0);
+		break;
+	case SPLICE_IDLE:
+	case SPLICE_EXCEPTION:
+		sp->state = SPLICE_CLOSED;
+		break;
+	default:
+		__assert_unreachable();
+	}
+	mtx_unlock(&sp->mtx);
+
+	/*
+	 * Now we hold the sole reference to the splice structure.
+	 * Clean up: signal userspace and release socket references.
+	 */
+	sorwakeup(so);
+	sorele(so);
+	sowwakeup(so2);
+	sorele(so2);
+	so_splice_free(sp);
+	return (0);
+}
 
 /*
  * Free socket upon release of the very last reference.
@@ -1662,6 +1734,8 @@ sofree(struct socket *so)
 	    ("%s: so %p rcvbuf is spliced", __func__, so));
 	KASSERT(SOLISTENING(so) || (so->so_snd.sb_flags & SB_SPLICED) == 0,
 	    ("%s: so %p sndbuf is spliced", __func__, so));
+	KASSERT(so->so_splice == NULL && so->so_splice_back == NULL,
+	    ("%s: so %p has spliced data", __func__, so));
 
 	SOCK_UNLOCK(so);
 
@@ -3753,8 +3827,6 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 
 		case SO_SPLICE: {
 			struct splice splice;
-			struct file *fp;
-			struct socket *so2;
 
 			error = sooptcopyin(sopt, &splice, sizeof(splice),
 			    sizeof(splice));
@@ -3765,13 +3837,15 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 			if (error != 0)
 				goto bad;
 
-			if (!cap_rights_contains(sopt->sopt_rights,
-			    &cap_recv_rights)) {
-				error = ENOTCAPABLE;
-				goto bad;
-			}
-
 			if (splice.sp_fd >= 0) {
+				struct file *fp;
+				struct socket *so2;
+
+				if (!cap_rights_contains(sopt->sopt_rights,
+				    &cap_recv_rights)) {
+					error = ENOTCAPABLE;
+					goto bad;
+				}
 				error = getsock(sopt->sopt_td, splice.sp_fd,
 				    &cap_send_rights, &fp);
 				if (error != 0)
@@ -3780,12 +3854,8 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 
 				error = so_splice(so, so2, &splice);
 				fdrop(fp, sopt->sopt_td);
-				if (error)
-					goto bad;
 			} else {
-				/* OpenBSD unsplices in this case. */
-				error = EBADF;
-				goto bad;
+				error = so_unsplice(so);
 			}
 			break;
 		}
@@ -4009,16 +4079,20 @@ integer:
 			goto integer;
 
 		case SO_SPLICE: {
+			struct so_splice *sp;
 			off_t n;
 
 			if (SOLISTENING(so)) {
 				n = 0;
 			} else {
 				SOCK_RECVBUF_LOCK(so);
-				if (so->so_splice == NULL)
+				if ((sp = so->so_splice) == NULL) {
 					n = 0;
-				else
+				} else {
+					mtx_lock(&sp->mtx);
 					n = so->so_splice->sent;
+					mtx_unlock(&sp->mtx);
+				}
 				SOCK_RECVBUF_UNLOCK(so);
 			}
 			error = sooptcopyout(sopt, &n, sizeof(n));
@@ -4549,10 +4623,6 @@ soisdisconnecting(struct socket *so)
 		socantrcvmore_locked(so);
 		SOCK_SENDBUF_LOCK(so);
 		socantsendmore_locked(so);
-		if (isspliced(so))
-			so_unsplice(so);
-//		if (issplicedback(so))
-//			so_unsplice(so->so_splice_back->src);
 	}
 	SOCK_UNLOCK(so);
 	wakeup(&so->so_timeo);

@@ -79,9 +79,14 @@ struct so_splice {
 	off_t sent;		/* number of bytes sent so far */
 	struct mtx mtx;
 	unsigned int wq_index;
-	bool queued;
-	bool want_free;
-	bool dead;
+	enum so_splice_state {
+		SPLICE_IDLE,	/* waiting for work to arrive */
+		SPLICE_QUEUED,	/* a wakeup has queued some work */
+		SPLICE_RUNNING,	/* currently transferring data */
+		SPLICE_CLOSING,	/* waiting for work to drain */
+		SPLICE_CLOSED,	/* unsplicing, terminal state */
+		SPLICE_EXCEPTION, /* I/O error or limit, implicit unsplice */
+	} state;
 	STAILQ_ENTRY(so_splice) next;
 };
 
@@ -567,6 +572,11 @@ void	soroverflow(struct socket *so);
 void	soroverflow_locked(struct socket *so);
 int	soiolock(struct socket *so, struct sx *sx, int flags);
 void	soiounlock(struct sx *sx);
+
+/*
+ * Socket splicing routines.
+ */
+void	so_splice_enqueue_work(struct so_splice *sp);
 
 /*
  * Accept filter functions (duh).

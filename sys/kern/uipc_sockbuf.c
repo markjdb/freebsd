@@ -508,101 +508,32 @@ sowakeup(struct socket *so, const sb_which which)
 	SOCK_BUF_UNLOCK_ASSERT(so, which);
 }
 
-static int
-not_splicable(struct socket *so, short sb_flags, bool src)
-{
-	int state = so->so_state;
-
-	if ((sb_flags & SB_SPLICED) == 0) {
-		printf("not spliceable: %x\n", src);
-		return (1);
-	}
-
-	/* we only care if the sink is connected */
-	if (src)
-		return (0);
-
-	/* XXX-MJ locking */
-	if ((state & SS_ISCONNECTING) != 0 || (state & SS_ISCONNECTED) == 0)
-		return (1);
-	return (0);
-}
-
-void so_unsplice(struct socket *so);
-void so_splice_xfer(struct so_splice *so_splice);
-void splice_enqueue_work(struct so_splice *s, bool free);
-
-static bool so_splice_direct = false;
-SYSCTL_BOOL(_kern_ipc, OID_AUTO, so_splice_direct, CTLFLAG_RWTUN,
-    &so_splice_direct, 0,
-    "Perform socket splice work in the current thread");
-
 static void
-splice_push(struct socket *so_src)
+splice_push(struct socket *so)
 {
-	struct so_splice *sp = so_src->so_splice;
-	struct socket *so_dst = sp->dst;
-	struct sockbuf *dst = &so_dst->so_snd;
-	struct sockbuf *src = &so_src->so_rcv;
-	bool unsplice = false;
+	struct so_splice *sp;
 
-//	printf("push: %p %p\n", so_src, so_dst);
-	SOCKBUF_LOCK_ASSERT(src);
-	if (not_splicable(so_src, src->sb_flags, true) ||
-	    not_splicable(so_dst, dst->sb_flags, false)) {
-		SOCKBUF_UNLOCK(src);
-		return;
-	}
-	if (src->sb_state & SBS_CANTRCVMORE && sbavail(src) == 0)
-		unsplice = true;
-	SOCKBUF_UNLOCK(src);
+	SOCK_RECVBUF_LOCK_ASSERT(so);
 
+	sp = so->so_splice;
 	mtx_lock(&sp->mtx);
-	if (!unsplice && (sp->queued || sp->dead || sp->want_free)) {
-		mtx_unlock(&sp->mtx);
-		return;
-	}
-	if (!so_splice_direct || unsplice || sp->want_free) {
-		mtx_unlock(&sp->mtx);
-		splice_enqueue_work(sp, unsplice);
-		return;
-	}
-	sp->queued = 1;
-	so_splice_xfer(sp); /* unlocks sp */
+	SOCK_RECVBUF_UNLOCK(so);
+	so_splice_enqueue_work(sp);
 }
 
 static void
-splice_pull(struct socket *so_dst)
+splice_pull(struct socket *so)
 {
-	struct socket *so_src = so_dst->so_splice_back->src;
-	struct so_splice *sp = so_src->so_splice;
-	struct sockbuf *dst = &so_dst->so_snd;
-	struct sockbuf *src = &so_src->so_rcv;
+	struct so_splice *sp;
 
+	SOCK_SENDBUF_LOCK_ASSERT(so);
 
-//	printf("pull: %p %p\n", so_src, so_dst);
-	SOCKBUF_LOCK_ASSERT(dst);
-	if (not_splicable(so_src, src->sb_flags, true) ||
-	    not_splicable(so_dst, dst->sb_flags, false)) {
-		SOCKBUF_UNLOCK(dst);
-		return;
-	}
-	SOCKBUF_UNLOCK(dst);
-
+	sp = so->so_splice_back;
 	mtx_lock(&sp->mtx);
-	if (sp->queued || sp->dead || sp->want_free) {
-		mtx_unlock(&sp->mtx);
-		return;
-	}
-	if (!so_splice_direct) {
-		mtx_unlock(&sp->mtx);
-		splice_enqueue_work(sp, false);
-		return;
-	}
-	sp->queued = 1;
-	so_splice_xfer(sp); /* unlocks sp */
-
+	SOCK_SENDBUF_UNLOCK(so);
+	so_splice_enqueue_work(sp);
 }
+
 /*
  * Do we need to notify the other side when I/O is possible?
  */
