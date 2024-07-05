@@ -890,6 +890,7 @@ socreate(int dom, struct socket **aso, int type, int proto,
 		so->so_snd.sb_mtx = &so->so_snd_mtx;
 		so->so_rcv.sb_mtx = &so->so_rcv_mtx;
 	}
+	refcount_init(&so->so_count, 1);
 	/*
 	 * Auto-sizing of socket buffers is managed by the protocols and
 	 * the appropriate flags must be set in the pru_attach function.
@@ -898,10 +899,9 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	error = prp->pr_attach(so, proto, td);
 	CURVNET_RESTORE();
 	if (error) {
-		sodealloc(so);
+		sorele(so);
 		return (error);
 	}
-	soref(so);
 	*aso = so;
 	return (0);
 }
