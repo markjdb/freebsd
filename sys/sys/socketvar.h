@@ -345,7 +345,11 @@ soeventmtx(struct socket *so, const sb_which which)
  * Note that you must still explicitly close the socket, but the last ref
  * count will free the structure.
  */
-#define	soref(so)	refcount_acquire(&(so)->so_count)
+#define	soref(so) do {							\
+	u_int __old __diagused;						\
+	__old = refcount_acquire(&(so)->so_count);			\
+	KASSERT(__old > 0, ("%s: refcount is 0", __func__));		\
+} while (0)
 #define	sorele(so) do {							\
 	SOCK_UNLOCK_ASSERT(so);						\
 	if (!refcount_release_if_not_last(&(so)->so_count)) {		\

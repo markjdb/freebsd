@@ -576,7 +576,7 @@ socreate(int dom, struct socket **aso, int type, int proto,
 		sodealloc(so);
 		return (error);
 	}
-	soref(so);
+	refcount_init(&so->so_count, 1);
 	*aso = so;
 	return (0);
 }
