@@ -309,8 +309,9 @@ static int splice_bind_threads = 1;
 static uint16_t splice_cpuid_lookup[MAXCPU];
 static struct splice_domain_info splice_domains[MAXMEMDOM];
 
+static void so_splice_timeout(void *arg, int pending);
 static void so_splice_xfer(struct so_splice *s);
-static int so_unsplice(struct socket *);
+static int so_unsplice(struct socket *so, bool timeout);
 
 static void
 splice_work_thread(void *ctx)
@@ -597,7 +598,7 @@ closing:
 	mtx_unlock(&sp->mtx);
 
 	if (unsplice) {
-		(void)so_unsplice(so_src);
+		(void)so_unsplice(so_src, false);
 		sorele(so_src);
 	}
 }
@@ -1549,6 +1550,8 @@ so_splice_alloc(off_t max)
 	sp->sent = 0;
 	sp->wq_index = 0;
 	sp->state = SPLICE_IDLE;
+	TIMEOUT_TASK_INIT(taskqueue_thread, &sp->timeout, 0, so_splice_timeout,
+	    sp);
 	return (sp);
 }
 
@@ -1558,6 +1561,15 @@ so_splice_free(struct so_splice *sp)
 	KASSERT(sp->state == SPLICE_CLOSED,
 	    ("so_splice_free: sp %p not closed", sp));
 	uma_zfree(splice_zone, sp);
+}
+
+static void
+so_splice_timeout(void *arg, int pending __unused)
+{
+	struct so_splice *sp;
+
+	sp = arg;
+	(void)so_unsplice(sp->src, true);
 }
 
 /*
@@ -1633,20 +1645,26 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	so2->so_splice_back = sp;
 	SOCK_SENDBUF_LOCK(so2);
 	so2->so_snd.sb_flags |= SB_SPLICED;
+	mtx_lock(&sp->mtx);
 	SOCK_SENDBUF_UNLOCK(so2);
 	SOCK_UNLOCK(so2);
 
-	mtx_lock(&sp->mtx);
+	if (splice->sp_idle.tv_sec != 0 || splice->sp_idle.tv_usec != 0) {
+		taskqueue_enqueue_timeout_sbt(taskqueue_thread, &sp->timeout,
+		    tvtosbt(splice->sp_idle), 0, C_PREL(4));
+	}
+
 	sp->state = SPLICE_QUEUED;	/* satisfy an assertion */
 	so_splice_xfer(sp);
 	return (0);
 }
 
 static int
-so_unsplice(struct socket *so)
+so_unsplice(struct socket *so, bool timeout)
 {
 	struct socket *so2;
 	struct so_splice *sp;
+	bool drain;
 
 	/*
 	 * First unset SB_SPLICED and hide the splice structure so that
@@ -1703,7 +1721,15 @@ so_unsplice(struct socket *so)
 	default:
 		__assert_unreachable();
 	}
+	if (!timeout) {
+		drain = taskqueue_cancel_timeout(taskqueue_thread, &sp->timeout,
+		    NULL) != 0;
+	} else {
+		drain = false;
+	}
 	mtx_unlock(&sp->mtx);
+	if (drain)
+		taskqueue_drain_timeout(taskqueue_thread, &sp->timeout);
 
 	/*
 	 * Now we hold the sole reference to the splice structure.
@@ -3855,7 +3881,7 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 				error = so_splice(so, so2, &splice);
 				fdrop(fp, sopt->sopt_td);
 			} else {
-				error = so_unsplice(so);
+				error = so_unsplice(so, false);
 			}
 			break;
 		}
