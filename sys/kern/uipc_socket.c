@@ -3135,14 +3135,12 @@ soreceive_stream_locked(struct socket *so, struct sockbuf *sb,
 	int len = 0, error = 0, oresid;
 	struct mbuf *m, *n = NULL;
 
-	SOCKBUF_LOCK(sb);
 	/* Easy one, no space to copyout anything. */
-	if (uio->uio_resid == 0) {
-		error = EINVAL;
-		goto out;
-	}
+	if (uio->uio_resid == 0)
+		return (EINVAL);
 	oresid = uio->uio_resid;
 
+	SOCKBUF_LOCK(sb);
 	/* We will never ever get anything unless we are or were connected. */
 	if (!(so->so_state & (SS_ISCONNECTED|SS_ISDISCONNECTED))) {
 		error = ENOTCONN;
