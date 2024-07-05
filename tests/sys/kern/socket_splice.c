@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #include <errno.h>
 #include <string.h>
@@ -47,6 +48,13 @@ tcp_socketpair(int out[2])
 	ATF_REQUIRE_MSG(sd[0] >= 0, "socket failed: %s", strerror(errno));
 	sd[1] = socket(PF_INET, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(sd[1] >= 0, "socket failed: %s", strerror(errno));
+
+	error = setsockopt(sd[0], IPPROTO_TCP, TCP_NODELAY, &(int){ 1 },
+	    sizeof(int));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+	error = setsockopt(sd[1], IPPROTO_TCP, TCP_NODELAY, &(int){ 1 },
+	    sizeof(int));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
 
 	memset(&sin, 0, sizeof(sin));
 	sin.sin_family = AF_INET;
@@ -302,6 +310,56 @@ ATF_TC_BODY(splice_capsicum, tc)
 }
 
 /*
+ * Verify that a splice byte limit is applied.
+ */
+ATF_TC_WITHOUT_HEAD(splice_limit_bytes);
+ATF_TC_BODY(splice_limit_bytes, tc)
+{
+	struct splice_conn sc;
+	off_t sofar;
+	ssize_t n;
+	uint8_t b, buf[128];
+
+	splice_conn_init_limits(&sc, sizeof(buf) + 1, NULL);
+
+	memset(buf, 'A', sizeof(buf));
+	for (size_t total = sizeof(buf); total > 0; total -= n) {
+		n = write(sc.left[0], buf, total);
+		ATF_REQUIRE_MSG(n > 0, "write failed: %s", strerror(errno));
+	}
+	for (size_t total = sizeof(buf); total > 0; total -= n) {
+		n = read(sc.right[1], buf, sizeof(buf));
+		ATF_REQUIRE_MSG(n > 0, "read failed: %s", strerror(errno));
+	}
+
+	sofar = nspliced(sc.left[1]);
+	ATF_REQUIRE(sofar == sizeof(buf));
+
+	/* Trigger an unsplice by writing the last byte. */
+	b = 'B';
+	n = write(sc.left[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.right[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'B');
+
+	/*
+	 * The next byte should appear on the other side of the connection
+	 * rather than the splice.
+	 */
+	b = 'C';
+	n = write(sc.left[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.left[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'C');
+
+	splice_conn_check_empty(&sc);
+
+	splice_conn_fini(&sc);
+}
+
+/*
  * Make sure that listen() fails on spliced sockets, and that SO_SPLICE can't be
  * used with listening sockets.
  */
@@ -355,6 +413,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, splice_basic);
 	ATF_TP_ADD_TC(tp, splice_capsicum);
+	ATF_TP_ADD_TC(tp, splice_limit_bytes);
 	ATF_TP_ADD_TC(tp, splice_listen);
 	return (atf_no_error());
 }
