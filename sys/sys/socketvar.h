@@ -45,6 +45,7 @@ typedef uint64_t so_gen_t;
 #include <sys/osd.h>
 #include <sys/_sx.h>
 #include <sys/sockbuf.h>
+#include <sys/_task.h>
 #ifdef _KERNEL
 #include <sys/caprights.h>
 #include <sys/sockopt.h>
@@ -87,6 +88,7 @@ struct so_splice {
 		SPLICE_CLOSED,	/* unsplicing, terminal state */
 		SPLICE_EXCEPTION, /* I/O error or limit, implicit unsplice */
 	} state;
+	struct timeout_task timeout;
 	STAILQ_ENTRY(so_splice) next;
 };
 
