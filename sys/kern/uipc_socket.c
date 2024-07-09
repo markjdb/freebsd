@@ -463,7 +463,8 @@ splice_init(void)
 
 /*
  * Lock a pair of socket's I/O locks for splicing.  Avoid blocking while holding
- * one lock in order to avoid deadlocks.
+ * one lock in order to avoid potential deadlocks in case there is some other
+ * code path which acquires more than one I/O lock at a time.
  */
 static void
 splice_lock_pair(struct socket *so_src, struct socket *so_dst)
@@ -514,7 +515,6 @@ so_splice_xfer(struct so_splice *sp)
 	off_t max;
 	size_t len;
 	int error;
-	bool unsplice;
 
 	KASSERT(sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
 	    ("so_splice_xfer: invalid state %d", sp->state));
@@ -579,27 +579,34 @@ so_splice_xfer(struct so_splice *sp)
 closing:
 		sp->state = SPLICE_CLOSED;
 		wakeup(sp);
-		unsplice = false;
+		mtx_unlock(&sp->mtx);
 		break;
 	case SPLICE_RUNNING:
 		if (error != 0 || (sp->max > 0 && sp->sent >= sp->max)) {
 			sp->state = SPLICE_EXCEPTION;
-			unsplice = true;
 			soref(so_src);
+			mtx_unlock(&sp->mtx);
+			(void)so_unsplice(so_src, false);
+			sorele(so_src);
 		} else {
-			/* XXX-MJ need to requeue here? */
+			/*
+			 * Locklessly check for additional bytes in the source's
+			 * receive buffer and queue more work if possible.  We
+			 * may end up queuing needless work, but that's ok, and
+			 * if we race with a thread inserting more data into the
+			 * buffer and observe sbavail() == 0, the splice mutex
+			 * ensures that splice_push() will queue more work for
+			 * us.
+			 */
 			sp->state = SPLICE_IDLE;
-			unsplice = false;
+			if (sbavail(sb_src) > 0 && sbspace(sb_dst) > 0)
+				so_splice_enqueue_work(sp);
+			else
+				mtx_unlock(&sp->mtx);
 		}
 		break;
 	default:
 		__assert_unreachable();
-	}
-	mtx_unlock(&sp->mtx);
-
-	if (unsplice) {
-		(void)so_unsplice(so_src, false);
-		sorele(so_src);
 	}
 }
 
