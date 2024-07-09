@@ -12,6 +12,7 @@
 #include <netinet/tcp.h>
 
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -157,7 +158,6 @@ struct splice_conn {
 static void
 splice_conn_init_limits(struct splice_conn *sc, off_t max, struct timeval *tv)
 {
-
 	memset(sc, 0, sizeof(*sc));
 	tcp_socketpair(sc->left);
 	tcp_socketpair(sc->right);
@@ -308,6 +308,89 @@ ATF_TC_BODY(splice_capsicum, tc)
 	checked_close(left[1]);
 	checked_close(right[0]);
 	checked_close(right[1]);
+}
+
+/*
+ * Check various error cases in splice configuration.
+ */
+ATF_TC_WITHOUT_HEAD(splice_error);
+ATF_TC_BODY(splice_error, tc)
+{
+	struct splice_conn sc;
+	struct splice sp;
+	char path[PATH_MAX];
+	int error, fd, sd, usd[2];
+
+	memset(&sc, 0, sizeof(sc));
+	tcp_socketpair(sc.left);
+	tcp_socketpair(sc.right);
+
+	/* A negative byte limit is invalid. */
+	splice_init(&sp, sc.right[0], -3, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
+
+	/* Can't unsplice a never-spliced socket. */
+	splice_init(&sp, -1, 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTCONN, error == -1);
+
+	/* Can't double-unsplice a socket. */
+	splice_init(&sp, sc.right[0], 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+	unsplice(sc.left[1]);
+	splice_init(&sp, -1, 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTCONN, error == -1);
+
+	/* Can't splice a spliced socket */
+	splice_init(&sp, sc.right[0], 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+	splice_init(&sp, sc.right[1], 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EBUSY, error == -1);
+	splice_init(&sp, sc.right[0], 0, NULL);
+	error = setsockopt(sc.left[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EBUSY, error == -1);
+	splice_init(&sp, -1, 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+
+	/* Can't splice to a non-socket. */
+	snprintf(path, sizeof(path), "/tmp/splice_error.XXXXXX");
+	fd = mkstemp(path);
+	ATF_REQUIRE_MSG(fd >= 0, "mkstemp failed: %s", strerror(errno));
+	splice_init(&sp, fd, 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTSOCK, error == -1);
+
+	/* Can't splice to an invalid fd. */
+	checked_close(fd);
+	splice_init(&sp, fd, 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EBADF, error == -1);
+
+	/* Can't splice a unix stream socket. */
+	error = socketpair(AF_UNIX, SOCK_STREAM, 0, usd);
+	ATF_REQUIRE_MSG(error == 0, "socketpair failed: %s", strerror(errno));
+	splice_init(&sp, usd[0], 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EPROTONOSUPPORT, error == -1);
+	error = setsockopt(usd[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(EPROTONOSUPPORT, error == -1);
+	checked_close(usd[0]);
+	checked_close(usd[1]);
+
+	/* Can't splice an unconnected TCP socket. */
+	sd = socket(PF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(sd >= 0, "socket failed: %s", strerror(errno));
+	splice_init(&sp, sd, 0, NULL);
+	error = setsockopt(sc.left[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTCONN, error == -1);
+	splice_init(&sp, sc.right[0], 0, NULL);
+	error = setsockopt(sd, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_ERRNO(ENOTCONN, error == -1);
 }
 
 /*
@@ -469,6 +552,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, splice_basic);
 	ATF_TP_ADD_TC(tp, splice_capsicum);
+	ATF_TP_ADD_TC(tp, splice_error);
 	ATF_TP_ADD_TC(tp, splice_limit_bytes);
 	ATF_TP_ADD_TC(tp, splice_limit_timeout);
 	ATF_TP_ADD_TC(tp, splice_listen);
