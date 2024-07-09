@@ -1586,7 +1586,7 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	/* Handle only TCP for now; TODO: other streaming protos */
 	if (so->so_proto->pr_protocol != IPPROTO_TCP ||
 	    so2->so_proto != so->so_proto)
-		return (EINVAL);
+		return (EPROTONOSUPPORT);
 	if (so->so_vnet != so2->so_vnet)
 		return (EINVAL);
 
