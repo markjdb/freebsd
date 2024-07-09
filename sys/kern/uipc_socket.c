@@ -4935,6 +4935,8 @@ sotoxsocket(struct socket *so, struct xsocket *xso)
 		xso->so_oobmark = so->so_oobmark;
 		sbtoxsockbuf(&so->so_snd, &xso->so_snd);
 		sbtoxsockbuf(&so->so_rcv, &xso->so_rcv);
+		if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
+			xso->so_splice_so = (uintptr_t)so->so_splice->dst;
 	}
 	SOCK_UNLOCK(so);
 }
