@@ -4121,10 +4121,10 @@ integer:
 			struct so_splice *sp;
 			off_t n;
 
+			SOCK_LOCK(so);
 			if (SOLISTENING(so)) {
 				n = 0;
 			} else {
-				SOCK_RECVBUF_LOCK(so);
 				if ((sp = so->so_splice) == NULL) {
 					n = 0;
 				} else {
@@ -4132,8 +4132,8 @@ integer:
 					n = so->so_splice->sent;
 					mtx_unlock(&sp->mtx);
 				}
-				SOCK_RECVBUF_UNLOCK(so);
 			}
+			SOCK_UNLOCK(so);
 			error = sooptcopyout(sopt, &n, sizeof(n));
 			break;
 		}
