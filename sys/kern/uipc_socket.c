@@ -919,7 +919,8 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	error = prp->pr_attach(so, proto, td);
 	CURVNET_RESTORE();
 	if (error) {
-		sorele(so);
+		(void)refcount_release(&so->so_count);
+		sodealloc(so);
 		return (error);
 	}
 	*aso = so;
