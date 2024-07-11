@@ -133,6 +133,17 @@ nspliced(int sd)
 	return (n);
 }
 
+/*
+ * Use a macro so that ATF_REQUIRE_MSG prints a useful line number.
+ */
+#define check_nspliced(sd, n) do {					\
+	off_t sofar;							\
+									\
+	sofar = nspliced(sd);						\
+	ATF_REQUIRE_MSG(sofar == (off_t)n, "spliced %jd bytes, expected %zd", \
+	    (intmax_t)sofar, (intmax_t)n);				\
+} while (0)
+
 static void
 splice_init(struct splice *sp, int fd, off_t max, struct timeval *tv)
 {
@@ -251,8 +262,8 @@ ATF_TC_BODY(splice_basic, tc)
 
 	splice_conn_init(&sc);
 
-	ATF_REQUIRE(nspliced(sc.left[1]) == 0);
-	ATF_REQUIRE(nspliced(sc.right[0]) == 0);
+	check_nspliced(sc.left[1], 0);
+	check_nspliced(sc.right[0], 0);
 
 	/* Left-to-right. */
 	c = 'M';
@@ -261,8 +272,8 @@ ATF_TC_BODY(splice_basic, tc)
 	n = read(sc.right[1], &c, 1);
 	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
 	ATF_REQUIRE_MSG(c == 'M', "unexpected character: %c", c);
-	ATF_REQUIRE(nspliced(sc.left[1]) == 1);
-	ATF_REQUIRE(nspliced(sc.right[0]) == 0);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 0);
 
 	/* Right-to-left. */
 	c = 'J';
@@ -271,8 +282,8 @@ ATF_TC_BODY(splice_basic, tc)
 	n = read(sc.left[0], &c, 1);
 	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
 	ATF_REQUIRE_MSG(c == 'J', "unexpected character: %c", c);
-	ATF_REQUIRE(nspliced(sc.left[1]) == 1);
-	ATF_REQUIRE(nspliced(sc.right[0]) == 1);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 1);
 
 	splice_conn_fini(&sc);
 }
@@ -447,7 +458,6 @@ ATF_TC_WITHOUT_HEAD(splice_limit_bytes);
 ATF_TC_BODY(splice_limit_bytes, tc)
 {
 	struct splice_conn sc;
-	off_t sofar;
 	ssize_t n;
 	uint8_t b, buf[128];
 
@@ -463,10 +473,8 @@ ATF_TC_BODY(splice_limit_bytes, tc)
 		ATF_REQUIRE_MSG(n > 0, "read failed: %s", strerror(errno));
 	}
 
-	sofar = nspliced(sc.left[1]);
-	ATF_REQUIRE(sofar == sizeof(buf));
-	sofar = nspliced(sc.right[0]);
-	ATF_REQUIRE(sofar == 0);
+	check_nspliced(sc.left[1], sizeof(buf));
+	check_nspliced(sc.right[0], 0);
 
 	/* Trigger an unsplice by writing the last byte. */
 	b = 'B';
@@ -499,7 +507,6 @@ ATF_TC_WITHOUT_HEAD(splice_limit_timeout);
 ATF_TC_BODY(splice_limit_timeout, tc)
 {
 	struct splice_conn sc;
-	off_t sofar;
 	ssize_t n;
 	int error;
 	uint8_t b, buf[128];
@@ -518,18 +525,15 @@ ATF_TC_BODY(splice_limit_timeout, tc)
 		ATF_REQUIRE_MSG(n > 0, "read failed: %s", strerror(errno));
 	}
 
-	sofar = nspliced(sc.left[1]);
-	ATF_REQUIRE(sofar == sizeof(buf));
-	sofar = nspliced(sc.right[0]);
-	ATF_REQUIRE(sofar == 0);
+	check_nspliced(sc.left[1], sizeof(buf));
+	check_nspliced(sc.right[0], 0);
 
 	/* Wait for the splice to time out. */
 	error = usleep(550000);
 	ATF_REQUIRE_MSG(error == 0, "usleep failed: %s", strerror(errno));
 
 	/* getsockopt(SO_SPLICE) should return 0 for an unspliced socket. */
-	sofar = nspliced(sc.left[1]);
-	ATF_REQUIRE(sofar == 0);
+	check_nspliced(sc.left[1], 0);
 
 	/*
 	 * The next byte should appear on the other side of the connection
