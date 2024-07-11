@@ -513,7 +513,8 @@ so_splice_xfer(struct so_splice *sp)
 	struct socket *so_src, *so_dst;
 	struct sockbuf *sb_src, *sb_dst;
 	off_t max;
-	size_t len;
+	ssize_t len;
+	long space;
 	int error;
 
 	KASSERT(sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
@@ -545,10 +546,13 @@ so_splice_xfer(struct so_splice *sp)
 	 * transfer data, we will automatically unsplice.
 	 */
 	splice_lock_pair(so_src, so_dst);
-	len = MIN(max, MIN(sbspace(sb_dst), sbavail(sb_src)));
+	space = sbspace(sb_dst);
+	if (space < 0)
+		space = 0;
+	len = MIN(max, MIN(space, sbavail(sb_src)));
 	if (len == 0) {
 		SOCK_RECVBUF_LOCK(so_src);
-		if ((so_src->so_rcv.sb_state & SBS_CANTRCVMORE) != 0)
+		if ((sb_src->sb_state & SBS_CANTRCVMORE) != 0)
 			error = EPIPE;
 		SOCK_RECVBUF_UNLOCK(so_src);
 	} else {
@@ -561,19 +565,28 @@ so_splice_xfer(struct so_splice *sp)
 		}
 	}
 	if (m != NULL) {
+		len -= uio.uio_resid;
 		error = sosend_generic_locked(so_dst, NULL, NULL, m, NULL,
 		    MSG_DONTWAIT, curthread);
 	} else if (error == 0) {
+		len = 0;
 		SOCK_SENDBUF_LOCK(so_dst);
-		if ((so_dst->so_snd.sb_state & SBS_CANTSENDMORE) != 0)
+		if ((sb_dst->sb_state & SBS_CANTSENDMORE) != 0)
 			error = EPIPE;
 		SOCK_SENDBUF_UNLOCK(so_dst);
 	}
+
+	/*
+	 * Update our stats while still holding the socket locks.  This
+	 * synchronizes with getsockopt(SO_SPLICE), see the comment there.
+	 */
+	mtx_lock(&sp->mtx);
+	if (error == 0) {
+		KASSERT(len >= 0, ("%s: len %zd < 0", __func__, len));
+		sp->sent += len;
+	}
 	splice_unlock_pair(so_src, so_dst);
 
-	mtx_lock(&sp->mtx);
-	if (error == 0)
-		sp->sent += len;
 	switch (sp->state) {
 	case SPLICE_CLOSING:
 closing:
@@ -4111,6 +4124,18 @@ integer:
 			struct so_splice *sp;
 			off_t n;
 
+			/*
+			 * Acquire the I/O lock to serialize with
+			 * so_splice_xfer().  This is not required for
+			 * correctness, but makes testing simpler: once a byte
+			 * has been transmitted to the sink and observed (e.g.,
+			 * by reading from the socket to which the sink is
+			 * connected), a subsequent getsockopt(SO_SPLICE) will
+			 * return an up-to-date value.
+			 */
+			error = SOCK_IO_RECV_LOCK(so, SBL_WAIT);
+			if (error != 0)
+				goto bad;
 			SOCK_LOCK(so);
 			if (SOLISTENING(so)) {
 				n = 0;
@@ -4118,12 +4143,11 @@ integer:
 				if ((sp = so->so_splice) == NULL) {
 					n = 0;
 				} else {
-					mtx_lock(&sp->mtx);
 					n = so->so_splice->sent;
-					mtx_unlock(&sp->mtx);
 				}
 			}
 			SOCK_UNLOCK(so);
+			SOCK_IO_RECV_UNLOCK(so);
 			error = sooptcopyout(sopt, &n, sizeof(n));
 			break;
 		}
