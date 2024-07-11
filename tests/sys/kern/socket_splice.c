@@ -5,6 +5,7 @@
  */
 
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/filio.h>
 #include <sys/socket.h>
 
@@ -449,6 +450,60 @@ ATF_TC_BODY(splice_error, tc)
 	splice_init(&sp, sc.right[0], 0, NULL);
 	error = setsockopt(sd, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
 	ATF_REQUIRE_ERRNO(ENOTCONN, error == -1);
+
+	splice_conn_fini(&sc);
+}
+
+/*
+ * Make sure that kevent() doesn't report I/O events on spliced sockets.
+ */
+ATF_TC_WITHOUT_HEAD(splice_kevent);
+ATF_TC_BODY(splice_kevent, tc)
+{
+	struct splice_conn sc;
+	struct kevent kev;
+	struct timespec ts;
+	ssize_t n;
+	int error, nev, kq;
+	uint8_t b;
+
+	splice_conn_init(&sc);
+
+	kq = kqueue();
+	ATF_REQUIRE_MSG(kq >= 0, "kqueue failed: %s", strerror(errno));
+
+	EV_SET(&kev, sc.left[1], EVFILT_READ, EV_ADD, 0, 0, NULL);
+	error = kevent(kq, &kev, 1, NULL, 0, NULL);
+	ATF_REQUIRE_MSG(error == 0, "kevent failed: %s", strerror(errno));
+	EV_SET(&kev, sc.right[0], EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+	error = kevent(kq, &kev, 1, NULL, 0, NULL);
+	ATF_REQUIRE_MSG(error == 0, "kevent failed: %s", strerror(errno));
+
+	memset(&ts, 0, sizeof(ts));
+	nev = kevent(kq, NULL, 0, &kev, 1, &ts);
+	ATF_REQUIRE_MSG(nev >= 0, "kevent failed: %s", strerror(errno));
+	ATF_REQUIRE(nev == 0);
+
+	b = 'M';
+	n = write(sc.left[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.right[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'M');
+
+	nev = kevent(kq, NULL, 0, &kev, 1, &ts);
+	ATF_REQUIRE_MSG(nev >= 0, "kevent failed: %s", strerror(errno));
+	ATF_REQUIRE(nev == 0);
+
+	b = 'J';
+	n = write(sc.right[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.left[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'J');
+
+	splice_conn_fini(&sc);
+	checked_close(kq);
 }
 
 /*
@@ -686,7 +741,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, splice_basic);
 	ATF_TP_ADD_TC(tp, splice_capsicum);
 	ATF_TP_ADD_TC(tp, splice_error);
-	ATF_TP_ADD_TC(tp, splice_event);
+	ATF_TP_ADD_TC(tp, splice_kevent);
 	ATF_TP_ADD_TC(tp, splice_limit_bytes);
 	ATF_TP_ADD_TC(tp, splice_limit_timeout);
 	ATF_TP_ADD_TC(tp, splice_listen);
