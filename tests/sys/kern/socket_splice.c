@@ -32,23 +32,39 @@ fionread(int fd)
 {
 	int data, error;
 
+	data = 0;
 	error = ioctl(fd, FIONREAD, &data);
 	ATF_REQUIRE_MSG(error == 0, "ioctl failed: %s", strerror(errno));
+	ATF_REQUIRE(data >= 0);
 	return (data);
+}
+
+static void
+noblocking(int fd)
+{
+	int flags, error;
+
+	flags = fcntl(fd, F_GETFL);
+	ATF_REQUIRE_MSG(flags != -1, "fcntl failed: %s", strerror(errno));
+	flags |= O_NONBLOCK;
+	error = fcntl(fd, F_SETFL, flags);
+	ATF_REQUIRE_MSG(error == 0, "fcntl failed: %s", strerror(errno));
 }
 
 /*
  * Create a pair of connected TCP sockets, returned via the "out" array.
  */
 static void
-tcp_socketpair(int out[2])
+tcp_socketpair(int out[2], int domain)
 {
 	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
+	struct sockaddr *sinp;
 	int error, sd[2];
 
-	sd[0] = socket(PF_INET, SOCK_STREAM, 0);
+	sd[0] = socket(domain, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(sd[0] >= 0, "socket failed: %s", strerror(errno));
-	sd[1] = socket(PF_INET, SOCK_STREAM, 0);
+	sd[1] = socket(domain, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(sd[1] >= 0, "socket failed: %s", strerror(errno));
 
 	error = setsockopt(sd[0], IPPROTO_TCP, TCP_NODELAY, &(int){ 1 },
@@ -58,27 +74,49 @@ tcp_socketpair(int out[2])
 	    sizeof(int));
 	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
 
-	memset(&sin, 0, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_len = sizeof(sin);
-	sin.sin_addr.s_addr = htonl(INADDR_ANY);
-	sin.sin_port = htons(0);
+	if (domain == PF_INET) {
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_len = sizeof(sin);
+		sin.sin_addr.s_addr = htonl(INADDR_ANY);
+		sin.sin_port = htons(0);
+		sinp = (struct sockaddr *)&sin;
+	} else {
+		ATF_REQUIRE(domain == PF_INET6);
+		memset(&sin6, 0, sizeof(sin6));
+		sin6.sin6_family = AF_INET6;
+		sin6.sin6_len = sizeof(sin6);
+		sin6.sin6_addr = in6addr_any;
+		sin6.sin6_port = htons(0);
+		sinp = (struct sockaddr *)&sin6;
+	}
 
-	error = bind(sd[0], (struct sockaddr *)&sin, sizeof(sin));
+	error = bind(sd[0], sinp, sinp->sa_len);
 	ATF_REQUIRE_MSG(error == 0, "bind failed: %s", strerror(errno));
 	error = listen(sd[0], 1);
 	ATF_REQUIRE_MSG(error == 0, "listen failed: %s", strerror(errno));
 
-	error = getsockname(sd[0], (struct sockaddr *)&sin,
-	    &(socklen_t){ sizeof(sin) });
+	error = getsockname(sd[0], sinp, &(socklen_t){ sinp->sa_len });
 	ATF_REQUIRE_MSG(error == 0, "getsockname failed: %s", strerror(errno));
 
-	error = connect(sd[1], (struct sockaddr *)&sin, sizeof(sin));
+	error = connect(sd[1], sinp, sinp->sa_len);
 	ATF_REQUIRE_MSG(error == 0, "connect failed: %s", strerror(errno));
 	out[0] = accept(sd[0], NULL, NULL);
 	ATF_REQUIRE_MSG(out[0] >= 0, "accept failed: %s", strerror(errno));
 	checked_close(sd[0]);
 	out[1] = sd[1];
+}
+
+static void
+tcp4_socketpair(int out[2])
+{
+	tcp_socketpair(out, PF_INET);
+}
+
+static void
+tcp6_socketpair(int out[2])
+{
+	tcp_socketpair(out, PF_INET6);
 }
 
 static off_t
@@ -159,8 +197,8 @@ static void
 splice_conn_init_limits(struct splice_conn *sc, off_t max, struct timeval *tv)
 {
 	memset(sc, 0, sizeof(*sc));
-	tcp_socketpair(sc->left);
-	tcp_socketpair(sc->right);
+	tcp4_socketpair(sc->left);
+	tcp4_socketpair(sc->right);
 	splice_pair(sc->left[1], sc->right[0], max, tv);
 }
 
@@ -192,6 +230,15 @@ splice_conn_fini(struct splice_conn *sc)
 	checked_close(sc->left[1]);
 	checked_close(sc->right[0]);
 	checked_close(sc->right[1]);
+}
+
+static void
+splice_conn_noblocking(struct splice_conn *sc)
+{
+	noblocking(sc->left[0]);
+	noblocking(sc->left[1]);
+	noblocking(sc->right[0]);
+	noblocking(sc->right[1]);
 }
 
 /* Pass a byte through a pair of spliced connections. */
@@ -256,8 +303,8 @@ ATF_TC_BODY(splice_capsicum, tc)
 	off_t n;
 	int error, left[2], right[2];
 
-	tcp_socketpair(left);
-	tcp_socketpair(right);
+	tcp4_socketpair(left);
+	tcp4_socketpair(right);
 
 	/*
 	 * Make sure that we splice a socket that's missing recv rights.
@@ -322,8 +369,8 @@ ATF_TC_BODY(splice_error, tc)
 	int error, fd, sd, usd[2];
 
 	memset(&sc, 0, sizeof(sc));
-	tcp_socketpair(sc.left);
-	tcp_socketpair(sc.right);
+	tcp4_socketpair(sc.left);
+	tcp4_socketpair(sc.right);
 
 	/* A negative byte limit is invalid. */
 	splice_init(&sp, sc.right[0], -3, NULL);
@@ -520,7 +567,7 @@ ATF_TC_BODY(splice_listen, tc)
 	ATF_REQUIRE_ERRNO(EINVAL, error == -1);
 	splice_conn_fini(&sc);
 
-	tcp_socketpair(sd);
+	tcp4_socketpair(sd);
 	sd[2] = socket(PF_INET, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(sd[2] >= 0, "socket failed: %s", strerror(errno));
 	error = listen(sd[2], 1);
@@ -548,13 +595,98 @@ ATF_TC_BODY(splice_listen, tc)
 	checked_close(sd[2]);
 }
 
+/*
+ * Simple I/O test.
+ */
+ATF_TC_WITHOUT_HEAD(splice_nonblock);
+ATF_TC_BODY(splice_nonblock, tc)
+{
+	struct splice_conn sc;
+	char buf[200];
+	size_t sofar;
+	ssize_t n;
+
+	splice_conn_init(&sc);
+	splice_conn_noblocking(&sc);
+
+	memset(buf, 'A', sizeof(buf));
+	for (sofar = 0;;) {
+		n = write(sc.left[0], buf, sizeof(buf));
+		if (n < 0) {
+			ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
+			break;
+		}
+		sofar += n;
+	}
+
+	while (sofar > 0) {
+		n = read(sc.right[1], buf, sizeof(buf));
+		if (n < 0) {
+			ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
+			usleep(100);
+		} else {
+			for (size_t i = 0; i < (size_t)n; i++)
+				ATF_REQUIRE(buf[i] == 'A');
+			sofar -= n;
+		}
+	}
+
+	splice_conn_fini(&sc);
+}
+
+/*
+ * Make sure it's possible to splice v4 and v6 sockets together.
+ */
+ATF_TC_WITHOUT_HEAD(splice_v4v6);
+ATF_TC_BODY(splice_v4v6, tc)
+{
+	struct splice sp;
+	ssize_t n;
+	int sd4[2], sd6[2];
+	int error;
+	uint8_t b;
+
+	tcp4_socketpair(sd4);
+	tcp6_socketpair(sd6);
+
+	splice_init(&sp, sd6[0], 0, NULL);
+	error = setsockopt(sd4[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+
+	splice_init(&sp, sd4[1], 0, NULL);
+	error = setsockopt(sd6[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	ATF_REQUIRE_MSG(error == 0, "setsockopt failed: %s", strerror(errno));
+
+	b = 'M';
+	n = write(sd4[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sd6[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'M');
+
+	b = 'J';
+	n = write(sd6[1], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sd4[0], &b, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE(b == 'J');
+
+	checked_close(sd4[0]);
+	checked_close(sd4[1]);
+	checked_close(sd6[0]);
+	checked_close(sd6[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, splice_basic);
 	ATF_TP_ADD_TC(tp, splice_capsicum);
 	ATF_TP_ADD_TC(tp, splice_error);
+	ATF_TP_ADD_TC(tp, splice_event);
 	ATF_TP_ADD_TC(tp, splice_limit_bytes);
 	ATF_TP_ADD_TC(tp, splice_limit_timeout);
 	ATF_TP_ADD_TC(tp, splice_listen);
+	ATF_TP_ADD_TC(tp, splice_nonblock);
+	ATF_TP_ADD_TC(tp, splice_v4v6);
 	return (atf_no_error());
 }
