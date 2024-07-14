@@ -2008,6 +2008,8 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	struct vtnet_softc *sc;
 	if_t ifp;
 
+	VTNET_RXQ_LOCK_ASSERT(rxq);
+
 	sc = rxq->vtnrx_sc;
 	ifp = sc->vtnet_ifp;
 
@@ -2049,14 +2051,18 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	rxq->vtnrx_stats.vrxs_ipackets++;
 	rxq->vtnrx_stats.vrxs_ibytes += m->m_pkthdr.len;
 
+	VTNET_RXQ_UNLOCK(rxq);
 #if defined(INET) || defined(INET6)
 	if (vtnet_software_lro(sc) && if_getcapenable(ifp) & IFCAP_LRO) {
-		if (vtnet_lro_rx(rxq, m) == 0)
+		if (vtnet_lro_rx(rxq, m) == 0) {
+			VTNET_RXQ_LOCK(rxq);
 			return;
+		}
 	}
 #endif
 
 	if_input(ifp, m);
+	VTNET_RXQ_LOCK(rxq);
 }
 
 static int
