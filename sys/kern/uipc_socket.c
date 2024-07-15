@@ -4444,10 +4444,8 @@ filt_soread(struct knote *kn, long hint)
 		return (!TAILQ_EMPTY(&so->sol_comp));
 	}
 
-	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0) {
-		printf("spliced, returning 0\n");
+	if ((so->so_rcv.sb_flags & SB_SPLICED) != 0)
 		return (0);
-	}
 
 	SOCK_RECVBUF_LOCK_ASSERT(so);
 
