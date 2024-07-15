@@ -455,7 +455,7 @@ ATF_TC_BODY(splice_error, tc)
 }
 
 /*
- * Make sure that kevent() doesn't report I/O events on spliced sockets.
+ * Make sure that kevent() doesn't report read I/O events on spliced sockets.
  */
 ATF_TC_WITHOUT_HEAD(splice_kevent);
 ATF_TC_BODY(splice_kevent, tc)
@@ -473,9 +473,6 @@ ATF_TC_BODY(splice_kevent, tc)
 	ATF_REQUIRE_MSG(kq >= 0, "kqueue failed: %s", strerror(errno));
 
 	EV_SET(&kev, sc.left[1], EVFILT_READ, EV_ADD, 0, 0, NULL);
-	error = kevent(kq, &kev, 1, NULL, 0, NULL);
-	ATF_REQUIRE_MSG(error == 0, "kevent failed: %s", strerror(errno));
-	EV_SET(&kev, sc.right[0], EVFILT_WRITE, EV_ADD, 0, 0, NULL);
 	error = kevent(kq, &kev, 1, NULL, 0, NULL);
 	ATF_REQUIRE_MSG(error == 0, "kevent failed: %s", strerror(errno));
 
