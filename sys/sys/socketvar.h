@@ -584,7 +584,7 @@ void	soiounlock(struct sx *sx);
 /*
  * Socket splicing routines.
  */
-void	so_splice_enqueue_work(struct so_splice *sp);
+void	so_splice_dispatch(struct so_splice *sp);
 
 /*
  * Accept filter functions (duh).
