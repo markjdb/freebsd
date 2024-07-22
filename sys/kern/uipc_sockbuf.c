@@ -518,7 +518,7 @@ splice_push(struct socket *so)
 	sp = so->so_splice;
 	mtx_lock(&sp->mtx);
 	SOCK_RECVBUF_UNLOCK(so);
-	so_splice_enqueue_work(sp);
+	so_splice_dispatch(sp);
 }
 
 static void
@@ -531,7 +531,7 @@ splice_pull(struct socket *so)
 	sp = so->so_splice_back;
 	mtx_lock(&sp->mtx);
 	SOCK_SENDBUF_UNLOCK(so);
-	so_splice_enqueue_work(sp);
+	so_splice_dispatch(sp);
 }
 
 /*
