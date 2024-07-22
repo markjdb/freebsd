@@ -343,11 +343,10 @@ splice_work_thread(void *ctx)
 			CURVNET_RESTORE();
 		}
 	}
-
 }
 
 void
-so_splice_enqueue_work(struct so_splice *sp)
+so_splice_dispatch(struct so_splice *sp)
 {
 	struct splice_wq *wq;
 	bool running;
@@ -501,51 +500,27 @@ splice_unlock_pair(struct socket *so_src, struct socket *so_dst)
 	SOCK_IO_SEND_UNLOCK(so_dst);
 }
 
-/*
- * Transfer data from the source to the sink.  This is only ever called from one
- * thread for a given spliced pair of sockets.
- */
-static void
-so_splice_xfer(struct so_splice *sp)
+static int
+_so_splice_xfer(struct socket *so_src, struct socket *so_dst, off_t max,
+    ssize_t *lenp)
 {
 	struct uio uio;
 	struct mbuf *m;
-	struct socket *so_src, *so_dst;
 	struct sockbuf *sb_src, *sb_dst;
-	off_t max;
 	ssize_t len;
 	long space;
 	int error;
 
-	KASSERT(sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
-	    ("so_splice_xfer: invalid state %d", sp->state));
-	KASSERT(sp->max != 0, ("so_splice_xfer: max == 0"));
-	mtx_assert(&sp->mtx, MA_OWNED);
-
-	if (sp->state == SPLICE_CLOSING) {
-		/* Userspace asked us to close the splice. */
-		goto closing;
-	}
-
-	sp->state = SPLICE_RUNNING;
-	max = sp->max > 0 ? sp->max - sp->sent : OFF_MAX;
-	mtx_unlock(&sp->mtx);
-
-	so_src = sp->src;
-	sb_src = &so_src->so_rcv;
-	so_dst = sp->dst;
-	sb_dst = &so_dst->so_snd;
+	SOCK_IO_RECV_ASSERT_LOCKED(so_src);
+	SOCK_IO_SEND_ASSERT_LOCKED(so_dst);
 
 	error = 0;
 	m = NULL;
 	memset(&uio, 0, sizeof(uio));
 
-	/*
-	 * Lock the sockets in order to block userspace from doing anything
-	 * sneaky.  If an error occurs or one of the sockets can no longer
-	 * transfer data, we will automatically unsplice.
-	 */
-	splice_lock_pair(so_src, so_dst);
+	sb_src = &so_src->so_rcv;
+	sb_dst = &so_dst->so_snd;
+
 	space = sbspace(sb_dst);
 	if (space < 0)
 		space = 0;
@@ -575,6 +550,48 @@ so_splice_xfer(struct so_splice *sp)
 			error = EPIPE;
 		SOCK_SENDBUF_UNLOCK(so_dst);
 	}
+	if (error == 0)
+		*lenp = len;
+	return (error);
+}
+
+/*
+ * Transfer data from the source to the sink.  This is only ever called from one
+ * thread for a given spliced pair of sockets.
+ */
+static void
+so_splice_xfer(struct so_splice *sp)
+{
+	struct socket *so_src, *so_dst;
+	off_t max;
+	ssize_t len;
+	int error;
+
+	KASSERT(sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
+	    ("so_splice_xfer: invalid state %d", sp->state));
+	KASSERT(sp->max != 0, ("so_splice_xfer: max == 0"));
+	mtx_assert(&sp->mtx, MA_OWNED);
+
+	if (sp->state == SPLICE_CLOSING) {
+		/* Userspace asked us to close the splice. */
+		goto closing;
+	}
+
+	sp->state = SPLICE_RUNNING;
+	max = sp->max > 0 ? sp->max - sp->sent : OFF_MAX;
+	mtx_unlock(&sp->mtx);
+
+	so_src = sp->src;
+	so_dst = sp->dst;
+
+	/*
+	 * Lock the sockets in order to block userspace from doing anything
+	 * sneaky.  If an error occurs or one of the sockets can no longer
+	 * transfer data, we will automatically unsplice.
+	 */
+	splice_lock_pair(so_src, so_dst);
+
+	error = _so_splice_xfer(so_src, so_dst, max, &len);
 
 	/*
 	 * Update our stats while still holding the socket locks.  This
@@ -612,8 +629,9 @@ closing:
 			 * us.
 			 */
 			sp->state = SPLICE_IDLE;
-			if (sbavail(sb_src) > 0 && sbspace(sb_dst) > 0)
-				so_splice_enqueue_work(sp);
+			if (sbavail(&so_src->so_rcv) > 0 &&
+			    sbspace(&so_dst->so_snd) > 0)
+				so_splice_dispatch(sp);
 			else
 				mtx_unlock(&sp->mtx);
 		}
