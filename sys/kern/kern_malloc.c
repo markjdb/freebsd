@@ -958,8 +958,10 @@ _free(void *addr, struct malloc_type *mtp, bool dozero)
 		break;
 	case SLAB_COOKIE_CONTIG_MALLOC:
 		size = round_page(contigmalloc_size(slab));
-		if (dozero)
+		if (dozero) {
+			kasan_mark(addr, size, size, 0);
 			explicit_bzero(addr, size);
+		}
 		kmem_free(addr, size);
 		break;
 	default:
