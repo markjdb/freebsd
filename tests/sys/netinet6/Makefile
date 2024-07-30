@@ -16,6 +16,8 @@ ATF_TESTS_SH=		exthdr \
 			ndp \
 			proxy_ndp
 
+# Tests assign the same IP addresses on the host.
+TEST_METADATA.forward6+= is_exclusive="true"
 TEST_METADATA.output6+=	required_programs="python"
 
 ${PACKAGE}FILES+=	exthdr.py \
