@@ -316,7 +316,8 @@ xn_get_rx_ref(struct netfront_rxq *rxq, RING_IDX ri)
 #define MTAG_COOKIE 1218492000
 #define MTAG_XENNET 0
 
-static void mbuf_grab(struct mbuf *m)
+static void
+mbuf_grab(struct mbuf *m)
 {
 	struct mbuf_xennet *ref;
 
@@ -326,7 +327,8 @@ static void mbuf_grab(struct mbuf *m)
 	ref->count++;
 }
 
-static void mbuf_release(struct mbuf *m)
+static void
+mbuf_release(struct mbuf *m)
 {
 	struct mbuf_xennet *ref;
 
@@ -335,18 +337,13 @@ static void mbuf_release(struct mbuf *m)
 	KASSERT(ref != NULL, ("Cannot find refcount"));
 	KASSERT(ref->count > 0, ("Invalid reference count"));
 
-	if (--ref->count == 0)
+	if (--ref->count == 0) {
+		bus_dmamap_sync(ref->dma_tag, ref->dma_map, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_destroy(ref->dma_tag, ref->dma_map);
+		SLIST_INSERT_HEAD(&ref->txq->tags, ref, next);
+		m_tag_delete(m, &ref->tag);
 		m_freem(m);
-}
-
-static void tag_free(struct m_tag *t)
-{
-	struct mbuf_xennet *ref = (struct mbuf_xennet *)t;
-
-	KASSERT(ref->count == 0, ("Free mbuf tag with pending refcnt"));
-	bus_dmamap_sync(ref->dma_tag, ref->dma_map, BUS_DMASYNC_POSTWRITE);
-	bus_dmamap_destroy(ref->dma_tag, ref->dma_map);
-	SLIST_INSERT_HEAD(&ref->txq->tags, ref, next);
+	}
 }
 
 #define IPRINTK(fmt, args...) \
@@ -912,7 +909,6 @@ setup_txqs(device_t dev, struct netfront_info *info,
 			    MTAG_COOKIE, MTAG_XENNET,
 			    sizeof(txq->xennet_tag[i]) -
 			    sizeof(txq->xennet_tag[i].tag));
-			txq->xennet_tag[i].tag.m_tag_free = &tag_free;
 			SLIST_INSERT_HEAD(&txq->tags, &txq->xennet_tag[i],
 			    next);
 		}
