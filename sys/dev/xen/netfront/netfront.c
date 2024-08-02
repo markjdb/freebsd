@@ -346,11 +346,6 @@ mbuf_release(struct mbuf *m)
 	}
 }
 
-static void
-mbuf_tag_free(struct m_tag *tag __unused)
-{
-}
-
 #define IPRINTK(fmt, args...) \
     printf("[XEN] " fmt, ##args)
 #ifdef INVARIANTS
@@ -914,7 +909,6 @@ setup_txqs(device_t dev, struct netfront_info *info,
 			    MTAG_COOKIE, MTAG_XENNET,
 			    sizeof(txq->xennet_tag[i]) -
 			    sizeof(txq->xennet_tag[i].tag));
-			txq->xennet_tag[i].tag.m_tag_free = mbuf_tag_free;
 			SLIST_INSERT_HEAD(&txq->tags, &txq->xennet_tag[i],
 			    next);
 		}
