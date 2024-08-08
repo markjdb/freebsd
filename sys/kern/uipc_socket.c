@@ -293,6 +293,25 @@ static int splice_init_state;
 static struct sx splice_init_lock;
 SX_SYSINIT(splice_init_lock, &splice_init_lock, "splice_init");
 
+static SYSCTL_NODE(_kern_ipc, OID_AUTO, splice, CTLFLAG_RW, 0,
+    "Settings relating to the SO_SPLICE socket option");
+
+static bool splice_receive_stream = true;
+SYSCTL_BOOL(_kern_ipc_splice, OID_AUTO, receive_stream, CTLFLAG_RWTUN,
+    &splice_receive_stream, 0,
+    "Use soreceive_stream() for stream splices");
+
+/*
+ * This sysctl determines whether we try to transfer data in the context of the
+ * thread signaling the socket buffer.  Doing so may be more efficient, but is
+ * not safe in general because it effectively causes the network stack to
+ * reenter itself.  Do not enable this unless you know what you are doing.
+ */
+static bool splice_direct_dispatch = false;
+SYSCTL_BOOL(_kern_ipc_splice, OID_AUTO, direct_dispatch, CTLFLAG_RDTUN,
+    &splice_direct_dispatch, 0,
+    "Use direct dispatch for splices");
+
 static uma_zone_t splice_zone;
 static struct proc *splice_proc;
 struct splice_wq {
@@ -311,7 +330,7 @@ static struct splice_domain_info splice_domains[MAXMEMDOM];
 static uint32_t splice_index = 0;
 
 static void so_splice_timeout(void *arg, int pending);
-static void so_splice_xfer(struct so_splice *s);
+static void so_splice_xfer(struct so_splice *s, bool direct);
 static int so_unsplice(struct socket *so, bool timeout);
 
 static void
@@ -340,26 +359,17 @@ splice_work_thread(void *ctx)
 		STAILQ_FOREACH_SAFE(s, &local_head, next, s_temp) {
 			mtx_lock(&s->mtx);
 			CURVNET_SET(s->src->so_vnet);
-			so_splice_xfer(s);
+			so_splice_xfer(s, false);
 			CURVNET_RESTORE();
 		}
 	}
 }
 
-void
-so_splice_dispatch(struct so_splice *sp)
+static void
+so_splice_dispatch_async(struct so_splice *sp)
 {
 	struct splice_wq *wq;
 	bool running;
-
-	mtx_assert(&sp->mtx, MA_OWNED);
-
-	if (sp->state != SPLICE_IDLE) {
-		mtx_unlock(&sp->mtx);
-		return;
-	}
-	sp->state = SPLICE_QUEUED;
-	mtx_unlock(&sp->mtx);
 
 	wq = &splice_wq[sp->wq_index];
 	mtx_lock(&wq->mtx);
@@ -368,6 +378,22 @@ so_splice_dispatch(struct so_splice *sp)
 	mtx_unlock(&wq->mtx);
 	if (!running)
 		wakeup(wq);
+}
+
+void
+so_splice_dispatch(struct so_splice *sp)
+{
+	mtx_assert(&sp->mtx, MA_OWNED);
+
+	if (sp->state != SPLICE_IDLE) {
+		mtx_unlock(&sp->mtx);
+	} else if (splice_direct_dispatch) {
+		so_splice_xfer(sp, true);
+	} else {
+		sp->state = SPLICE_QUEUED;
+		mtx_unlock(&sp->mtx);
+		so_splice_dispatch_async(sp);
+	}
 }
 
 static int
@@ -458,6 +484,10 @@ splice_init(void)
 
 	splice_init_state = error != 0 ? -1 : 1;
 	sx_xunlock(&splice_init_lock);
+
+	if (splice_direct_dispatch)
+		printf("socket: SO_SPLICE direct dispatch enabled\n");
+
 	return (error);
 }
 
@@ -494,6 +524,20 @@ splice_lock_pair(struct socket *so_src, struct socket *so_dst)
 	}
 }
 
+static int
+splice_trylock_pair(struct socket *so_src, struct socket *so_dst)
+{
+	int error;
+
+	error = SOCK_IO_SEND_LOCK(so_dst, 0);
+	if (error != 0)
+		return (error);
+	error = SOCK_IO_RECV_LOCK(so_src, 0);
+	if (error != 0)
+		SOCK_IO_SEND_UNLOCK(so_dst);
+	return (error);
+}
+
 static void
 splice_unlock_pair(struct socket *so_src, struct socket *so_dst)
 {
@@ -501,8 +545,12 @@ splice_unlock_pair(struct socket *so_src, struct socket *so_dst)
 	SOCK_IO_SEND_UNLOCK(so_dst);
 }
 
+/*
+ * Move data from the source to the sink.  Assumes that both of the relevant
+ * socket I/O locks are held.
+ */
 static int
-_so_splice_xfer(struct socket *so_src, struct socket *so_dst, off_t max,
+so_splice_xfer_data(struct socket *so_src, struct socket *so_dst, off_t max,
     ssize_t *lenp)
 {
 	struct uio uio;
@@ -510,7 +558,7 @@ _so_splice_xfer(struct socket *so_src, struct socket *so_dst, off_t max,
 	struct sockbuf *sb_src, *sb_dst;
 	ssize_t len;
 	long space;
-	int error;
+	int error, flags;
 
 	SOCK_IO_RECV_ASSERT_LOCKED(so_src);
 	SOCK_IO_SEND_ASSERT_LOCKED(so_dst);
@@ -532,9 +580,15 @@ _so_splice_xfer(struct socket *so_src, struct socket *so_dst, off_t max,
 			error = EPIPE;
 		SOCK_RECVBUF_UNLOCK(so_src);
 	} else {
+		flags = MSG_DONTWAIT;
 		uio.uio_resid = len;
-		error = soreceive_stream_locked(so_src, sb_src, NULL, &uio, &m,
-		    NULL, MSG_DONTWAIT);
+		if (splice_receive_stream || sb_src->sb_tls_info != NULL) {
+			error = soreceive_stream_locked(so_src, sb_src, NULL,
+			    &uio, &m, NULL, flags);
+		} else {
+			error = soreceive_generic_locked(so_src, NULL,
+			    &uio, &m, NULL, &flags);
+		}
 		if (error != 0 && m != NULL) {
 			m_freem(m);
 			m = NULL;
@@ -557,21 +611,29 @@ _so_splice_xfer(struct socket *so_src, struct socket *so_dst, off_t max,
 }
 
 /*
- * Transfer data from the source to the sink.  This is only ever called from one
- * thread for a given spliced pair of sockets.
+ * Transfer data from the source to the sink.
+ *
+ * If "direct" is true, the transfer is done in the context of whichever thread
+ * is operating on one of the socket buffers.  We do not know which locks are
+ * held, so we can only trylock the socket buffers; if this fails, we fall back
+ * to the worker thread, which invokes this routine with "direct" set to false.
  */
 static void
-so_splice_xfer(struct so_splice *sp)
+so_splice_xfer(struct so_splice *sp, bool direct)
 {
 	struct socket *so_src, *so_dst;
 	off_t max;
 	ssize_t len;
 	int error;
 
-	KASSERT(sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
+	mtx_assert(&sp->mtx, MA_OWNED);
+	KASSERT(direct ||
+	    sp->state == SPLICE_QUEUED || sp->state == SPLICE_CLOSING,
+	    ("so_splice_xfer: invalid state %d", sp->state));
+	KASSERT(!direct ||
+	    sp->state == SPLICE_IDLE || sp->state == SPLICE_CLOSING,
 	    ("so_splice_xfer: invalid state %d", sp->state));
 	KASSERT(sp->max != 0, ("so_splice_xfer: max == 0"));
-	mtx_assert(&sp->mtx, MA_OWNED);
 
 	if (sp->state == SPLICE_CLOSING) {
 		/* Userspace asked us to close the splice. */
@@ -580,7 +642,8 @@ so_splice_xfer(struct so_splice *sp)
 
 	sp->state = SPLICE_RUNNING;
 	max = sp->max > 0 ? sp->max - sp->sent : OFF_MAX;
-	mtx_unlock(&sp->mtx);
+	if (max < 0)
+		max = 0;
 
 	so_src = sp->src;
 	so_dst = sp->dst;
@@ -590,15 +653,27 @@ so_splice_xfer(struct so_splice *sp)
 	 * sneaky.  If an error occurs or one of the sockets can no longer
 	 * transfer data, we will automatically unsplice.
 	 */
-	splice_lock_pair(so_src, so_dst);
+	if (direct) {
+		if (splice_trylock_pair(so_src, so_dst) != 0) {
+			sp->state = SPLICE_QUEUED;
+			mtx_unlock(&sp->mtx);
+			so_splice_dispatch_async(sp);
+			return;
+		}
+		mtx_unlock(&sp->mtx);
+	} else {
+		mtx_unlock(&sp->mtx);
+		splice_lock_pair(so_src, so_dst);
+	}
 
-	error = _so_splice_xfer(so_src, so_dst, max, &len);
+	error = so_splice_xfer_data(so_src, so_dst, max, &len);
+
+	mtx_lock(&sp->mtx);
 
 	/*
 	 * Update our stats while still holding the socket locks.  This
 	 * synchronizes with getsockopt(SO_SPLICE), see the comment there.
 	 */
-	mtx_lock(&sp->mtx);
 	if (error == 0) {
 		KASSERT(len >= 0, ("%s: len %zd < 0", __func__, len));
 		sp->sent += len;
@@ -614,11 +689,23 @@ closing:
 		break;
 	case SPLICE_RUNNING:
 		if (error != 0 || (sp->max > 0 && sp->sent >= sp->max)) {
-			sp->state = SPLICE_EXCEPTION;
-			soref(so_src);
-			mtx_unlock(&sp->mtx);
-			(void)so_unsplice(so_src, false);
-			sorele(so_src);
+			if (direct) {
+				/*
+				 * It's not safe to unsplice in direct context,
+				 * for example because we might have to sleep to
+				 * drain the timeout task.  Signal the worker
+				 * thread instead.
+				 */
+				sp->state = SPLICE_QUEUED;
+				mtx_unlock(&sp->mtx);
+				so_splice_dispatch_async(sp);
+			} else {
+				sp->state = SPLICE_EXCEPTION;
+				soref(so_src);
+				mtx_unlock(&sp->mtx);
+				(void)so_unsplice(so_src, false);
+				sorele(so_src);
+			}
 		} else {
 			/*
 			 * Locklessly check for additional bytes in the source's
@@ -629,12 +716,15 @@ closing:
 			 * ensures that splice_push() will queue more work for
 			 * us.
 			 */
-			sp->state = SPLICE_IDLE;
 			if (sbavail(&so_src->so_rcv) > 0 &&
-			    sbspace(&so_dst->so_snd) > 0)
-				so_splice_dispatch(sp);
-			else
+			    sbspace(&so_dst->so_snd) > 0) {
+				sp->state = SPLICE_QUEUED;
 				mtx_unlock(&sp->mtx);
+				so_splice_dispatch_async(sp);
+			} else {
+				sp->state = SPLICE_IDLE;
+				mtx_unlock(&sp->mtx);
+			}
 		}
 		break;
 	default:
@@ -1697,8 +1787,15 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 		    tvtosbt(splice->sp_idle), 0, C_PREL(4));
 	}
 
-	sp->state = SPLICE_QUEUED;	/* satisfy an assertion */
-	so_splice_xfer(sp);
+	/*
+	 * Transfer any data already present in the socket buffer.
+	 */
+	if (splice_direct_dispatch) {
+		so_splice_xfer(sp, true);
+	} else {
+		sp->state = SPLICE_QUEUED;
+		so_splice_xfer(sp, false);
+	}
 	return (0);
 }
 
