@@ -308,6 +308,7 @@ struct splice_domain_info {
 static int splice_bind_threads = 1;
 static uint16_t splice_cpuid_lookup[MAXCPU];
 static struct splice_domain_info splice_domains[MAXMEMDOM];
+static uint32_t splice_index = 0;
 
 static void so_splice_timeout(void *arg, int pending);
 static void so_splice_xfer(struct so_splice *s);
@@ -1587,7 +1588,10 @@ so_splice_alloc(off_t max)
 	sp->dst = NULL;
 	sp->max = max > 0 ? max : -1;
 	sp->sent = 0;
-	sp->wq_index = 0;
+	do {
+		sp->wq_index = atomic_fetchadd_32(&splice_index, 1) %
+		    (mp_maxid + 1);
+	} while (CPU_ABSENT(sp->wq_index));
 	sp->state = SPLICE_IDLE;
 	TIMEOUT_TASK_INIT(taskqueue_thread, &sp->timeout, 0, so_splice_timeout,
 	    sp);
