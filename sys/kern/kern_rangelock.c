@@ -380,7 +380,7 @@ rl_e_mark(struct rl_q_entry *e)
 #endif
 }
 
-static struct rl_q_entry *
+static __noinline struct rl_q_entry *
 rl_q_load(struct rl_q_entry **p)
 {
 	return ((struct rl_q_entry *)atomic_load_acq_ptr((uintptr_t *)p));
@@ -457,7 +457,7 @@ rl_insert_sleep(struct rangelock *lock)
 	smr_enter(rl_smr);
 }
 
-static bool
+static __noinline bool
 rl_q_cas(struct rl_q_entry **prev, struct rl_q_entry *old,
     struct rl_q_entry *new)
 {
