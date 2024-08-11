@@ -77,7 +77,6 @@ struct so_splice {
 	struct socket *src;
 	struct socket *dst;
 	off_t max;		/* maximum bytes to splice, or -1 */
-	off_t sent;		/* number of bytes sent so far */
 	struct mtx mtx;
 	unsigned int wq_index;
 	enum so_splice_state {
@@ -142,6 +141,7 @@ struct socket {
 	uint32_t so_max_pacing_rate;	/* (f) TX rate limit in bytes/s */
 	struct so_splice *so_splice;	/* (b) splice state for sink */
 	struct so_splice *so_splice_back; /* (b) splice state for source */
+	off_t so_splice_sent;	/* splice bytes sent so far; SOCK_IO_RECV_LOCK */
 
 	/*
 	 * Mutexes to prevent interleaving of socket I/O.  These have to be
