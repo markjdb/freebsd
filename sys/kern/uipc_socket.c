@@ -641,12 +641,11 @@ so_splice_xfer(struct so_splice *sp, bool direct)
 	}
 
 	sp->state = SPLICE_RUNNING;
-	max = sp->max > 0 ? sp->max - sp->sent : OFF_MAX;
-	if (max < 0)
-		max = 0;
-
 	so_src = sp->src;
 	so_dst = sp->dst;
+	max = sp->max > 0 ? sp->max - so_src->so_splice_sent : OFF_MAX;
+	if (max < 0)
+		max = 0;
 
 	/*
 	 * Lock the sockets in order to block userspace from doing anything
@@ -676,7 +675,7 @@ so_splice_xfer(struct so_splice *sp, bool direct)
 	 */
 	if (error == 0) {
 		KASSERT(len >= 0, ("%s: len %zd < 0", __func__, len));
-		sp->sent += len;
+		so_src->so_splice_sent += len;
 	}
 	splice_unlock_pair(so_src, so_dst);
 
@@ -688,7 +687,7 @@ closing:
 		mtx_unlock(&sp->mtx);
 		break;
 	case SPLICE_RUNNING:
-		if (error != 0 || (sp->max > 0 && sp->sent >= sp->max)) {
+		if (error != 0 || (sp->max > 0 && so_src->so_splice_sent >= sp->max)) {
 			if (direct) {
 				/*
 				 * It's not safe to unsplice in direct context,
@@ -1677,7 +1676,6 @@ so_splice_alloc(off_t max)
 	sp->src = NULL;
 	sp->dst = NULL;
 	sp->max = max > 0 ? max : -1;
-	sp->sent = 0;
 	do {
 		sp->wq_index = atomic_fetchadd_32(&splice_index, 1) %
 		    (mp_maxid + 1);
@@ -1731,6 +1729,7 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	    ("so_splice: soreceive not soreceive_generic/stream"));
 
 	sp = so_splice_alloc(splice->sp_max);
+	so->so_splice_sent = 0;
 	sp->src = so;
 	sp->dst = so2;
 
@@ -4250,7 +4249,6 @@ integer:
 			goto integer;
 
 		case SO_SPLICE: {
-			struct so_splice *sp;
 			off_t n;
 
 			/*
@@ -4269,11 +4267,7 @@ integer:
 			if (SOLISTENING(so)) {
 				n = 0;
 			} else {
-				if ((sp = so->so_splice) == NULL) {
-					n = 0;
-				} else {
-					n = so->so_splice->sent;
-				}
+				n = so->so_splice_sent;
 			}
 			SOCK_UNLOCK(so);
 			SOCK_IO_RECV_UNLOCK(so);
