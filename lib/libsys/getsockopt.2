@@ -594,7 +594,14 @@ When passed to
 the
 .Dv SO_SPLICE
 option returns a 64-bit integer containing the number of bytes transmitted by
-the splice, or zero if the socket is not spliced.
+the most recent splice.
+That is, while the socket is spliced, the value returned will be the number
+of bytes spliced so far.
+When unsplicing, this value is saved and is returned until the socket is closed
+or spliced again.
+For example, if a splice transmits 100 bytes and is then unspliced, a subsequent
+.Nm getsockopt
+call will return 100 until the socket is spliced again.
 .Sh RETURN VALUES
 .Rv -std
 .Sh ERRORS
@@ -662,5 +669,12 @@ and
 .Fn setsockopt
 system calls appeared in
 .Bx 4.2 .
+The
+.Dv SO_SPLICE
+option originated in
+.Ox .
+The
+.Fx
+implementation aims to be compatible.
 .Sh BUGS
 Several of the socket options should be handled at lower levels of the system.
