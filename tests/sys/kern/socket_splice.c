@@ -286,6 +286,12 @@ ATF_TC_BODY(splice_basic, tc)
 	check_nspliced(sc.left[1], 1);
 	check_nspliced(sc.right[0], 1);
 
+	/* Unsplice and verify that the byte counts haven't changed. */
+	unsplice(sc.left[1]);
+	unsplice(sc.right[0]);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 1);
+
 	splice_conn_fini(&sc);
 }
 
@@ -687,6 +693,69 @@ ATF_TC_BODY(splice_nonblock, tc)
 	splice_conn_fini(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(splice_resplice);
+ATF_TC_BODY(splice_resplice, tc)
+{
+	struct splice_conn sc;
+	ssize_t n;
+	char c;
+
+	splice_conn_init(&sc);
+
+	/* Left-to-right. */
+	c = 'M';
+	n = write(sc.left[0], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.right[1], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE_MSG(c == 'M', "unexpected character: %c", c);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 0);
+
+	/* Right-to-left. */
+	c = 'J';
+	n = write(sc.right[1], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.left[0], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE_MSG(c == 'J', "unexpected character: %c", c);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 1);
+
+	/* Unsplice and verify that the byte counts haven't changed. */
+	unsplice(sc.left[1]);
+	unsplice(sc.right[0]);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 1);
+
+	/* Splice again, check that byte counts are reset. */
+	splice_pair(sc.left[1], sc.right[0], 0, NULL);
+	check_nspliced(sc.left[1], 0);
+	check_nspliced(sc.right[0], 0);
+
+	/* Left-to-right. */
+	c = 'M';
+	n = write(sc.left[0], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.right[1], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE_MSG(c == 'M', "unexpected character: %c", c);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 0);
+
+	/* Right-to-left. */
+	c = 'J';
+	n = write(sc.right[1], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "write failed: %s", strerror(errno));
+	n = read(sc.left[0], &c, 1);
+	ATF_REQUIRE_MSG(n == 1, "read failed: %s", strerror(errno));
+	ATF_REQUIRE_MSG(c == 'J', "unexpected character: %c", c);
+	check_nspliced(sc.left[1], 1);
+	check_nspliced(sc.right[0], 1);
+
+	splice_conn_fini(&sc);
+}
+
 /*
  * Make sure it's possible to splice v4 and v6 sockets together.
  */
@@ -740,6 +809,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, splice_limit_timeout);
 	ATF_TP_ADD_TC(tp, splice_listen);
 	ATF_TP_ADD_TC(tp, splice_nonblock);
+	ATF_TP_ADD_TC(tp, splice_resplice);
 	ATF_TP_ADD_TC(tp, splice_v4v6);
 	return (atf_no_error());
 }
