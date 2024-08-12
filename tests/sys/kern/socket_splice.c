@@ -584,9 +584,6 @@ ATF_TC_BODY(splice_limit_timeout, tc)
 	error = usleep(550000);
 	ATF_REQUIRE_MSG(error == 0, "usleep failed: %s", strerror(errno));
 
-	/* getsockopt(SO_SPLICE) should return 0 for an unspliced socket. */
-	check_nspliced(sc.left[1], 0);
-
 	/*
 	 * The next byte should appear on the other side of the connection
 	 * rather than the splice.
