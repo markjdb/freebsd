@@ -1876,9 +1876,11 @@ so_unsplice(struct socket *so, bool timeout)
 	 * Clean up: signal userspace and release socket references.
 	 */
 	sorwakeup(so);
+	CURVNET_SET(so->so_vnet);
 	sorele(so);
 	sowwakeup(so2);
 	sorele(so2);
+	CURVNET_RESTORE();
 	so_splice_free(sp);
 	return (0);
 }
