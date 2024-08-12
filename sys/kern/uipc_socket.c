@@ -687,7 +687,8 @@ closing:
 		mtx_unlock(&sp->mtx);
 		break;
 	case SPLICE_RUNNING:
-		if (error != 0 || (sp->max > 0 && so_src->so_splice_sent >= sp->max)) {
+		if (error != 0 ||
+		    (sp->max > 0 && so_src->so_splice_sent >= sp->max)) {
 			if (direct) {
 				/*
 				 * It's not safe to unsplice in direct context,

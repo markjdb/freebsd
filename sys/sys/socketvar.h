@@ -101,6 +101,7 @@ struct so_splice {
  * (f) not locked since integer reads/writes are atomic.
  * (g) used only as a sleep/wakeup address, no value.
  * (h) locked by global mutex so_global_mtx.
+ * (ir,is) locked by recv or send I/O locks.
  * (k) locked by KTLS workqueue mutex
  */
 TAILQ_HEAD(accept_queue, socket);
@@ -141,7 +142,7 @@ struct socket {
 	uint32_t so_max_pacing_rate;	/* (f) TX rate limit in bytes/s */
 	struct so_splice *so_splice;	/* (b) splice state for sink */
 	struct so_splice *so_splice_back; /* (b) splice state for source */
-	off_t so_splice_sent;	/* splice bytes sent so far; SOCK_IO_RECV_LOCK */
+	off_t so_splice_sent;	/* (ir) splice bytes sent so far */
 
 	/*
 	 * Mutexes to prevent interleaving of socket I/O.  These have to be
