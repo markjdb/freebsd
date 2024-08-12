@@ -85,6 +85,7 @@ LIBADD.ktls_test+=			crypto util
 LIBADD.listener_wakeup+=		pthread
 LIBADD.shutdown_dgram+=			pthread
 LIBADD.socket_msg_waitall+=		pthread
+LIBADD.socket_splice+=			pthread
 LIBADD.sendfile_helper+=		pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
 LIBADD.sigwait+=			rt

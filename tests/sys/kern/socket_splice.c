@@ -13,7 +13,9 @@
 #include <netinet/tcp.h>
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -756,6 +758,107 @@ ATF_TC_BODY(splice_resplice, tc)
 	splice_conn_fini(&sc);
 }
 
+struct xfer_args {
+	pthread_barrier_t *barrier;
+	uint32_t bytes;
+	int fd;
+};
+
+static void *
+xfer(void *arg)
+{
+	struct xfer_args *xfer;
+	uint8_t *buf;
+	size_t sz;
+	ssize_t n;
+	uint32_t resid;
+	int error;
+
+	xfer = arg;
+
+	error = fcntl(xfer->fd, F_SETFL, O_NONBLOCK);
+	ATF_REQUIRE_MSG(error == 0, "fcntl failed: %s", strerror(errno));
+
+	sz = MIN(xfer->bytes, 1024 * 1024);
+	buf = malloc(sz);
+	ATF_REQUIRE(buf != NULL);
+	arc4random_buf(buf, sz);
+
+	pthread_barrier_wait(xfer->barrier);
+
+	for (resid = xfer->bytes; xfer->bytes > 0 || resid > 0;) {
+		n = write(xfer->fd, buf, MIN(sz, xfer->bytes));
+		if (n < 0) {
+			ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
+			usleep(1000);
+		} else {
+			ATF_REQUIRE(xfer->bytes >= n);
+			xfer->bytes -= n;
+		}
+
+		n = read(xfer->fd, buf, sz);
+		if (n < 0) {
+			ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
+			usleep(1000);
+		} else {
+			ATF_REQUIRE(resid >= n);
+			resid -= n;
+		}
+	}
+
+	free(buf);
+	return (NULL);
+}
+
+/*
+ * Use two threads to transfer data between two spliced connections.
+ */
+ATF_TC_WITHOUT_HEAD(splice_throughput);
+ATF_TC_BODY(splice_throughput, tc)
+{
+	struct xfer_args xfers[2];
+	pthread_t thread[2];
+	pthread_barrier_t barrier;
+	struct splice_conn sc;
+	uint32_t bytes;
+	int error;
+
+	/* Transfer an amount between 1B and 1GB. */
+	bytes = arc4random_uniform(1024 * 1024 * 1024) + 1;
+	splice_conn_init(&sc);
+
+	error = pthread_barrier_init(&barrier, NULL, 2);
+	ATF_REQUIRE(error == 0);
+	xfers[0] = (struct xfer_args){
+	    .barrier = &barrier,
+	    .bytes = bytes,
+	    .fd = sc.left[0]
+	};
+	xfers[1] = (struct xfer_args){
+	    .barrier = &barrier,
+	    .bytes = bytes,
+	    .fd = sc.right[1]
+	};
+
+	error = pthread_create(&thread[0], NULL, xfer, &xfers[0]);
+	ATF_REQUIRE_MSG(error == 0,
+	    "pthread_create failed: %s", strerror(errno));
+	error = pthread_create(&thread[1], NULL, xfer, &xfers[1]);
+	ATF_REQUIRE_MSG(error == 0,
+	    "pthread_create failed: %s", strerror(errno));
+
+	error = pthread_join(thread[0], NULL);
+	ATF_REQUIRE_MSG(error == 0,
+	    "pthread_join failed: %s", strerror(errno));
+	error = pthread_join(thread[1], NULL);
+	ATF_REQUIRE_MSG(error == 0,
+	    "pthread_join failed: %s", strerror(errno));
+
+	error = pthread_barrier_destroy(&barrier);
+	ATF_REQUIRE(error == 0);
+	splice_conn_fini(&sc);
+}
+
 /*
  * Make sure it's possible to splice v4 and v6 sockets together.
  */
@@ -810,6 +913,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, splice_listen);
 	ATF_TP_ADD_TC(tp, splice_nonblock);
 	ATF_TP_ADD_TC(tp, splice_resplice);
+	ATF_TP_ADD_TC(tp, splice_throughput);
 	ATF_TP_ADD_TC(tp, splice_v4v6);
 	return (atf_no_error());
 }
