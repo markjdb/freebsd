@@ -267,6 +267,55 @@ echo_socket(const atf_tc_t *tc, int sv[2])
 	return (false);
 }
 
+static void
+close_sockets(int sv[2])
+{
+	if (sv[0] != sv[1])
+		ATF_REQUIRE(close(sv[1]) == 0);
+	ATF_REQUIRE(close(sv[0]) == 0);
+}
+
+static bool
+open_spliced_sockets(int outer[2], int inner[2])
+{
+	struct splice sp;
+	int sv1[2], sv2[2];
+	int error;
+
+	if (!socketpair_tcp(sv1))
+		return (false);
+	if (!socketpair_tcp(sv2)) {
+		close_sockets(sv1);
+		return (false);
+	}
+
+	memset(&sp, 0, sizeof(sp));
+	sp.sp_fd = sv2[0];
+	error = setsockopt(sv1[1], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	if (error == -1) {
+		warn("setsockopt(SO_SPLICE)");
+		close_sockets(sv1);
+		close_sockets(sv2);
+		return (false);
+	}
+	memset(&sp, 0, sizeof(sp));
+	sp.sp_fd = sv1[1];
+	error = setsockopt(sv2[0], SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp));
+	if (error == -1) {
+		warn("setsockopt(SO_SPLICE)");
+		close_sockets(sv1);
+		close_sockets(sv2);
+		return (false);
+	}
+
+	outer[0] = sv1[0];
+	outer[1] = sv2[1];
+	inner[0] = sv1[1];
+	inner[1] = sv2[0];
+
+	return (true);
+}
+
 static bool
 open_sockets(const atf_tc_t *tc, int sv[2])
 {
@@ -274,14 +323,6 @@ open_sockets(const atf_tc_t *tc, int sv[2])
 		return (echo_socket(tc, sv));
 	else
 		return (socketpair_tcp(sv));
-}
-
-static void
-close_sockets(int sv[2])
-{
-	if (sv[0] != sv[1])
-		ATF_REQUIRE(close(sv[1]) == 0);
-	ATF_REQUIRE(close(sv[0]) == 0);
 }
 
 static void
@@ -1172,14 +1213,14 @@ encrypt_tls_record(const atf_tc_t *tc, struct tls_enable *en,
 
 static void
 test_ktls_transmit_app_data(const atf_tc_t *tc, struct tls_enable *en,
-    uint64_t seqno, size_t len)
+    uint64_t seqno, size_t len, bool splice)
 {
 	struct kevent ev;
 	struct tls_record_layer *hdr;
 	char *plaintext, *decrypted, *outbuf;
 	size_t decrypted_len, outbuf_len, outbuf_cap, record_len, written;
 	ssize_t rv;
-	int kq, sockets[2];
+	int kq, sockets[2], spliced[2];
 	uint8_t record_type;
 
 	plaintext = alloc_buffer(len);
@@ -1192,7 +1233,13 @@ test_ktls_transmit_app_data(const atf_tc_t *tc, struct tls_enable *en,
 
 	ATF_REQUIRE((kq = kqueue()) != -1);
 
-	ATF_REQUIRE_MSG(open_sockets(tc, sockets), "failed to create sockets");
+	if (splice) {
+		ATF_REQUIRE_MSG(open_spliced_sockets(sockets, spliced),
+		    "failed to create sockets");
+	} else {
+		ATF_REQUIRE_MSG(open_sockets(tc, sockets),
+		    "failed to create sockets");
+	}
 
 	ATF_REQUIRE(setsockopt(sockets[1], IPPROTO_TCP, TCP_TXTLS_ENABLE, en,
 	    sizeof(*en)) == 0);
@@ -1292,6 +1339,8 @@ test_ktls_transmit_app_data(const atf_tc_t *tc, struct tls_enable *en,
 	free(plaintext);
 
 	close_sockets(sockets);
+	if (splice)
+		close_sockets(spliced);
 	ATF_REQUIRE(close(kq) == 0);
 }
 
@@ -1492,13 +1541,13 @@ ktls_receive_tls_record(struct tls_enable *en, int fd, uint8_t record_type,
 
 static void
 test_ktls_receive_app_data(const atf_tc_t *tc, struct tls_enable *en,
-    uint64_t seqno, size_t len, size_t padding)
+    uint64_t seqno, size_t len, size_t padding, bool splice)
 {
 	struct kevent ev;
 	char *plaintext, *received, *outbuf;
 	size_t outbuf_cap, outbuf_len, outbuf_sent, received_len, todo, written;
 	ssize_t rv;
-	int kq, sockets[2];
+	int kq, sockets[2], spliced[2];
 
 	plaintext = alloc_buffer(len);
 	received = malloc(len);
@@ -1508,7 +1557,13 @@ test_ktls_receive_app_data(const atf_tc_t *tc, struct tls_enable *en,
 
 	ATF_REQUIRE((kq = kqueue()) != -1);
 
-	ATF_REQUIRE_MSG(open_sockets(tc, sockets), "failed to create sockets");
+	if (splice) {
+		ATF_REQUIRE_MSG(open_spliced_sockets(sockets, spliced),
+		    "failed to create sockets");
+	} else {
+		ATF_REQUIRE_MSG(open_sockets(tc, sockets),
+		    "failed to create sockets");
+	}
 
 	ATF_REQUIRE(setsockopt(sockets[0], IPPROTO_TCP, TCP_RXTLS_ENABLE, en,
 	    sizeof(*en)) == 0);
@@ -1584,6 +1639,8 @@ test_ktls_receive_app_data(const atf_tc_t *tc, struct tls_enable *en,
 	free(plaintext);
 
 	close_sockets(sockets);
+	if (splice)
+		close_sockets(spliced);
 	ATF_REQUIRE(close(kq) == 0);
 }
 
@@ -1986,13 +2043,27 @@ ATF_TC_BODY(ktls_transmit_##cipher_name##_##name, tc)			\
 	seqno = random();						\
 	build_tls_enable(tc, cipher_alg, key_size, auth_alg, minor,	\
 	    seqno, &en);						\
-	test_ktls_transmit_app_data(tc, &en, seqno, len);		\
+	test_ktls_transmit_app_data(tc, &en, seqno, len, false);	\
+	free_tls_enable(&en);						\
+}									\
+ATF_TC_WITHOUT_HEAD(ktls_transmit_splice_##cipher_name##_##name);	\
+ATF_TC_BODY(ktls_transmit_splice_##cipher_name##_##name, tc)		\
+{									\
+	struct tls_enable en;						\
+	uint64_t seqno;							\
+									\
+	ATF_REQUIRE_KTLS();						\
+	seqno = random();						\
+	build_tls_enable(tc, cipher_alg, key_size, auth_alg, minor,	\
+	    seqno, &en);						\
+	test_ktls_transmit_app_data(tc, &en, seqno, len, true);		\
 	free_tls_enable(&en);						\
 }
 
 #define ADD_TRANSMIT_APP_DATA_TEST(cipher_name, cipher_alg, key_size,	\
 	    auth_alg, minor, name)					\
-	ATF_TP_ADD_TC(tp, ktls_transmit_##cipher_name##_##name);
+	ATF_TP_ADD_TC(tp, ktls_transmit_##cipher_name##_##name);	\
+	ATF_TP_ADD_TC(tp, ktls_transmit_splice_##cipher_name##_##name);
 
 #define GEN_TRANSMIT_CONTROL_TEST(cipher_name, cipher_alg, key_size,	\
 	    auth_alg, minor, name, type, len)				\
@@ -2231,13 +2302,27 @@ ATF_TC_BODY(ktls_receive_##cipher_name##_##name, tc)			\
 	seqno = random();						\
 	build_tls_enable(tc, cipher_alg, key_size, auth_alg, minor,	\
 	    seqno, &en);						\
-	test_ktls_receive_app_data(tc, &en, seqno, len, padding);	\
+	test_ktls_receive_app_data(tc, &en, seqno, len, padding, false);\
+	free_tls_enable(&en);						\
+}									\
+ATF_TC_WITHOUT_HEAD(ktls_receive_splice_##cipher_name##_##name);	\
+ATF_TC_BODY(ktls_receive_splice_##cipher_name##_##name, tc)		\
+{									\
+	struct tls_enable en;						\
+	uint64_t seqno;							\
+									\
+	ATF_REQUIRE_KTLS();						\
+	seqno = random();						\
+	build_tls_enable(tc, cipher_alg, key_size, auth_alg, minor,	\
+	    seqno, &en);						\
+	test_ktls_receive_app_data(tc, &en, seqno, len, padding, true);	\
 	free_tls_enable(&en);						\
 }
 
 #define ADD_RECEIVE_APP_DATA_TEST(cipher_name, cipher_alg, key_size,	\
 	    auth_alg, minor, name)					\
-	ATF_TP_ADD_TC(tp, ktls_receive_##cipher_name##_##name);
+	ATF_TP_ADD_TC(tp, ktls_receive_##cipher_name##_##name);		\
+	ATF_TP_ADD_TC(tp, ktls_receive_splice_##cipher_name##_##name);
 
 #define GEN_RECEIVE_BAD_DATA_TEST(cipher_name, cipher_alg, key_size,	\
 	    auth_alg, minor, len)					\
