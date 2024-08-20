@@ -2346,6 +2346,19 @@ sosend_generic_locked(struct socket *so, struct sockaddr *addr, struct uio *uio,
 			error = EINVAL;
 			goto out;
 		}
+
+		/* XXX-MJ do we need to check each mbuf? */
+		if (top != NULL && (top->m_flags & M_EXTPG) == 0) {
+			struct mbuf *unmapped;
+
+			unmapped = mb_mapped_to_unmapped(top, (int)resid,
+			    TLS_MAX_MSG_SIZE_V10_2, M_WAITOK, NULL);
+			if (unmapped == NULL) {
+				error = ENOMEM;
+				goto out;
+			}
+			top = unmapped;
+		}
 	}
 #endif
 
