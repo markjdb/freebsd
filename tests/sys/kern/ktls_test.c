@@ -1220,7 +1220,7 @@ test_ktls_transmit_app_data(const atf_tc_t *tc, struct tls_enable *en,
 	char *plaintext, *decrypted, *outbuf;
 	size_t decrypted_len, outbuf_len, outbuf_cap, record_len, written;
 	ssize_t rv;
-	int kq, sockets[2], spliced[2];
+	int kq, sockets[2], spliced[2], tlssd;
 	uint8_t record_type;
 
 	plaintext = alloc_buffer(len);
@@ -1236,14 +1236,16 @@ test_ktls_transmit_app_data(const atf_tc_t *tc, struct tls_enable *en,
 	if (splice) {
 		ATF_REQUIRE_MSG(open_spliced_sockets(sockets, spliced),
 		    "failed to create sockets");
+		tlssd = spliced[0];
 	} else {
 		ATF_REQUIRE_MSG(open_sockets(tc, sockets),
 		    "failed to create sockets");
+		tlssd = sockets[1];
 	}
 
-	ATF_REQUIRE(setsockopt(sockets[1], IPPROTO_TCP, TCP_TXTLS_ENABLE, en,
+	ATF_REQUIRE(setsockopt(tlssd, IPPROTO_TCP, TCP_TXTLS_ENABLE, en,
 	    sizeof(*en)) == 0);
-	check_tls_mode(tc, sockets[1], TCP_TXTLS_MODE);
+	check_tls_mode(tc, tlssd, TCP_TXTLS_MODE);
 
 	EV_SET(&ev, sockets[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
 	ATF_REQUIRE(kevent(kq, &ev, 1, NULL, 0, NULL) == 0);
@@ -1518,7 +1520,8 @@ ktls_receive_tls_record(struct tls_enable *en, int fd, uint8_t record_type,
 
 	ATF_REQUIRE((rv = recvmsg(fd, &msg, 0)) > 0);
 
-	ATF_REQUIRE((msg.msg_flags & (MSG_EOR | MSG_CTRUNC)) == MSG_EOR);
+	ATF_REQUIRE_MSG((msg.msg_flags & (MSG_EOR | MSG_CTRUNC)) == MSG_EOR,
+	    "flags %#x", msg.msg_flags);
 
 	cmsg = CMSG_FIRSTHDR(&msg);
 	ATF_REQUIRE(cmsg != NULL);
@@ -1547,7 +1550,7 @@ test_ktls_receive_app_data(const atf_tc_t *tc, struct tls_enable *en,
 	char *plaintext, *received, *outbuf;
 	size_t outbuf_cap, outbuf_len, outbuf_sent, received_len, todo, written;
 	ssize_t rv;
-	int kq, sockets[2], spliced[2];
+	int kq, sockets[2], spliced[2], tlssd;
 
 	plaintext = alloc_buffer(len);
 	received = malloc(len);
@@ -1560,14 +1563,16 @@ test_ktls_receive_app_data(const atf_tc_t *tc, struct tls_enable *en,
 	if (splice) {
 		ATF_REQUIRE_MSG(open_spliced_sockets(sockets, spliced),
 		    "failed to create sockets");
+		tlssd = spliced[1];
 	} else {
 		ATF_REQUIRE_MSG(open_sockets(tc, sockets),
 		    "failed to create sockets");
+		tlssd = sockets[0];
 	}
 
-	ATF_REQUIRE(setsockopt(sockets[0], IPPROTO_TCP, TCP_RXTLS_ENABLE, en,
+	ATF_REQUIRE(setsockopt(tlssd, IPPROTO_TCP, TCP_RXTLS_ENABLE, en,
 	    sizeof(*en)) == 0);
-	check_tls_mode(tc, sockets[0], TCP_RXTLS_MODE);
+	check_tls_mode(tc, tlssd, TCP_RXTLS_MODE);
 
 	EV_SET(&ev, sockets[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
 	ATF_REQUIRE(kevent(kq, &ev, 1, NULL, 0, NULL) == 0);
