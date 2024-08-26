@@ -18,7 +18,7 @@ struct thread;
 struct vm;
 struct vcpu;
 
-void	vmmdev_init(void);
+int	vmmdev_init(void);
 int	vmmdev_cleanup(void);
 int	vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd,
 	    caddr_t data, int fflag, struct thread *td);
@@ -53,5 +53,19 @@ extern const struct vmmdev_ioctl vmmdev_machdep_ioctls[];
 extern const size_t vmmdev_machdep_ioctl_count;
 
 #endif /* _KERNEL */
+
+struct vm_create {
+	char name[VM_MAX_NAMELEN + 1];
+	int flags;
+	int reserved[7];
+};
+
+struct vm_destroy {
+	char name[VM_MAX_NAMELEN + 1];
+	int reserved[8];
+};
+
+#define	VMMCTL_CREATE_VM	_IOWR('V', 0, struct vm_create)
+#define	VMMCTL_DESTROY_VM	_IOWR('V', 1, struct vm_destroy)
 
 #endif /* _DEV_VMM_DEV_H_ */
