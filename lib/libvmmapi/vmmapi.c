@@ -37,6 +37,7 @@
 #include <sys/cpuset.h>
 
 #include <capsicum_helpers.h>
+#include <err.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -50,10 +51,11 @@
 
 #include <vm/vm.h>
 #include <machine/vmm.h>
-#include <machine/vmm_dev.h>
 #ifdef WITH_VMMAPI_SNAPSHOT
 #include <machine/vmm_snapshot.h>
 #endif
+
+#include <dev/vmm/vmm_dev.h>
 
 #include "vmmapi.h"
 #include "internal.h"
@@ -78,9 +80,6 @@
 #define	PROT_RW		(PROT_READ | PROT_WRITE)
 #define	PROT_ALL	(PROT_READ | PROT_WRITE | PROT_EXEC)
 
-#define	CREATE(x)  sysctlbyname("hw.vmm.create", NULL, NULL, (x), strlen((x)))
-#define	DESTROY(x) sysctlbyname("hw.vmm.destroy", NULL, NULL, (x), strlen((x)))
-
 static int
 vm_device_open(const char *name)
 {
@@ -102,10 +101,34 @@ vm_device_open(const char *name)
 int
 vm_create(const char *name)
 {
+	struct vm_create vmc;
+	int error, fd;
+
 	/* Try to load vmm(4) module before creating a guest. */
-	if (modfind("vmm") < 0)
-		kldload("vmm");
-	return (CREATE(name));
+	if (modfind("vmm") < 0) {
+		error = kldload("vmm");
+		if (error != 0)
+			return (-1);
+	}
+
+	fd = open("/dev/vmmctl", O_RDWR, 0);
+	if (fd < 0)
+		return (fd);
+	memset(&vmc, 0, sizeof(vmc));
+	if (strlcpy(vmc.name, name, sizeof(vmc.name)) >= sizeof(vmc.name)) {
+		(void)close(fd);
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	error = ioctl(fd, VMMCTL_CREATE_VM, &vmc);
+	if (error != 0) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		return (-1);
+	}
+	(void)close(fd);
+	return (0);
 }
 
 struct vmctx *
@@ -146,11 +169,23 @@ vm_close(struct vmctx *vm)
 void
 vm_destroy(struct vmctx *vm)
 {
-	assert(vm != NULL);
+	struct vm_destroy vmd;
+	int fd;
 
 	if (vm->fd >= 0)
-		close(vm->fd);
-	DESTROY(vm->name);
+		(void)close(vm->fd);
+
+	fd = open("/dev/vmmctl", O_RDWR, 0);
+	if (fd < 0) {
+		warn("open(/dev/vmmctl)");
+		return;
+	}
+
+	memset(&vmd, 0, sizeof(vmd));
+	(void)strlcpy(vmd.name, vm->name, sizeof(vmd.name));
+	if (ioctl(fd, VMMCTL_DESTROY_VM, &vmd) != 0)
+		warn("ioctl(VMMCTL_DESTROY_VM)");
+	(void)close(fd);
 
 	free(vm);
 }
