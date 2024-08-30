@@ -104,7 +104,6 @@ enum vm_reg_name {
 
 #define VM_GUEST_BASE_IPA	0x80000000UL	/* Guest kernel start ipa */
 
-#ifdef _KERNEL
 /*
  * The VM name has to fit into the pathname length constraints of devfs,
  * governed primarily by SPECNAMELEN.  The length is the total number of
@@ -126,6 +125,7 @@ enum vm_reg_name {
 #define VM_MAX_NAMELEN \
     (SPECNAMELEN - VM_MAX_PREFIXLEN - VM_MAX_SUFFIXLEN - 1)
 
+#ifdef _KERNEL
 struct vm;
 struct vm_exception;
 struct vm_exit;
