@@ -24,32 +24,31 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 24, 2020
+.Dd September 5, 2024
 .Dt INTRO 3lua
 .Os
 .Sh NAME
 .Nm intro
-.Nd introduction to the Lua modules for flua
+.Nd introduction to flua
 .Po
 .Fx
 Lua
 .Pc
 .Sh DESCRIPTION
-This section describes
-.Em flua
-.Po
+.Nm
+is a Lua 5.4 interpreter which is available for use in the
 .Fx
-Lua
-.Pc
-and the Lua modules provided in the
-.Fx
-base system.
+base system, via
+.Pa /usr/libexec/flua .
+It provides a number of FreeBSD-specific modules.
 .Pp
 The Lua modules provided by
 .Fx
 are:
 .Bl -tag -width jail
+.It Xr freebsd 3lua
 .It Xr jail 3lua
+.It Xr posix 3lua
 Wrapper for
 .Xr jail 3 .
 .El

@@ -1,5 +1,7 @@
 .include <src.opts.mk>
 
-MAN=	intro.3lua
+MAN=	freebsd.3lua	\
+	intro.3lua	\
+	posix.3lua
 
 .include <bsd.prog.mk>

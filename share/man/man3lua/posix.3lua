@@ -1,0 +1,89 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2024 Mark Johnston <markj@FreeBSD.org>
+.\"
+.Dd September 5, 2024
+.Dt POSIX 3lua
+.Os
+.Sh NAME
+Lua bindings for POSIX interfaces
+.Sh SYNOPSIS
+.Bl -tag -width XXXX -compact
+.It Dv pid, err, errno = posix.spawn.posix_spawn(path, [file_actions,] [attrs,] args[, env])
+.It Dv pid, err, errno = posix.spawn.posix_spawnp(file, [file_actions,] [attrs,] args[, env])
+
+.It Dv ok, err, errno = posix.stat.chmod(path, mode)
+
+.It Dv utsname, err, errno = posix.sys.utsname.uname()
+
+.It Dv ok, err, errno = posix.unistd.chown(path, user, group)
+.It Dv ok, err, errno = posix.unistd.close(fd)
+.It Dv pid = posix.unistd.getpid()
+.It Dv fd1, fd2 = posix.unistd.pipe()
+.El
+.Sh DESCRIPTION
+The
+.Nm posix
+module provides bindings for various standard
+.Xr c 7
+interfaces provided by
+.Fx .
+This implementation aims to be compatible with the luaposix project.
+The namespace is partitioned by the names of C headers located in
+.Pa /usr/include
+and
+.Pa /usr/include/sys .
+.Pp
+These bindings generally correspond to individual C functions or constants
+and for the most do not implement functionality directly, except when doing
+so is convenient.
+For example, the
+.Fa user
+and
+.Fa group
+parameters for
+.Fn posix.unistd.chown
+can be integers corresponding to the desired user and group ID, as they must
+be for the
+.Xr chown 2
+system call, but they may instead be strings, in which case
+.Fn posix.unistd.chown
+will use
+.Xr getpwnam_r 3
+and
+.Xr getgrnam_r 3
+to resolve them to integer identifiers before calling
+.Xr chown 2 .
+.Pp
+The
+.Nm
+module defines a userdata type to represent a file descriptor,
+as returned or consumed by many functions in this module.
+The flua garbage collector will automatically close descriptors
+that are no longer in use, so descriptors can not be leaked.
+However, the garbage collector does not ensure that unreferenced
+descriptors are closed within any particular time frame.
+It may thus be necessary to manually close descriptors using
+.Fn posix.unistd.close .
+.Sh RETURN VALUES
+Functions in this module follow a convention of returning a
+non-nil value if the function call was successful, and a 3-tuple
+of nil, the error string, and an 
+.Xr errno 2
+value, if the call failed.
+.Sh EXAMPLES
+Retrieve system identifiers using
+.Xr uname 3
+and print them:
+.Bd -literal -offset indent
+local uts, err = posix.sys.utsname.uname()
+if not uts then
+    error("uname failed: " .. err)
+end
+for k, v in pairs(uts) do
+    print(k .. ": " .. v)
+end
+.Ed
+.Sh SEE ALSO
+.Xr intro 3lua
