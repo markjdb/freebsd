@@ -24,9 +24,11 @@
  *
  */
 
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <grp.h>
 #include <pwd.h>
@@ -200,4 +202,51 @@ luaopen_posix_unistd(lua_State *L)
 {
 	luaL_newlib(L, unistdlib);
 	return 1;
+}
+
+/*
+ * The base 'posix' module is a stopgap to implement a table compatible with
+ * the real lposix implementation.  Ideally we'd just implement this as an
+ * init.lua that require()s the other modules in, but defer that work until we
+ * move all of this out into modules as it should be.  That particular work is
+ * blocked on the bootstrap flua gaining module support (and bootstrap modules).
+ */
+int
+luaopen_posix(lua_State *L)
+{
+	/* Somewhat duplicated from linit_flua.c */
+	static const luaL_Reg posixlibs[] = {
+	    { "posix.sys.stat", luaopen_posix_sys_stat },
+	    { "posix.sys.utsname", luaopen_posix_sys_utsname },
+	    { "posix.unistd", luaopen_posix_unistd },
+	};
+
+	lua_newtable(L);	/* posix */
+	lua_newtable(L);	/* sys */
+
+	for (size_t i = 0; i < nitems(posixlibs); i++) {
+		const luaL_Reg *modinfo = &posixlibs[i];
+		const char *name;
+		int tblidx = -3;	/* posix */
+
+		name = modinfo->name;
+		assert(strncmp(name, "posix.", strlen("posix.")) == 0);
+		luaL_requiref(L, name, modinfo->func, 1);
+
+		/* Chop off the leading bit. */
+		name += strlen("posix.");
+
+		if (strncmp(name, "sys.", strlen("sys.")) == 0) {
+			/* Add to the sys table instead. */
+			tblidx = -2;
+
+			name += strlen("sys.");
+		}
+
+		lua_setfield(L, tblidx, name);
+	}
+
+	/* Finally, push the sys table in. */
+	lua_setfield(L, -2, "sys");
+	return (1);
 }

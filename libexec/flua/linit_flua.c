@@ -61,6 +61,7 @@ static const luaL_Reg loadedlibs[] = {
   {"posix.sys.stat", luaopen_posix_sys_stat},
   {"posix.sys.utsname", luaopen_posix_sys_utsname},
   {"posix.unistd", luaopen_posix_unistd},
+  {"posix", luaopen_posix},
   {"ucl", luaopen_ucl},
   {"fbsd", luaopen_fbsd},
   {NULL, NULL}
