@@ -36,6 +36,7 @@
 #include "lfs.h"
 #include "lposix.h"
 #include "lfbsd.h"
+#include "lfreebsd.h"
 #include "lua_ucl.h"
 
 /*
@@ -64,6 +65,7 @@ static const luaL_Reg loadedlibs[] = {
   {"posix", luaopen_posix},
   {"ucl", luaopen_ucl},
   {"fbsd", luaopen_fbsd},
+  {"freebsd", luaopen_freebsd},
   {NULL, NULL}
 };
 

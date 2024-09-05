@@ -15,11 +15,14 @@ LIBADD=	lua
 SRCS+=	lua.c
 
 # FreeBSD Extensions
-.PATH: ${.CURDIR}/modules
+.PATH: ${.CURDIR}/modules ${.CURDIR}/modules/freebsd
 SRCS+=	linit_flua.c
-SRCS+=	lfs.c lposix.c lfbsd.c
+SRCS+=	lfs.c lposix.c lfbsd.c lfreebsd.c
 
-CFLAGS+=	-I${SRCTOP}/lib/liblua -I${.CURDIR}/modules -I${LUASRC}
+CFLAGS+=	-I${SRCTOP}/lib/liblua		\
+		-I${.CURDIR}/modules		\
+		-I${.CURDIR}/modules/freebsd	\
+		-I${LUASRC}
 CFLAGS+=	-DLUA_PROGNAME="\"${PROG}\""
 
 # readline bits; these aren't needed if we're building a bootstrap flua, as we
