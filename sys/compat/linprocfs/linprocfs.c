@@ -1154,6 +1154,7 @@ linprocfs_doprocstatus(PFS_FILL_ARGS)
 	 * implement it. Submissions are welcome.
 	 */
 	sbuf_printf(sb, "VmSize:\t%8ju kB\n",	B2K((uintmax_t)kp.ki_size));
+	sbuf_printf(sb, "VmPeak:\t%8ju kB\n",	B2K((uintmax_t)kp.ki_maxsize));
 	sbuf_printf(sb, "VmLck:\t%8u kB\n",	P2K(0)); /* XXX */
 	sbuf_printf(sb, "VmRSS:\t%8ju kB\n",	P2K((uintmax_t)kp.ki_rssize));
 	sbuf_printf(sb, "VmData:\t%8ju kB\n",	P2K((uintmax_t)kp.ki_dsize));

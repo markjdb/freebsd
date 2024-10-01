@@ -320,6 +320,7 @@ nopgrp:
 		(void)kvm_read(kd, (u_long)proc.p_vmspace,
 		    (char *)&vmspace, sizeof(vmspace));
 		kp->ki_size = vmspace.vm_map.size;
+		kp->ki_maxsize = vmspace.vm_map.max_size;
 		/*
 		 * Approximate the kernel's method of calculating
 		 * this field.

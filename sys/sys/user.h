@@ -84,7 +84,7 @@
  * function kvm_proclist in lib/libkvm/kvm_proc.c .
  */
 #define	KI_NSPARE_INT	2
-#define	KI_NSPARE_LONG	12
+#define	KI_NSPARE_LONG	11
 #define	KI_NSPARE_PTR	5
 
 #ifndef _KERNEL
@@ -213,6 +213,7 @@ struct kinfo_proc {
 	struct	pwddesc *ki_pd;	/* pointer to process paths info */
 	void	*ki_spareptrs[KI_NSPARE_PTR];	/* spare room for growth */
 	long	ki_sparelongs[KI_NSPARE_LONG];	/* spare room for growth */
+	vm_size_t ki_maxsize;		/* maximum virtual size so far */
 	long	ki_sflag;		/* PS_* flags */
 	long	ki_tdflags;		/* XXXKSE kthread flag */
 };

@@ -889,6 +889,7 @@ _vm_map_init(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
 {
 
 	map->header.eflags = MAP_ENTRY_HEADER;
+	map->max_size = 0;
 	map->needs_wakeup = FALSE;
 	map->system_map = 0;
 	map->pmap = pmap;
@@ -1812,8 +1813,11 @@ charged:
 	 * Insert the new entry into the list
 	 */
 	vm_map_entry_link(map, new_entry);
-	if ((new_entry->eflags & MAP_ENTRY_GUARD) == 0)
+	if ((new_entry->eflags & MAP_ENTRY_GUARD) == 0) {
 		map->size += new_entry->end - new_entry->start;
+		if (map->size > map->max_size)
+			map->max_size = map->size;
+	}
 
 	/*
 	 * Try to coalesce the new entry with both the previous and next
@@ -4327,6 +4331,8 @@ vmspace_map_entry_forked(const struct vmspace *vm1, struct vmspace *vm2,
 		return;
 	entrysize = entry->end - entry->start;
 	vm2->vm_map.size += entrysize;
+	if (vm2->vm_map.size > vm2->vm_map.max_size)
+		vm2->vm_map.max_size = vm2->vm_map.size;
 	if (entry->eflags & (MAP_ENTRY_GROWS_DOWN | MAP_ENTRY_GROWS_UP)) {
 		vm2->vm_ssize += btoc(entrysize);
 	} else if (entry->start >= (vm_offset_t)vm1->vm_daddr &&

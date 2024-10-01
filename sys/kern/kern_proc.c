@@ -1139,6 +1139,7 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 		struct vmspace *vm = p->p_vmspace;
 
 		kp->ki_size = vm->vm_map.size;
+		kp->ki_maxsize = vm->vm_map.max_size;
 		kp->ki_rssize = vmspace_resident_count(vm); /*XXX*/
 		FOREACH_THREAD_IN_PROC(p, td0)
 			kp->ki_rssize += td0->td_kstack_pages;
@@ -1445,6 +1446,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	for (i = 0; i < KI_NGROUPS; i++)
 		CP(*ki, *ki32, ki_groups[i]);
 	CP(*ki, *ki32, ki_size);
+	CP(*ki, *ki32, ki_maxsize);
 	CP(*ki, *ki32, ki_rssize);
 	CP(*ki, *ki32, ki_swrss);
 	CP(*ki, *ki32, ki_tsize);

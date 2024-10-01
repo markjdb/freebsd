@@ -367,6 +367,7 @@ struct kinfo_proc32 {
 	short	ki_spare_short2;
 	gid_t 	ki_groups[KI_NGROUPS];
 	uint32_t ki_size;
+	uint32_t ki_maxsize;
 	int32_t ki_rssize;
 	int32_t ki_swrss;
 	int32_t ki_tsize;
