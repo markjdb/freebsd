@@ -1818,20 +1818,27 @@ netmap_mem_private_new(u_int txr, u_int txd, u_int rxr, u_int rxd,
 	return d;
 }
 
-/* Reference IOMMU and NUMA local allocator - find existing or create new,
- * for non-hw adapters, fall back to global allocator.
- */
 struct netmap_mem_d *
-netmap_mem_get_allocator(struct netmap_adapter *na)
+netmap_mem_get_na_allocator(struct netmap_adapter *na)
 {
-	int i, domain, err, grp_id;
-	struct netmap_mem_d *nmd;
+	int domain, grp_id;
 
 	if (na == NULL || na->pdev == NULL)
 		return netmap_mem_get(&nm_mem);
 
 	domain = nm_numa_domain(na->pdev);
 	grp_id = nm_iommu_group_id(na->pdev);
+	return (netmap_mem_get_allocator(grp_id, domain));
+}
+
+/* Reference IOMMU and NUMA local allocator - find existing or create new,
+ * for non-hw adapters, fall back to global allocator.
+ */
+struct netmap_mem_d *
+netmap_mem_get_allocator(int grp_id, int domain)
+{
+	int i, err;
+	struct netmap_mem_d *nmd;
 
 	NM_MTX_LOCK(nm_mem_list_lock);
 	nmd = netmap_last_mem_d;

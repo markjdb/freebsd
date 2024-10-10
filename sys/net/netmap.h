@@ -586,6 +586,11 @@ enum {
 	 */
 	NETMAP_REQ_OPT_OFFSETS,
 
+	/* On NETMAP_REQ_REGISTER, override the NUMA affinity of the memory
+	 * pool used for a hardware port.  Ignored for other port types.
+	 */
+	NETMAP_REQ_OPT_NUMA_DOMAIN,
+
 	/* This is a marker to count the number of available options.
 	 * New options must be added above it. */
 	NETMAP_REQ_OPT_MAX,
@@ -990,6 +995,16 @@ struct nmreq_opt_offsets {
 	uint32_t		nro_tx_align;
 	/* Reserved: set to zero. */
 	uint64_t		nro_min_gap;
+};
+
+struct nmreq_opt_numa_domain {
+	struct nmreq_option	nro_opt;
+
+	/* the ID of the NUMA domain to use for memory allocations.  A value of
+	 * -1 means that the system will try to use the port's NUMA affinity
+	 *  info to select the domain.
+	 */
+	int32_t			nro_numa_domain;
 };
 
 #endif /* _NET_NETMAP_H_ */

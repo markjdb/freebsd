@@ -903,6 +903,7 @@ struct netmap_adapter {
  	struct netmap_mem_d *nm_mem;
 	struct netmap_mem_d *nm_mem_prev;
 	struct netmap_lut na_lut;
+	int32_t na_numa_domain;
 
 	/* additional information attached to this adapter
 	 * by other netmap subsystems. Currently used by

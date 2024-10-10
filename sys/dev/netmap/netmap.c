@@ -1621,6 +1621,35 @@ netmap_get_na(struct nmreq_header *hdr,
 	if (*na != NULL) /* valid match in netmap_get_bdg_na() */
 		goto out;
 
+	/* did the user ask for specific NUMA affinity? */
+	if (nmd == NULL) {
+		struct nmreq_option *opt;
+
+		opt = nmreq_getoption(hdr, NETMAP_REQ_OPT_NUMA_DOMAIN);
+		if (opt != NULL) {
+			struct nmreq_opt_numa_domain *numa;
+			int32_t domain;
+
+			numa = (struct nmreq_opt_numa_domain *)opt;
+			domain = numa->nro_numa_domain;
+			if (domain < -1 || domain >= vm_ndomains) {
+				error = EINVAL;
+				goto out;
+			}
+			if (domain != -1) {
+				nmd = netmap_mem_get_allocator(-1, domain);
+				if (nmd == NULL) {
+					/*
+					 * Failed to honour the
+					 * REQ_OPT_NUMA_DOMAIN request.
+					 */
+					error = ENXIO;
+					goto out;
+				}
+			}
+		}
+	}
+
 	/*
 	 * This must be a hardware na, lookup the name in the system.
 	 * Note that by hardware we actually mean "it shows up in ifconfig".
@@ -2818,6 +2847,7 @@ netmap_ioctl(struct netmap_priv_d *priv, u_long cmd, caddr_t data,
 						break;
 					}
 				}
+
 				/* find the interface and a reference */
 				error = netmap_get_na(hdr, &na, &ifp, nmd,
 						      1 /* create */); /* keep reference */
@@ -4011,7 +4041,7 @@ netmap_attach_common(struct netmap_adapter *na)
 
 	if (na->nm_mem == NULL) {
 		/* select an allocator based on IOMMU and NUMA affinity */
-		na->nm_mem = netmap_mem_get_allocator(na);
+		na->nm_mem = netmap_mem_get_na_allocator(na);
 	}
 	if (na->nm_bdg_attach == NULL)
 		/* no special nm_bdg_attach callback. On VALE
