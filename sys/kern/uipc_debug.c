@@ -75,110 +75,6 @@ db_print_sotype(short so_type)
 }
 
 static void
-db_print_sooptions(int so_options)
-{
-	int comma;
-
-	comma = 0;
-	if (so_options & SO_DEBUG) {
-		db_printf("%sSO_DEBUG", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_ACCEPTCONN) {
-		db_printf("%sSO_ACCEPTCONN", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_REUSEADDR) {
-		db_printf("%sSO_REUSEADDR", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_KEEPALIVE) {
-		db_printf("%sSO_KEEPALIVE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_DONTROUTE) {
-		db_printf("%sSO_DONTROUTE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_BROADCAST) {
-		db_printf("%sSO_BROADCAST", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_USELOOPBACK) {
-		db_printf("%sSO_USELOOPBACK", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_LINGER) {
-		db_printf("%sSO_LINGER", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_OOBINLINE) {
-		db_printf("%sSO_OOBINLINE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_REUSEPORT) {
-		db_printf("%sSO_REUSEPORT", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_REUSEPORT_LB) {
-		db_printf("%sSO_REUSEPORT_LB", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_TIMESTAMP) {
-		db_printf("%sSO_TIMESTAMP", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_NOSIGPIPE) {
-		db_printf("%sSO_NOSIGPIPE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_ACCEPTFILTER) {
-		db_printf("%sSO_ACCEPTFILTER", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_BINTIME) {
-		db_printf("%sSO_BINTIME", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_NO_OFFLOAD) {
-		db_printf("%sSO_NO_OFFLOAD", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_options & SO_NO_DDP) {
-		db_printf("%sSO_NO_DDP", comma ? ", " : "");
-		comma = 1;
-	}
-}
-
-static void
-db_print_sostate(short so_state)
-{
-	int comma;
-
-	comma = 0;
-	if (so_state & SS_ISCONNECTED) {
-		db_printf("%sSS_ISCONNECTED", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_state & SS_ISCONNECTING) {
-		db_printf("%sSS_ISCONNECTING", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_state & SS_ISDISCONNECTING) {
-		db_printf("%sSS_ISDISCONNECTING", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_state & SS_NBIO) {
-		db_printf("%sSS_NBIO", comma ? ", " : "");
-		comma = 1;
-	}
-	if (so_state & SS_ASYNC) {
-		db_printf("%sSS_ASYNC", comma ? ", " : "");
-		comma = 1;
-	}
-}
-
-static void
 db_print_soqstate(int so_qstate)
 {
 	int comma;
@@ -190,26 +86,6 @@ db_print_soqstate(int so_qstate)
 	}
 	if (so_qstate & SQ_COMP) {
 		db_printf("%sSQ_COMP", comma ? ", " : "");
-		comma = 1;
-	}
-}
-
-static void
-db_print_sbstate(short sb_state)
-{
-	int comma;
-
-	comma = 0;
-	if (sb_state & SBS_CANTSENDMORE) {
-		db_printf("%sSBS_CANTSENDMORE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_state & SBS_CANTRCVMORE) {
-		db_printf("%sSBS_CANTRCVMORE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_state & SBS_RCVATMARK) {
-		db_printf("%sSBS_RCVATMARK", comma ? ", " : "");
 		comma = 1;
 	}
 }
@@ -252,34 +128,6 @@ db_print_domain(struct domain *d, const char *domain_name, int indent)
 }
 
 static void
-db_print_prflags(short pr_flags)
-{
-	int comma;
-
-	comma = 0;
-	if (pr_flags & PR_ATOMIC) {
-		db_printf("%sPR_ATOMIC", comma ? ", " : "");
-		comma = 1;
-	}
-	if (pr_flags & PR_ADDR) {
-		db_printf("%sPR_ADDR", comma ? ", " : "");
-		comma = 1;
-	}
-	if (pr_flags & PR_CONNREQUIRED) {
-		db_printf("%sPR_CONNREQUIRED", comma ? ", " : "");
-		comma = 1;
-	}
-	if (pr_flags & PR_WANTRCVD) {
-		db_printf("%sPR_WANTRCVD", comma ? ", " : "");
-		comma = 1;
-	}
-	if (pr_flags & PR_IMPLOPCL) {
-		db_printf("%sPR_IMPLOPCL", comma ? ", " : "");
-		comma = 1;
-	}
-}
-
-static void
 db_print_protosw(struct protosw *pr, const char *prname, int indent)
 {
 
@@ -298,52 +146,10 @@ db_print_protosw(struct protosw *pr, const char *prname, int indent)
 	db_printf("pr_protocol: %d\n", pr->pr_protocol);
 
 	db_print_indent(indent);
-	db_printf("pr_flags: %d (", pr->pr_flags);
-	db_print_prflags(pr->pr_flags);
-	db_printf(")\n");
+	db_printf("pr_flags: %b\n", pr->pr_flags, PR_FLAG_BITS);
 
 	db_print_indent(indent);
 	db_printf("pr_ctloutput: %p   ", pr->pr_ctloutput);
-}
-
-static void
-db_print_sbflags(short sb_flags)
-{
-	int comma;
-
-	comma = 0;
-	if (sb_flags & SB_WAIT) {
-		db_printf("%sSB_WAIT", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_SEL) {
-		db_printf("%sSB_SEL", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_ASYNC) {
-		db_printf("%sSB_ASYNC", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_UPCALL) {
-		db_printf("%sSB_UPCALL", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_NOINTR) {
-		db_printf("%sSB_NOINTR", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_AIO) {
-		db_printf("%sSB_AIO", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_KNOTE) {
-		db_printf("%sSB_KNOTE", comma ? ", " : "");
-		comma = 1;
-	}
-	if (sb_flags & SB_AUTOSIZE) {
-		db_printf("%sSB_AUTOSIZE", comma ? ", " : "");
-		comma = 1;
-	}
 }
 
 static void
@@ -356,9 +162,7 @@ db_print_sockbuf(struct sockbuf *sb, const char *sockbufname, int indent)
 	indent += 2;
 
 	db_print_indent(indent);
-	db_printf("sb_state: 0x%x (", sb->sb_state);
-	db_print_sbstate(sb->sb_state);
-	db_printf(")\n");
+	db_printf("sb_state: 0x%b\n", sb->sb_state, SBS_FLAG_BITS);
 
 	db_print_indent(indent);
 	db_printf("sb_mb: %p   ", sb->sb_mb);
@@ -382,9 +186,7 @@ db_print_sockbuf(struct sockbuf *sb, const char *sockbufname, int indent)
 	db_printf("sb_timeo: %jd\n", sb->sb_timeo);
 
 	db_print_indent(indent);
-	db_printf("sb_flags: 0x%x (", sb->sb_flags);
-	db_print_sbflags(sb->sb_flags);
-	db_printf(")\n");
+	db_printf("sb_flags: 0x%b\n", sb->sb_flags, SB_FLAG_BITS);
 
 	db_print_indent(indent);
 	db_printf("sb_aiojobq first: %p\n", TAILQ_FIRST(&sb->sb_aiojobq));
@@ -406,15 +208,11 @@ db_print_socket(struct socket *so, const char *socketname, int indent)
 	db_printf(")\n");
 
 	db_print_indent(indent);
-	db_printf("so_options: 0x%x (", so->so_options);
-	db_print_sooptions(so->so_options);
-	db_printf(")\n");
+	db_printf("so_options: 0x%b\n", so->so_options, SO_FLAG_BITS);
 
 	db_print_indent(indent);
 	db_printf("so_linger: %d   ", so->so_linger);
-	db_printf("so_state: 0x%x (", so->so_state);
-	db_print_sostate(so->so_state);
-	db_printf(")\n");
+	db_printf("so_state: 0x%b\n", so->so_state, SS_FLAG_BITS);
 
 	db_print_indent(indent);
 	db_printf("so_pcb: %p   ", so->so_pcb);

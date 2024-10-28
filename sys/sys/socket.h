@@ -147,6 +147,12 @@ typedef	__uintptr_t	uintptr_t;
 #define	SO_REUSEPORT_LB	0x00010000	/* reuse with load balancing */
 #define	SO_RERROR	0x00020000	/* keep track of receive errors */
 
+#define	SO_FLAG_BITS	\
+	"\20\1DEBUG\2ACCEPTCONN\3REUSEADDR\4KEEPALIVE\5DONTROUTE\6BROADCAST" \
+	"\7USELOOPBACK\10LINGER\11OOBINLINE\12REUSEPORT\13TIMESTAMP" \
+	"\14NOSIGPIPE\15ACCEPTFILTER\16BINTIME\17NO_OFFLOAD\20NO_DDP" \
+	"\21REUSEPORT_LB\22RERROR"
+
 /*
  * Additional options, not kept in so_options.
  */

@@ -240,6 +240,10 @@ struct socket {
 /* was	SS_ISCONFIRMING		0x0400	*/
 #define	SS_ISDISCONNECTED	0x2000	/* socket disconnected from peer */
 
+#define	SS_FLAG_BITS		\
+	"\20\2ISCONNECTED\3ISCONNECTING\4ISDISCONNECTING\11NBIO" \
+	"\12ASYNC\16ISDISCONNECTED"
+
 #ifdef _KERNEL
 
 #define	SOCK_MTX(so)		(&(so)->so_lock)

@@ -168,6 +168,10 @@ struct protosw {
 #define	PR_CAPATTACH	0x80		/* socket can attach in cap mode */
 #define	PR_SOCKBUF	0x100		/* private implementation of buffers */
 
+#define	PR_FLAG_BITS	\
+	"\20\1ATOMIC\2ADDR\3CONNREQUIRED\4WANTRCVD\6IMPLOPCL" \
+	"\7CAPATTACH\10SOCKBUF"
+
 #ifdef _KERNEL
 struct domain *pffinddomain(int family);
 struct protosw *pffindproto(int family, int type, int proto);

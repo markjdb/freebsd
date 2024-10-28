@@ -52,9 +52,17 @@
 					   previously used for SB_TLS_IFNET */
 #define	SB_TLS_RX_RESYNC 0x8000		/* KTLS RX lost HW sync */
 
+#define	SB_FLAG_BITS	\
+	"\20\1TLS_RX\2TLS_RX_RUNNING\3WAIT\4SEL\5ASYNC\6UPCALL\7NOINTR" \
+	"\10AIO\11KNOTE\12NOCOALESCE\13IN_TOE\14AUTOSIZE\15STOP\16AIO_RUNNING" \
+	"\17SPLICED\20TLS_RX_RESYNC"
+
 #define	SBS_CANTSENDMORE	0x0010	/* can't send more data to peer */
 #define	SBS_CANTRCVMORE		0x0020	/* can't receive more data from peer */
 #define	SBS_RCVATMARK		0x0040	/* at mark on input */
+
+#define	SBS_FLAG_BITS	\
+	"\20\5CANTSENDMORE\6CANTRCVMORE\7RCVATMARK"
 
 #if defined(_KERNEL) || defined(_WANT_SOCKET)
 #include <sys/_lock.h>
