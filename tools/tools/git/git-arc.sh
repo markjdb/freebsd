@@ -609,9 +609,9 @@ patch_commit()
     echo >> "$tmp"
     # XXX this leaves an extra newline in some cases.
     reviewers=$(diff2reviewers "$diff" | sed '/^$/d' | paste -sd ',' - | sed 's/,/, /g')
-    if [ -n "$reviewers" ]; then
-        printf "Reviewed by:\t%s\n" "${reviewers}" >> "$tmp"
-    fi
+    for reviewer in $reviewers; do
+        printf "Reviewed-by: %s\n" "${reviewer}" >> "$tmp"
+    done
     # XXX TODO refactor with gitarc__stage maybe?
     printf "Differential Revision:\thttps://reviews.freebsd.org/%s\n" "${diff}" >> "$tmp"
     git commit --author "${author}" --file "$tmp"
@@ -682,9 +682,9 @@ gitarc__stage()
         if [ -n "$diff" ]; then
             # XXX this leaves an extra newline in some cases.
             reviewers=$(diff2reviewers "$diff" | sed '/^$/d' | paste -sd ',' - | sed 's/,/, /g')
-            if [ -n "$reviewers" ]; then
-                printf "Reviewed by:\t%s\n" "${reviewers}" >> "$tmp"
-            fi
+            for reviewer in $reviewers; do
+                printf "Reviewed-by: %s\n" "${reviewer}" >> "$tmp"
+            done
             printf "Differential Revision:\thttps://reviews.freebsd.org/%s" "${diff}" >> "$tmp"
         fi
         author=$(git show -s --format='%an <%ae>' "${commit}")
