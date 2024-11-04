@@ -440,7 +440,7 @@ zstd_enum_to_level(enum zio_zstd_levels level, int16_t *zstd_level)
 }
 
 #ifndef IN_LIBSA
-static size_t
+static size_t __unused
 zfs_zstd_compress_wrap(void *s_start, void *d_start, size_t s_len, size_t d_len,
     int level)
 {
