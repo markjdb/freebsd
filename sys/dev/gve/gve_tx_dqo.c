@@ -28,6 +28,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
+#include "opt_inet6.h"
+
 #include "gve.h"
 #include "gve_dqo.h"
 
@@ -321,26 +324,34 @@ gve_prep_tso(struct mbuf *mbuf, int *header_len)
 {
 	uint8_t l3_off, l4_off = 0;
 	struct ether_header *eh;
-	struct ip6_hdr *ip6;
 	struct tcphdr *th;
-	struct ip *ip;
-	bool is_ipv6;
+	u_short csum;
 
 	PULLUP_HDR(mbuf, sizeof(*eh));
 	eh = mtod(mbuf, struct ether_header *);
 	KASSERT(eh->ether_type != ETHERTYPE_VLAN,
 	    ("VLAN-tagged packets not supported"));
-	is_ipv6 = ntohs(eh->ether_type) == ETHERTYPE_IPV6;
 	l3_off = ETHER_HDR_LEN;
 
-	if (is_ipv6) {
+#ifdef INET6
+	if (ntohs(eh->ether_type) == ETHERTYPE_IPV6) {
+		struct ip6_hdr *ip6;
+
 		PULLUP_HDR(mbuf, l3_off + sizeof(*ip6));
 		ip6 = (struct ip6_hdr *)(mtodo(mbuf, l3_off));
 		l4_off = l3_off + sizeof(struct ip6_hdr);
-	} else if (ntohs(eh->ether_type) == ETHERTYPE_IP) {
+		csum = in6_cksum_pseudo(ip6, /*len=*/0, IPPROTO_TCP,
+		    /*csum=*/0);
+	} else
+#endif
+	if (ntohs(eh->ether_type) == ETHERTYPE_IP) {
+		struct ip *ip;
+
 		PULLUP_HDR(mbuf, l3_off + sizeof(*ip));
 		ip = (struct ip *)(mtodo(mbuf, l3_off));
 		l4_off = l3_off + (ip->ip_hl << 2);
+		csum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
+		    htons(IPPROTO_TCP));
 	}
 
 	PULLUP_HDR(mbuf, l4_off + sizeof(struct tcphdr *));
@@ -351,12 +362,7 @@ gve_prep_tso(struct mbuf *mbuf, int *header_len)
 	 * Hardware requires the th->th_sum to not include the TCP payload,
 	 * hence we recompute the csum with it excluded.
 	 */
-	if (is_ipv6)
-		th->th_sum = in6_cksum_pseudo(ip6, /*len=*/0,
-		    IPPROTO_TCP, /*csum=*/0);
-	else
-		th->th_sum = in_pseudo(ip->ip_src.s_addr,
-		    ip->ip_dst.s_addr, htons(IPPROTO_TCP));
+	th->th_sum = csum;
 
 	return (0);
 }
