@@ -25,6 +25,4 @@
  * SUCH DAMAGE.
  */
 
-#ifndef __LP64__
 int t_cmsg_len(void);
-#endif

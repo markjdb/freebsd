@@ -39,7 +39,6 @@
 #include "t_generic.h"
 #include "t_cmsg_len.h"
 
-#ifndef __LP64__
 static int
 t_cmsg_len_client(int fd)
 {
@@ -132,4 +131,3 @@ t_cmsg_len(void)
 {
 	return (t_generic(t_cmsg_len_client, t_cmsg_len_server));
 }
-#endif

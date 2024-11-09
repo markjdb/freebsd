@@ -103,16 +103,10 @@ static const struct test_func test_stream_tbl[] = {
 	  .func = t_bintime,
 	  .desc = "Sending, receiving bintime"
 	},
-/*
- * The testcase fails on 64-bit architectures (amd64), but passes on 32-bit
- * architectures (i386); see bug 206543
- */
-#ifndef __LP64__
 	{
 	  .func = t_cmsg_len,
 	  .desc = "Check cmsghdr.cmsg_len"
 	},
-#endif
 	{
 	  .func = t_peercred,
 	  .desc = "Check LOCAL_PEERCRED socket option"
@@ -159,12 +153,10 @@ static const struct test_func test_dgram_tbl[] = {
 	  .func = t_bintime,
 	  .desc = "Sending, receiving bintime"
 	},
-#ifndef __LP64__
 	{
 	  .func = t_cmsg_len,
 	  .desc = "Check cmsghdr.cmsg_len"
 	},
-#endif
 #if defined(SCM_REALTIME)
 	{
 	  .func = t_timespec_real,
