@@ -105,6 +105,7 @@ void ktrcsw_old(struct ktr_csw_old *);
 void ktruser(int, void *);
 void ktrcaprights(cap_rights_t *);
 void ktritimerval(struct itimerval *it);
+void ktrmsghdr(struct msghdr *);
 void ktrsockaddr(struct sockaddr *);
 void ktrsplice(struct splice *);
 void ktrstat(struct stat *);
@@ -1886,6 +1887,19 @@ ktritimerval(struct itimerval *it)
 }
 
 void
+ktrmsghdr(struct msghdr *mp)
+{
+	printf("struct msghdr { ");
+	printf(".name = %p, .namelen = %d, ", mp->msg_name, mp->msg_namelen);
+	printf(".iov = %p, .iovlen = %d, ", mp->msg_iov, mp->msg_iovlen);
+	printf(".control = %p, .controllen = %d, ", mp->msg_control,
+	    mp->msg_controllen);
+	printf(".flags = ");
+	sysdecode_msg_flags(stdout, mp->msg_flags, NULL);
+	printf(" }\n");
+}
+
+void
 ktrsockaddr(struct sockaddr *sa)
 {
 /*
@@ -2105,6 +2119,7 @@ ktrstruct(char *buf, size_t buflen)
 	int i;
 	cap_rights_t rights;
 	struct itimerval it;
+	struct msghdr mh;
 	struct stat sb;
 	struct sockaddr_storage ss;
 	struct bitset *set;
@@ -2135,6 +2150,11 @@ ktrstruct(char *buf, size_t buflen)
 			goto invalid;
 		memcpy(&it, data, datalen);
 		ktritimerval(&it);
+	} else if (strcmp(name, "msghdr") == 0) {
+		if (datalen != sizeof(struct msghdr))
+			goto invalid;
+		memcpy(&mh, data, datalen);
+		ktrmsghdr(&mh);
 	} else if (strcmp(name, "stat") == 0) {
 		if (datalen != sizeof(struct stat))
 			goto invalid;
