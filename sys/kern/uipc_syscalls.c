@@ -739,8 +739,11 @@ kern_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 	so = (struct socket *)fp->f_data;
 
 #ifdef KTRACE
-	if (mp->msg_name != NULL && KTRPOINT(td, KTR_STRUCT))
-		ktrsockaddr(mp->msg_name);
+	if (KTRPOINT(td, KTR_STRUCT)) {
+		ktrmsghdr(mp);
+		if (mp->msg_name != NULL)
+			ktrsockaddr(mp->msg_name);
+	}
 #endif
 #ifdef MAC
 	if (mp->msg_name != NULL) {
@@ -1014,8 +1017,11 @@ kern_recvit(struct thread *td, int s, struct msghdr *mp, enum uio_seg fromseg,
 out:
 	fdrop(fp, td);
 #ifdef KTRACE
-	if (fromsa && KTRPOINT(td, KTR_STRUCT))
-		ktrsockaddr(fromsa);
+	if (KTRPOINT(td, KTR_STRUCT)) {
+		if (fromsa != NULL)
+			ktrsockaddr(fromsa);
+		ktrmsghdr(mp);
+	}
 #endif
 	free(fromsa, M_SONAME);
 

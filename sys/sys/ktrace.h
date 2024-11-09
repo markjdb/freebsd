@@ -352,6 +352,8 @@ void	ktrdata(int, const void *, size_t);
 	ktrstruct("caprights", (s), sizeof(cap_rights_t))
 #define	ktritimerval(s) \
 	ktrstruct("itimerval", (s), sizeof(struct itimerval))
+#define	ktrmsghdr(s) \
+	ktrstruct("msghdr", (s), sizeof(struct msghdr))
 #define ktrsockaddr(s) \
 	ktrstruct("sockaddr", (s), ((struct sockaddr *)(s))->sa_len)
 #define ktrstat(s) \
