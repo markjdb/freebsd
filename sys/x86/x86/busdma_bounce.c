@@ -256,6 +256,7 @@ bounce_bus_dma_tag_destroy(bus_dma_tag_t dmat)
 			error = EBUSY;
 			goto out;
 		}
+		destroy_bounce_zone(dmat);
 		if (dmat->segments != NULL)
 			free(dmat->segments, M_DEVBUF);
 		free(dmat, M_DEVBUF);

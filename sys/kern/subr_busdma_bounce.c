@@ -76,6 +76,7 @@ struct bounce_zone {
 #ifdef dmat_domain
 	int		domain;
 #endif
+	int		refcount;
 	sbintime_t	total_deferred_time;
 	bus_size_t	alignment;
 	bus_addr_t	lowaddr;
@@ -87,6 +88,7 @@ struct bounce_zone {
 
 static struct mtx bounce_lock;
 MTX_SYSINIT(bounce_lock, &bounce_lock, "bounce pages lock", MTX_DEF);
+static bool busdma_thread_started = false;
 static int total_bpages;
 static int busdma_zonecount;
 
@@ -170,6 +172,7 @@ alloc_bounce_zone(bus_dma_tag_t dmat)
 	bool start_thread;
 
 	/* Check to see if we already have a suitable zone */
+	mtx_lock(&bounce_lock);
 	STAILQ_FOREACH(bz, &bounce_zone_list, links) {
 		if ((dmat_alignment(dmat) <= bz->alignment) &&
 #ifdef dmat_domain
@@ -177,14 +180,16 @@ alloc_bounce_zone(bus_dma_tag_t dmat)
 #endif
 		    (dmat_lowaddr(dmat) >= bz->lowaddr)) {
 			dmat->bounce_zone = bz;
+			KASSERT(bz->refcount >= 1,
+			    ("alloc_bounce_zone: refcount %d", bz->refcount));
+			bz->refcount++;
+			mtx_unlock(&bounce_lock);
 			return (0);
 		}
 	}
 
-	if ((bz = (struct bounce_zone *)malloc(sizeof(*bz), M_BUSDMA,
-	    M_NOWAIT | M_ZERO)) == NULL)
+	if ((bz = malloc(sizeof(*bz), M_BUSDMA, M_NOWAIT | M_ZERO)) == NULL)
 		return (ENOMEM);
-
 	STAILQ_INIT(&bz->bounce_page_list);
 	STAILQ_INIT(&bz->bounce_map_waitinglist);
 	bz->free_bpages = 0;
@@ -196,22 +201,25 @@ alloc_bounce_zone(bus_dma_tag_t dmat)
 #ifdef dmat_domain
 	bz->domain = dmat_domain(dmat);
 #endif
+	bz->refcount = 1;
 	snprintf(bz->zoneid, sizeof(bz->zoneid), "zone%d", busdma_zonecount);
 	busdma_zonecount++;
 	snprintf(bz->lowaddrid, sizeof(bz->lowaddrid), "%#jx",
 	    (uintmax_t)bz->lowaddr);
-	start_thread = STAILQ_EMPTY(&bounce_zone_list);
+	if (!busdma_thread_started)
+		start_thread = busdma_thread_started = true;
+	else
+		start_thread = false;
 	STAILQ_INSERT_TAIL(&bounce_zone_list, bz, links);
 	dmat->bounce_zone = bz;
+	mtx_unlock(&bounce_lock);
 
 	sysctl_ctx_init(&bz->sysctl_tree);
 	bz->sysctl_tree_top = SYSCTL_ADD_NODE(&bz->sysctl_tree,
 	    SYSCTL_STATIC_CHILDREN(_hw_busdma), OID_AUTO, bz->zoneid,
 	    CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "");
-	if (bz->sysctl_tree_top == NULL) {
-		sysctl_ctx_free(&bz->sysctl_tree);
-		return (0);	/* XXX error code? */
-	}
+	if (bz->sysctl_tree_top == NULL)
+		panic("%s: failed to allocate sysctl tree", __func__);
 
 	SYSCTL_ADD_INT(busdma_sysctl_tree(bz),
 	    SYSCTL_CHILDREN(busdma_sysctl_tree_top(bz)), OID_AUTO,
@@ -259,6 +267,46 @@ alloc_bounce_zone(bus_dma_tag_t dmat)
 			printf("failed to create busdma thread");
 	}
 	return (0);
+}
+
+static void
+destroy_bounce_zone(bus_dma_tag_t dmat)
+{
+	struct bounce_page *bpage;
+	struct bounce_zone *bz;
+
+	bz = dmat->bounce_zone;
+	if (bz == NULL)
+		return;
+
+	mtx_lock(&bounce_lock);
+	KASSERT(bz->refcount > 0,
+	    ("destroy_bounce_zone: refcount %d", bz->refcount));
+	if (--bz->refcount > 0) {
+		mtx_unlock(&bounce_lock);
+		return;
+	}
+	STAILQ_REMOVE(&bounce_zone_list, bz, bounce_zone, links);
+	mtx_unlock(&bounce_lock);
+
+	KASSERT(STAILQ_EMPTY(&bz->bounce_map_waitinglist),
+	    ("destroy_bounce_zone: waiting list not empty"));
+	KASSERT(bz->active_bpages == 0,
+	    ("destroy_bounce_zone: %d active pages still allocated",
+	    bz->active_bpages));
+	KASSERT(bz->total_bpages == bz->free_bpages,
+	    ("destroy_bounce_zone: %d/%d pages still allocated",
+	    bz->total_bpages - bz->free_bpages, bz->total_bpages));
+
+	while ((bpage = STAILQ_FIRST(&bz->bounce_page_list)) != NULL) {
+		STAILQ_REMOVE_HEAD(&bz->bounce_page_list, links);
+		total_bpages--;
+		free((void *)bpage->vaddr, M_BOUNCE);
+		free(bpage, M_BUSDMA);
+	}
+
+	sysctl_ctx_free(&bz->sysctl_tree);
+	free(bz, M_BUSDMA);
 }
 
 static int
