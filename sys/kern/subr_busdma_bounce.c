@@ -168,9 +168,12 @@ addr_needs_bounce(bus_dma_tag_t dmat, bus_addr_t paddr)
 static int
 alloc_bounce_zone(bus_dma_tag_t dmat)
 {
-	struct bounce_zone *bz;
+	struct bounce_zone *bz, *bz1;
 	bool start_thread;
 
+	bz1 = NULL;
+
+again:
 	/* Check to see if we already have a suitable zone */
 	mtx_lock(&bounce_lock);
 	STAILQ_FOREACH(bz, &bounce_zone_list, links) {
@@ -184,12 +187,18 @@ alloc_bounce_zone(bus_dma_tag_t dmat)
 			    ("alloc_bounce_zone: refcount %d", bz->refcount));
 			bz->refcount++;
 			mtx_unlock(&bounce_lock);
+			free(bz1, M_BUSDMA);
 			return (0);
 		}
 	}
 
-	if ((bz = malloc(sizeof(*bz), M_BUSDMA, M_NOWAIT | M_ZERO)) == NULL)
-		return (ENOMEM);
+	if (bz1 == NULL) {
+		mtx_unlock(&bounce_lock);
+		bz1 = malloc(sizeof(*bz1), M_BUSDMA, M_WAITOK | M_ZERO);
+		goto again;
+	}
+	bz = bz1;
+
 	STAILQ_INIT(&bz->bounce_page_list);
 	STAILQ_INIT(&bz->bounce_map_waitinglist);
 	bz->free_bpages = 0;
