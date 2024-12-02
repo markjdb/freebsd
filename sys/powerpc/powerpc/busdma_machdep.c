@@ -330,22 +330,16 @@ bus_dmamap_create(bus_dma_tag_t dmat, int flags, bus_dmamap_t *mapp)
 			maxpages = MAX_BPAGES;
 		else
 			maxpages = MIN(MAX_BPAGES, Maxmem -atop(dmat->lowaddr));
-		if ((dmat->flags & BUS_DMA_MIN_ALLOC_COMP) == 0
-		 || (bz->map_count > 0 && bz->total_bpages < maxpages)) {
+		if (((dmat->flags & BUS_DMA_MIN_ALLOC_COMP) == 0 ||
+		    bz->map_count > 0) && bz->total_bpages < maxpages) {
 			int pages;
 
 			pages = MAX(atop(dmat->maxsize), 1);
 			pages = MIN(maxpages - bz->total_bpages, pages);
-			pages = MAX(pages, 1);
 			if (alloc_bounce_pages(dmat, pages) < pages)
 				error = ENOMEM;
-
-			if ((dmat->flags & BUS_DMA_MIN_ALLOC_COMP) == 0) {
-				if (error == 0)
-					dmat->flags |= BUS_DMA_MIN_ALLOC_COMP;
-			} else {
-				error = 0;
-			}
+			else
+				dmat->flags |= BUS_DMA_MIN_ALLOC_COMP;
 		}
 		bz->map_count++;
 	}
