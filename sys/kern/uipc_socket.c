@@ -3039,6 +3039,8 @@ dontblock:
 			if (flags & MSG_PEEK)
 				moff += len;
 			else {
+				struct mbuf *mfree;
+
 				if (mp != NULL) {
 					if (flags & MSG_DONTWAIT) {
 						*mp = m_copym(m, 0, len,
@@ -3057,13 +3059,18 @@ dontblock:
 							break;
 						}
 					} else {
+						/*
+						 * XXX-MJ this should happen
+						 * after sbcut, no?
+						 */
 						SOCKBUF_UNLOCK(&so->so_rcv);
 						*mp = m_copym(m, 0, len,
 						    M_WAITOK);
 						SOCKBUF_LOCK(&so->so_rcv);
 					}
 				}
-				sbcut_locked(&so->so_rcv, len);
+				mfree = sbcut_locked(&so->so_rcv, len);
+				m_freem(mfree);
 			}
 		}
 		SOCKBUF_LOCK_ASSERT(&so->so_rcv);
