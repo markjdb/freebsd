@@ -486,15 +486,14 @@ taskqueue_run_locked(struct taskqueue *queue)
 	struct epoch_tracker et;
 	struct taskqueue_busy tb;
 	struct task *task;
-	bool in_net_epoch;
-	int pending;
+	int epochtasks, pending;
 
 	KASSERT(queue != NULL, ("tq is NULL"));
 	TQ_ASSERT_LOCKED(queue);
 	tb.tb_running = NULL;
 	LIST_INSERT_HEAD(&queue->tq_active, &tb, tb_link);
-	in_net_epoch = false;
 
+	epochtasks = 0;
 	while ((task = STAILQ_FIRST(&queue->tq_queue)) != NULL) {
 		STAILQ_REMOVE_HEAD(&queue->tq_queue, ta_link);
 		if (queue->tq_hint == task)
@@ -507,19 +506,23 @@ taskqueue_run_locked(struct taskqueue *queue)
 		TQ_UNLOCK(queue);
 
 		KASSERT(task->ta_func != NULL, ("task->ta_func is NULL"));
-		if (!in_net_epoch && TASK_IS_NET(task)) {
-			in_net_epoch = true;
-			NET_EPOCH_ENTER(et);
-		} else if (in_net_epoch && !TASK_IS_NET(task)) {
+		if (TASK_IS_NET(task)) {
+			if (epochtasks++ == 0)
+				NET_EPOCH_ENTER(et);
+		} else if (epochtasks > 0) {
 			NET_EPOCH_EXIT(et);
-			in_net_epoch = false;
+			epochtasks = 0;
 		}
 		task->ta_func(task->ta_context, pending);
+		if (epochtasks > 8) {
+			NET_EPOCH_EXIT(et);
+			epochtasks = 0;
+		}
 
 		TQ_LOCK(queue);
 		wakeup(task);
 	}
-	if (in_net_epoch)
+	if (epochtasks > 0)
 		NET_EPOCH_EXIT(et);
 	LIST_REMOVE(&tb, tb_link);
 }
