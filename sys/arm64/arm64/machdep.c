@@ -59,6 +59,7 @@
 #include <sys/sched.h>
 #include <sys/signalvar.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysctl.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/ucontext.h>
@@ -172,6 +173,21 @@ print_ssp_warning(void *data __unused)
 SYSINIT(ssp_warn, SI_SUB_COPYRIGHT, SI_ORDER_ANY, print_ssp_warning, NULL);
 SYSINIT(ssp_warn2, SI_SUB_LAST, SI_ORDER_ANY, print_ssp_warning, NULL);
 #endif
+
+static int
+sysctl_current_el(SYSCTL_HANDLER_ARGS)
+{
+	int error, el;
+
+	el = (READ_SPECIALREG(CurrentEL) & CURRENTEL_EL_MASK) >>
+	    CURRENTEL_EL_SHIFT;
+	error = sysctl_handle_int(oidp, &el, 0, req);
+	if (error == 0 && req->newptr != NULL)
+		return (EINVAL);
+	return (error);
+}
+SYSCTL_PROC(_machdep, OID_AUTO, current_el, CTLTYPE_INT | CTLFLAG_RD,
+    NULL, 0, sysctl_current_el, "I", "Kernel exception level");
 
 static bool
 pan_check(const struct cpu_feat *feat __unused, u_int midr __unused)
