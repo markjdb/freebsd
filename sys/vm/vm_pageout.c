@@ -1816,7 +1816,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 		vmd->vmd_oom_seq++;
 	if (vmd->vmd_oom_seq < vm_pageout_oom_seq) {
 		if (vmd->vmd_oom) {
-			vmd->vmd_oom = FALSE;
+			vmd->vmd_oom = false;
 			atomic_subtract_int(&vm_pageout_oom_vote, 1);
 		}
 		return;
@@ -1831,7 +1831,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	if (vmd->vmd_oom)
 		return;
 
-	vmd->vmd_oom = TRUE;
+	vmd->vmd_oom = true;
 	old_vote = atomic_fetchadd_int(&vm_pageout_oom_vote, 1);
 	if (old_vote != vm_ndomains - 1)
 		return;
@@ -1849,7 +1849,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	 * memory condition is still there, due to vmd_oom being
 	 * false.
 	 */
-	vmd->vmd_oom = FALSE;
+	vmd->vmd_oom = false;
 	atomic_subtract_int(&vm_pageout_oom_vote, 1);
 }
 
