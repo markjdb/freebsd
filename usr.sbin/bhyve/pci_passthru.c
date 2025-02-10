@@ -120,13 +120,24 @@ msi_caplen(int msgctrl)
 }
 
 static int
+pcifd_open(void)
+{
+	int fd;
+
+	fd = open(_PATH_DEVPCI, O_RDWR, 0);
+	if (fd < 0) {
+		warn("failed to open %s", _PATH_DEVPCI);
+		return (-1);
+	}
+	return (fd);
+}
+
+static int
 pcifd_init(void)
 {
-	pcifd = open(_PATH_DEVPCI, O_RDWR, 0);
-	if (pcifd < 0) {
-		warn("failed to open %s", _PATH_DEVPCI);
+	pcifd = pcifd_open();
+	if (pcifd < 0)
 		return (1);
-	}
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t pcifd_rights;
@@ -147,20 +158,30 @@ uint32_t
 pci_host_read_config(const struct pcisel *sel, long reg, int width)
 {
 	struct pci_io pi;
+	uint32_t ret;
+	int fd;
 
-	if (pcifd < 0 && pcifd_init()) {
+	/*
+	 * Avoid initializing the global pcifd, as we might just need /dev/pci
+	 * access in order to probe, and we don't want to hold the device open
+	 * after that.
+	 */
+	if (pcifd >= 0)
+		fd = pcifd;
+	else if ((fd = pcifd_open()) < 0)
 		return (0);
-	}
 
 	bzero(&pi, sizeof(pi));
 	pi.pi_sel = *sel;
 	pi.pi_reg = reg;
 	pi.pi_width = width;
 
-	if (ioctl(pcifd, PCIOCREAD, &pi) < 0)
-		return (0);				/* XXX */
-	else
-		return (pi.pi_data);
+	ret = 0;
+	if (ioctl(fd, PCIOCREAD, &pi) == 0)		/* XXX */
+		ret = pi.pi_data;
+	if (fd != pcifd)
+		close(fd);
+	return (ret);
 }
 
 void
@@ -168,10 +189,17 @@ pci_host_write_config(const struct pcisel *sel, long reg, int width,
     uint32_t data)
 {
 	struct pci_io pi;
+	int fd;
 
-	if (pcifd < 0 && pcifd_init()) {
+	/*
+	 * Avoid initializing the global pcifd, as we might just need /dev/pci
+	 * access in order to probe, and we don't want to hold the device open
+	 * after that.
+	 */
+	if (pcifd >= 0)
+		fd = pcifd;
+	else if ((fd = pcifd_open()) < 0)
 		return;
-	}
 
 	bzero(&pi, sizeof(pi));
 	pi.pi_sel = *sel;
@@ -179,7 +207,9 @@ pci_host_write_config(const struct pcisel *sel, long reg, int width,
 	pi.pi_width = width;
 	pi.pi_data = data;
 
-	(void)ioctl(pcifd, PCIOCWRITE, &pi);		/* XXX */
+	(void)ioctl(fd, PCIOCWRITE, &pi);		/* XXX */
+	if (fd != pcifd)
+		close(fd);
 }
 
 #ifdef LEGACY_SUPPORT
