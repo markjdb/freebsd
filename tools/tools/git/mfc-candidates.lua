@@ -130,7 +130,7 @@ local function main()
 	local dirspec
 
 	local url = exec_command("git remote get-url freebsd")
-	local freebsd_repo = string.match(url, "[^/]+$")
+	local freebsd_repo = string.match(url, "[^:/]+$")
 	freebsd_repo = string.gsub(freebsd_repo, ".git$", "")
 	if freebsd_repo == "ports" or freebsd_repo == "freebsd-ports" then
 		local year = os.date("%Y")
