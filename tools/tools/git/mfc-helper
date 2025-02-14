@@ -1,0 +1,260 @@
+#!/usr/bin/env python
+
+#
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2025 Klara, Inc.
+#
+
+#
+# A script which helps with MFCing commits.
+#
+#   $ mfc-helper [-ln] [-b <upstream branch>] [-r <upstream remote>] [<commit1> .. <commitN>]
+#
+# Given a list of revisions (which may be specified as ranges, e.g., "A~..B"),
+# this script will print a list of commits which need to be cherry-picked in
+# order to complete the MFC.  This includes the commits themselves, as well as
+# any commits from the upstream branch which are tagged as fixing one or more
+# of the commits in the list.
+#
+# If no revisions are specified, the script will look at the current branch
+# and find all commits which have been cherry-picked from the upstream branch
+# but are missing their fixup commits.
+#
+# By default, the upstream branch is freebsd/main.
+#
+
+import argparse
+import datetime
+import git
+import os
+import re
+import sys
+
+
+def err(code, msg):
+    print(os.path.basename(sys.argv[0]) + ': ' + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def warn(msg):
+    print(os.path.basename(sys.argv[0]) + ': ' + msg, file=sys.stderr)
+
+
+def fixes(repo, commit):
+    """
+    Look at the commit's log message and return a list of commits that it fixes.
+
+    Hard-code a bunch of special cases in the src repo, where the fixes tag is
+    valid but malformed somehow.  In other cases we just ignore the tag, as it
+    refers to a GitHub object (and we don't care about those) or a Subversion
+    revision (old enough that we don't care anymore).  This list ought not to
+    grow over time, but that's a bit tricky to enforce.
+    """
+    special = {
+        # Malformed/typoed/incorrect tags.
+        "a693d17b9985a03bd9b5108e890d669005ab41eb": ["8a42005d1e491932666eb9f0be3e70ea1a28a3f7"],
+        "a04ca1c229195c7089b878a94fbe76505ea693b5": ["93b7818226cf5270646725805b4a8c17a1ad3761"],
+        "852088f6af6c5cd44542dde72aa5c3f4c4f9353c": ["b5fb9ae6872c499f1a02bec41f48b163a73a2aaa"],
+        "9c5d7e4a0c02bc45b61f565586da2abcc65d70fa": ["bec000c9c1ef409989685bb03ff0532907befb4a"],
+        "894cb08f0d3656fdb81f4d89085bedc4235f3cb6": ["5678d1d98a348f315453555377ccb28821a2ffcd"],
+        "cbddb2f02c7687d1039abcffd931e94e481c11a5": ["0118b0c8e58a438a931a5ce1bf8d7ae6208cc61b"],
+        "e9da71cd35d46ca13da4396d99e0af1703290e68": [],
+        "43cd6bbba053f02999d846ef297655ebec2d218b": ["38cbdae33b7c3f772845c06f52b86c0ddeab6a17"],
+        "94efe9f91be7f3aa501983716db5a4378282a734": ["7520b88860d7a79432e12ffcc47056844518bb62"],
+        "b332adfa96218148dfbb936a9c09d00484c868e3": ["7520b88860d7a79432e12ffcc47056844518bb62"],
+        "b911f504005df67f8c25f9b2f817c16588cd309c": ["801fb66a7e34c340f23d82f2b375feee4bd87df4"],
+        "3d37e7e5f540f513ab1d8fa61d9208c43b889401": ["fb9baa9b2045a193a3caf0a46b5cac5ef7a84b61"],
+        "0912408a281f203c43d0b3f73c38117336588342": ["9e33a616939fcff87f7539e3c41323deca5c74ce"],
+        "c036339ddf0cf80164f41ea31f1d8d27f4a068a9": ["a305b20ead13bb29880e15ff20c3bb83b5397a82"],
+        # Tags that refer to some external repo.
+        "9b56dfd27c64fcaf2dfbaa1eb3e2bd2b163fa56c": [],
+        "ab92cab02633580f763a38a329a5b25050bb4fbf": [],
+        "28fdb212adc0431fff683749a1307038e25ff58e": [],
+        "811912c46b5886f1aa3bb7a51a6ec1270bc947a8": [],
+        "813d981e1e78daffde4b2a05df35d054fcb4343f": [],
+        "ecf2a89a997ad4a14339b6a2f544e44b422620a0": [],
+        "f6517a7e69c10c6057d6c990a9f3ea22a2b62398": [],
+        # Ambiguous hash.
+        "a5770eb54f7d13717098b5c34cc2dd51d2772021": ["86c06ff8864bc0e2233980c741b689714000850d"],
+        "b84d0aaa4e64fb95b105d0d38f6295fec7a82110": [],
+        "b586c66baf4824d175d051b3f5b06588c9aa2bc8": [],
+    }
+    if commit.hexsha in special:
+        return [repo.commit(c) for c in special[commit.hexsha]]
+
+    # If the commit is old enough, just forget about it.
+    if commit.committed_date < datetime.datetime(2021, 1, 1).timestamp():
+        return []
+
+    regexp = re.compile(r'^([0-9a-f][0-9a-f]+)[, \(]?')
+
+    fixed = []
+    for line in commit.message.splitlines():
+        for tag, offset in (("Fixes", 1), ("MFC-with", 1), ("MFC with", 2)):
+            if line.startswith(tag + ':'):
+                # Get rid of the tag.
+                line = ' '.join(line.split(':')[1:]).strip()
+                # Does it appear to start with a commit hash?
+                m = regexp.match(line)
+                if not m:
+                    continue
+                fixed.append(repo.commit(m.group(1)))
+    return fixed
+
+
+def mfcclosure(repo, upstream, commits):
+    """
+    Given a set of commits to MFC from the upstream branch, return a list
+    of all commits in the original set plus those which fix up commits in
+    the original set.
+    """
+    # The user is MFCing specific commits.  Which ones?
+    tomfc = []
+    for rev in commits:
+        # If the revision contains "..", treat it as a range, otherwise it's
+        # just a single commit.  This is gross but I can't find a better way.
+        try:
+            if ".." in rev:
+                revlist = list(repo.iter_commits(rev))
+                revlist.reverse()
+                tomfc.extend(revlist)
+            else:
+                tomfc.append(repo.commit(rev))
+        except git.exc.BadName:
+            err(1, f"Revision '{rev}' is invalid")
+
+    # When iterating over commits in the upstream branch, we can stop once
+    # we've visited every commit that we're MFCing.
+    tovisit = tomfc.copy()
+
+    # Now go through the upstream branch and find all commits which fix at
+    # least one of the commits we're MFCing.
+    for commit in repo.iter_commits(upstream):
+        if commit in tovisit:
+            tovisit.remove(commit)
+            if len(tovisit) == 0:
+                break
+            continue
+
+        for fix in fixes(repo, commit):
+            if fix in tomfc and commit not in tomfc:
+                # Insert the fixup immediately after the commit.  This gives
+                # the correct order if there are multiple fixups.  Note that
+                # fixups can have fixups.
+                i = tomfc.index(fix) + 1
+                tomfc[i:i] = mfcclosure(repo, upstream, [commit.hexsha])
+    else:
+        err(1, "the following commits are not in the upstream branch: " +
+            ', '.join([c.hexsha for c in tovisit]))
+    return tomfc
+
+
+def origin(repo, commit):
+    """
+    Given a commit, return the set of commits from the upstream branch from which it
+    was cherry-picked, using the explicit annotations added by `git cherry-pick -x`.
+    """
+    special = {
+        # stable/14
+        "aab45924bdb10338654e25ab9ecec106b7eb368b": ["c57c02ebf7bcc9b02a0dc11711e8d8a6960ad34b"],
+        "11dde2c8b7156a7d2072589c22c2f3c0de6880d8": ["62af5b9dc6205289a0ace964d060fba64e71ef28"],
+        "19f7b2bbc4e4fec33b7e8d546dd05a79533ca8e4": ["d0cbb1930e82a53b07b1091402ff14cdfe7a4898"],
+        "d034ff89b84f8470eb5bbcbb65c64c762e07f0bd": ["ac2156c139f8f685b84a71a7f0f164d6cccc7656"],
+        "fce2a3509a65a374820dc889929f8e8f5dbd1707": ["a9722e5ae8519a9a28e950dbd8d489178e9bc27e"],
+        "5946b0c6cbc77e6c5f62f5f7e635c6036e14f4d0": [],
+        "06bb8e1dab004ccb283f7a20fe84aa1326baf6b7": [],
+        "e5fadc41b48045d8978993d6c4ac72c64542b470": ["e20971500194d2f7299e9d01ca3b20e9bc6b4009"],
+        "3ba946aebf747e12da4fb22ee0e45ee0e3a233ee": ["c4380d5b9383e2a062840573b36ab643b65b2610"],
+        "404b91dac415c5c9126fb4201145049c4d3dfbba": ["93b7818226cf5270646725805b4a8c17a1ad3761",
+                                                     "a04ca1c229195c7089b878a94fbe76505ea693b5"],
+        # stable/13
+        "fb4bc4c325eca15247a2e21ded0a70f92ec15488": ["c57c02ebf7bcc9b02a0dc11711e8d8a6960ad34b"],
+        "213406054e46b50d5df6d28b01a0a3410132b322": ["62af5b9dc6205289a0ace964d060fba64e71ef28"],
+        "eb6edafe8f484a69ff074018e5b93e481787923e": ["d0cbb1930e82a53b07b1091402ff14cdfe7a4898"],
+        "ced9fa71eaf95a27d5672c3419d7d9ca6c189168": ["ac2156c139f8f685b84a71a7f0f164d6cccc7656"],
+        "65bab39e140f97cace92a2923e50c6b654b02e22": ["346483b1f10454c5617a25d5e136829f60fb1184"],
+        "972637dc06a04432dc58e240b8ef3e9f538b98bb": ["9209ea69bc03e7e9f678b2294da7a0317b5c9c5b"],
+        "93a95ebbf7c8eb85aeb53a9fde329348992333e7": ["6ccff5c0452c4bc2a4dd497e39a801ab8db8a021"],
+        "9d31ae318711825d3a6ffa544d197708905435cf": ["aef815e7873b006bd040ac1690425709635e32e7"],
+        "a75324d674f5df10f1407080a49cfe933dbb06ec": ["64ae2f785e0672286901c15045a24cbc533538d3"],
+        "0729ba2f49c956789701aecb70f4f555181fd3a7": ["91a8bed5a49eb2d1e4e096a4c68c108cebec8818"],
+        "bec0d2c9c8413707b0fff8e65fb96aa53f149be3": ["8d5c7813061dfa0b187500dfe3aeea7a28181c13"],
+    }
+    if commit.hexsha in special:
+        return [repo.commit(c) for c in special[commit.hexsha]]
+
+    commits = []
+    for line in commit.message.splitlines():
+        m = re.match(r'^\(cherry picked from commit ([0-9a-f]{40})', line)
+        if m:
+            try:
+                toadd = repo.commit(m.group(1))
+            except git.exc.BadName:
+                warn(f"Commit {commit.hexsha} refers to unknown object {m.group(1)}")
+            commits.append(toadd)
+    return commits
+
+
+def dangling(repo, upstream):
+    """
+    Find commits in the current branch which have been cherry-picked from
+    upstream but are missing fixup commits.
+    """
+    # Find the upstream commits corresponding to all cherry-picks in this
+    # branch.
+    base = repo.merge_base('HEAD', upstream, all=True)[-1]
+    dangling = []
+    picked = []
+    for commit in repo.iter_commits(base.hexsha + '..HEAD'):
+        picked.extend([ref.hexsha for ref in origin(repo, commit)])
+    # Create a mapping of all upstream commits to their fixups.
+    fixups = {}
+    for commit in repo.iter_commits(base.hexsha + '..' + upstream):
+        for fix in fixes(repo, commit):
+            if fix.hexsha not in fixups:
+                fixups[fix.hexsha] = []
+            fixups[fix.hexsha].append(commit.hexsha)
+    # Now, any commit that's been cherry-picked and has fixups that haven't
+    # been cherry-picked goes into our set.
+    for commit in picked:
+        for f in fixups.get(commit, []):
+            if f not in picked:
+                dangling.append((repo.commit(f), repo.commit(commit)))
+
+    return dangling
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-b', type=str, help='Upstream branch', default='main')
+    parser.add_argument('-l', action='store_true', help='List commits only')
+    parser.add_argument('-n', action='store_true', help='Do not fetch remote')
+    parser.add_argument('-r', type=str, help='Upstream remote', default='freebsd')
+    parser.add_argument('commits', nargs='*', help='Commits to MFC')
+    args = parser.parse_args()
+
+    branch = args.r + '/' + args.b
+
+    repo = git.Repo()
+    if not args.n:
+        repo.remotes[args.r].fetch(args.b)
+
+    if len(args.commits) > 0:
+        # The user wants to see the MFC closure of a set of commits.
+        tomfc = mfcclosure(repo, branch, args.commits)
+        for commit in tomfc:
+            if args.l:
+                print(commit.hexsha)
+            else:
+                print(commit.hexsha, commit.summary)
+    else:
+        tomfc = dangling(repo, branch)
+        for missing, commit in tomfc:
+            if args.l:
+                print(missing.hexsha)
+            else:
+                print(f'{missing.hexsha} ({missing.summary}) required by {commit.hexsha} ({commit.summary})')
+
+
+if __name__ == '__main__':
+    main()
