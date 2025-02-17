@@ -2616,6 +2616,10 @@ do_lock_pp(struct thread *td, struct umutex *m, uint32_t flags,
 			}
 		} else if (owner == UMUTEX_RB_NOTRECOV) {
 			error = ENOTRECOVERABLE;
+		} else if (owner == UMUTEX_CONTESTED) {
+			/* Spurious failure, retry. */
+			umtxq_unbusy_unlocked(&uq->uq_key);
+			continue;
 		}
 
 		if (try != 0)
@@ -2825,6 +2829,10 @@ do_set_ceiling(struct thread *td, struct umutex *m, uint32_t ceiling,
 		} else if (owner == UMUTEX_RB_NOTRECOV) {
 			error = ENOTRECOVERABLE;
 			break;
+		} else if (owner == UMUTEX_CONTESTED) {
+			/* Spurious failure, retry. */
+			umtxq_unbusy_unlocked(&uq->uq_key);
+			continue;
 		}
 
 		/*
@@ -2833,6 +2841,7 @@ do_set_ceiling(struct thread *td, struct umutex *m, uint32_t ceiling,
 		 */
 		if (error != 0)
 			break;
+
 
 		/*
 		 * We set the contested bit, sleep. Otherwise the lock changed
