@@ -38,7 +38,6 @@
  * External virtual filesystem routines
  */
 
-#include <sys/cdefs.h>
 #include "opt_ddb.h"
 #include "opt_watchdog.h"
 
@@ -57,6 +56,7 @@
 #include <sys/extattr.h>
 #include <sys/file.h>
 #include <sys/fcntl.h>
+#include <sys/inotify.h>
 #include <sys/jail.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
@@ -5246,7 +5246,7 @@ v_addpollinfo(struct vnode *vp)
 {
 	struct vpollinfo *vi;
 
-	if (vp->v_pollinfo != NULL)
+	if (atomic_load_ptr(&vp->v_pollinfo) != NULL)
 		return;
 	vi = malloc(sizeof(*vi), M_VNODEPOLL, M_WAITOK | M_ZERO);
 	mtx_init(&vi->vpi_lock, "vnode pollinfo", NULL, MTX_DEF);
@@ -6426,6 +6426,8 @@ vop_close_post(void *ap, int rc)
 
 	if (!rc && (a->a_cred != NOCRED || /* filter out revokes */
 	    !VN_IS_DOOMED(a->a_vp))) {
+		VN_INOTIFY_EVENT(a->a_vp, (a->a_fflag & FWRITE) != 0 ?
+		    IN_CLOSE_WRITE : IN_CLOSE_NOWRITE);
 		VFS_KNOTE_LOCKED(a->a_vp, (a->a_fflag & FWRITE) != 0 ?
 		    NOTE_CLOSE_WRITE : NOTE_CLOSE);
 	}

@@ -42,6 +42,7 @@
 #include <sys/counter.h>
 #include <sys/filedesc.h>
 #include <sys/fnv_hash.h>
+#include <sys/inotify.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
@@ -3399,6 +3400,7 @@ vn_vptocnp(struct vnode **vp, char *buf, size_t *buflen)
 	struct namecache *ncp;
 	struct mtx *vlp;
 	int error;
+	bool locked;
 
 	vlp = VP2VNODELOCK(*vp);
 	mtx_lock(vlp);
@@ -3434,9 +3436,14 @@ vn_vptocnp(struct vnode **vp, char *buf, size_t *buflen)
 	SDT_PROBE1(vfs, namecache, fullpath, miss, vp);
 
 	mtx_unlock(vlp);
-	vn_lock(*vp, LK_SHARED | LK_RETRY);
+	locked = VOP_ISLOCKED(*vp) == LK_EXCLUSIVE;
+	if (!locked)
+		(void)vn_lock(*vp, LK_SHARED | LK_RETRY);
 	error = VOP_VPTOCNP(*vp, &dvp, buf, buflen);
-	vput(*vp);
+	if (locked)
+		vrele(*vp);
+	else
+		vput(*vp);
 	if (error) {
 		counter_u64_add(numfullpathfail2, 1);
 		SDT_PROBE3(vfs, namecache, fullpath, return,  error, vp, NULL);
@@ -4011,6 +4018,27 @@ vn_path_to_global_path_hardlink(struct thread *td, struct vnode *vp,
 out:
 	free(fbuf, M_TEMP);
 	return (error);
+}
+
+void
+vn_inotify(struct vnode *vp, int event)
+{
+	struct mtx *vlp;
+	struct namecache *ncp;
+
+	if ((vn_irflag_read(vp) & VIRF_INOTIFY) != 0)
+		inotify_log(vp, NULL, NULL, 0, event);
+
+	vlp = VP2VNODELOCK(vp);
+	mtx_lock(vlp);
+	TAILQ_FOREACH(ncp, &vp->v_cache_dst, nc_dst) {
+		if ((ncp->nc_flag & NCF_ISDOTDOT) != 0)
+			continue;
+		if ((vn_irflag_read(ncp->nc_dvp) & VIRF_INOTIFY) != 0)
+			inotify_log(vp, ncp->nc_dvp, ncp->nc_name, ncp->nc_nlen,
+			    event);
+	}
+	mtx_unlock(vlp);
 }
 
 #ifdef DDB

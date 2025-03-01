@@ -86,10 +86,12 @@ enum vgetstate {
  * it from v_data.  If non-null, this area is freed in getnewvnode().
  */
 
-struct namecache;
 struct cache_fpl;
+struct inotify_watch;
+struct namecache;
 
 struct vpollinfo {
+	TAILQ_HEAD(, inotify_watch) vpi_inotify; /* list of inotify watchers */
 	struct	mtx vpi_lock;		/* lock to protect below */
 	struct	selinfo vpi_selinfo;	/* identity of poller(s) */
 	short	vpi_events;		/* what they are looking for */
@@ -228,6 +230,10 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 #define	VN_KNOTE_LOCKED(vp, b)		VN_KNOTE(vp, b, KNF_LISTLOCKED)
 #define	VN_KNOTE_UNLOCKED(vp, b)	VN_KNOTE(vp, b, 0)
 
+#define	VN_INOTIFY_EVENT(vp, ev) do {				\
+	vn_inotify((vp), (ev));					\
+} while (0)
+
 /*
  * Vnode flags.
  *	VI flags are protected by interlock and live in v_iflag
@@ -246,6 +252,7 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 #define	VIRF_MOUNTPOINT	0x0004	/* This vnode is mounted on */
 #define	VIRF_TEXT_REF	0x0008	/* Executable mappings ref the vnode */
 #define	VIRF_CROSSMP	0x0010	/* Cross-mp vnode, no locking */
+#define	VIRF_INOTIFY	0x0020	/* This vnode is being watched */
 
 #define	VI_UNUSED0	0x0001	/* unused */
 #define	VI_MOUNT	0x0002	/* Mount in progress */
@@ -705,6 +712,7 @@ u_quad_t init_va_filerev(void);
 int	speedup_syncer(void);
 int	vn_vptocnp(struct vnode **vp, char *buf, size_t *buflen);
 int	vn_getcwd(char *buf, char **retbuf, size_t *buflen);
+void	vn_inotify(struct vnode *vp, int event);
 int	vn_fullpath(struct vnode *vp, char **retbuf, char **freebuf);
 int	vn_fullpath_global(struct vnode *vp, char **retbuf, char **freebuf);
 int	vn_fullpath_hardlink(struct vnode *vp, struct vnode *dvp,

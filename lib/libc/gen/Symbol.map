@@ -458,6 +458,10 @@ FBSD_1.8 {
 	aio_read2;
 	aio_write2;
 	execvpe;
+	inotify_add_watch;
+	inotify_init;
+	inotify_init1;
+	inotify_rm_watch;
 	rtld_get_var;
 	rtld_set_var;
 };
