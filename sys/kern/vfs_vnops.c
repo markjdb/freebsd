@@ -53,6 +53,7 @@
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filio.h>
+#include <sys/inotify.h>
 #include <sys/ktr.h>
 #include <sys/ktrace.h>
 #include <sys/limits.h>
@@ -441,6 +442,8 @@ vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 	error = VOP_OPEN(vp, fmode, cred, td, fp);
 	if (error != 0)
 		return (error);
+
+	VOP_INOTIFY(vp, IN_OPEN);
 
 	error = vn_open_vnode_advlock(vp, fmode, fp);
 	if (error == 0 && (fmode & FWRITE) != 0) {
@@ -1839,6 +1842,9 @@ vn_closefile(struct file *fp, struct thread *td)
 	vp = fp->f_vnode;
 	fp->f_ops = &badfileops;
 	ref = (fp->f_flag & FHASLOCK) != 0;
+
+	VOP_INOTIFY(vp, (fp->f_flag & FWRITE) != 0 ? IN_CLOSE_WRITE :
+	    IN_CLOSE_NOWRITE);
 
 	error = vn_close1(vp, fp->f_flag, fp->f_cred, td, ref);
 

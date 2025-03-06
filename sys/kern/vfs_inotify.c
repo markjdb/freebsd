@@ -4,6 +4,11 @@
  * Copyright (c) 2025 Klara, Inc.
  */
 
+/*
+ * XXX-MJ how does this interact with unionfs/nullfs?  Should we generate events
+ * for accesses to the underlying file?
+ */
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/caprights.h>

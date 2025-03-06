@@ -119,6 +119,7 @@ struct vop_vector default_vnodeops = {
 	.vop_getwritemount =	vop_stdgetwritemount,
 	.vop_inactive =		VOP_NULL,
 	.vop_need_inactive =	vop_stdneed_inactive,
+	.vop_inotify =		vop_stdinotify,
 	.vop_ioctl =		vop_stdioctl,
 	.vop_kqfilter =		vop_stdkqfilter,
 	.vop_islocked =		vop_stdislocked,
@@ -1301,6 +1302,13 @@ vop_stdneed_inactive(struct vop_need_inactive_args *ap)
 {
 
 	return (1);
+}
+
+int
+vop_stdinotify(struct vop_inotify_args *ap)
+{
+	vn_inotify(ap->a_vp, ap->a_event);
+	return (0);
 }
 
 int

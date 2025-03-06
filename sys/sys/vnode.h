@@ -230,9 +230,11 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 #define	VN_KNOTE_LOCKED(vp, b)		VN_KNOTE(vp, b, KNF_LISTLOCKED)
 #define	VN_KNOTE_UNLOCKED(vp, b)	VN_KNOTE(vp, b, 0)
 
+#if 0
 #define	VN_INOTIFY_EVENT(vp, ev) do {				\
 	vn_inotify((vp), (ev));					\
 } while (0)
+#endif
 
 /*
  * Vnode flags.
@@ -875,8 +877,9 @@ int	vop_stdfsync(struct vop_fsync_args *);
 int	vop_stdgetwritemount(struct vop_getwritemount_args *);
 int	vop_stdgetpages(struct vop_getpages_args *);
 int	vop_stdinactive(struct vop_inactive_args *);
-int	vop_stdioctl(struct vop_ioctl_args *);
 int	vop_stdneed_inactive(struct vop_need_inactive_args *);
+int	vop_stdinotify(struct vop_inotify_args *);
+int	vop_stdioctl(struct vop_ioctl_args *);
 int	vop_stdkqfilter(struct vop_kqfilter_args *);
 int	vop_stdlock(struct vop_lock1_args *);
 int	vop_stdunlock(struct vop_unlock_args *);
