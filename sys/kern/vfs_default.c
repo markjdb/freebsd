@@ -1307,7 +1307,7 @@ vop_stdneed_inactive(struct vop_need_inactive_args *ap)
 int
 vop_stdinotify(struct vop_inotify_args *ap)
 {
-	vn_inotify(ap->a_vp, ap->a_event);
+	vn_inotify(ap->a_vp, ap->a_ndp, ap->a_event);
 	return (0);
 }
 

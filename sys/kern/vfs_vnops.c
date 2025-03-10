@@ -286,8 +286,9 @@ restart:
 				VI_UNLOCK(vp);
 				first_open = true;
 			}
-			VOP_VPUT_PAIR(ndp->ni_dvp, error == 0 ? &vp : NULL,
-			    false);
+			if (error == 0)
+				vput(vp);
+			VOP_UNLOCK(ndp->ni_dvp);
 			vn_finished_write(mp);
 			if (error) {
 				NDFREE_PNBUF(ndp);
@@ -317,7 +318,8 @@ restart:
 		}
 	} else {
 		ndp->ni_cnd.cn_nameiop = LOOKUP;
-		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags);
+		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags) |
+		    WANTPARENT;
 		ndp->ni_cnd.cn_flags |= (fmode & O_NOFOLLOW) != 0 ? NOFOLLOW :
 		    FOLLOW;
 		if ((fmode & FWRITE) == 0)
@@ -326,7 +328,7 @@ restart:
 			return (error);
 		vp = ndp->ni_vp;
 	}
-	error = vn_open_vnode(vp, fmode, cred, curthread, fp);
+	error = vn_open_vnode(vp, ndp, fmode, cred, curthread, fp);
 	if (first_open) {
 		VI_LOCK(vp);
 		vp->v_iflag &= ~VI_FOPENING;
@@ -383,8 +385,8 @@ vn_open_vnode_advlock(struct vnode *vp, int fmode, struct file *fp)
  * Check permissions, and call the VOP_OPEN routine.
  */
 int
-vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
-    struct thread *td, struct file *fp)
+vn_open_vnode(struct vnode *vp, struct nameidata *ndp, int fmode,
+    struct ucred *cred, struct thread *td, struct file *fp)
 {
 	accmode_t accmode;
 	int error;
@@ -443,7 +445,7 @@ vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 	if (error != 0)
 		return (error);
 
-	VOP_INOTIFY(vp, IN_OPEN);
+	VOP_INOTIFY(vp, ndp, IN_OPEN);
 
 	error = vn_open_vnode_advlock(vp, fmode, fp);
 	if (error == 0 && (fmode & FWRITE) != 0) {
@@ -1843,7 +1845,7 @@ vn_closefile(struct file *fp, struct thread *td)
 	fp->f_ops = &badfileops;
 	ref = (fp->f_flag & FHASLOCK) != 0;
 
-	VOP_INOTIFY(vp, (fp->f_flag & FWRITE) != 0 ? IN_CLOSE_WRITE :
+	VOP_INOTIFY(vp, NULL, (fp->f_flag & FWRITE) != 0 ? IN_CLOSE_WRITE :
 	    IN_CLOSE_NOWRITE);
 
 	error = vn_close1(vp, fp->f_flag, fp->f_cred, td, ref);

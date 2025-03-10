@@ -825,6 +825,7 @@ vop_deallocate {
 
 vop_inotify {
 	IN struct vnode *vp;
+	IN struct nameidata *ndp;
 	IN int event;
 };
 

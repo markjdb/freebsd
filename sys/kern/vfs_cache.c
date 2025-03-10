@@ -4029,7 +4029,7 @@ out:
 }
 
 void
-vn_inotify(struct vnode *vp, int event)
+vn_inotify(struct vnode *vp, struct nameidata *ndp, int event)
 {
 	struct mtx *vlp;
 	struct namecache *ncp;
@@ -4037,16 +4037,25 @@ vn_inotify(struct vnode *vp, int event)
 	if ((vn_irflag_read(vp) & VIRF_INOTIFY) != 0)
 		inotify_log(vp, NULL, NULL, 0, event);
 
-	vlp = VP2VNODELOCK(vp);
-	mtx_lock(vlp);
-	TAILQ_FOREACH(ncp, &vp->v_cache_dst, nc_dst) {
-		if ((ncp->nc_flag & NCF_ISDOTDOT) != 0)
-			continue;
-		if ((vn_irflag_read(ncp->nc_dvp) & VIRF_INOTIFY) != 0)
-			inotify_log(vp, ncp->nc_dvp, ncp->nc_name, ncp->nc_nlen,
-			    event);
+	if (ndp != NULL) {
+		KASSERT(vp == ndp->ni_vp, ("%s: vp != ni_vp", __func__));
+		if ((vn_irflag_read(ndp->ni_dvp) & VIRF_INOTIFY) != 0) {
+			inotify_log(vp, ndp->ni_dvp, ndp->ni_cnd.cn_nameptr,
+			    ndp->ni_cnd.cn_namelen, event);
+		}
+	} else {
+		vlp = VP2VNODELOCK(vp);
+		mtx_lock(vlp);
+		TAILQ_FOREACH(ncp, &vp->v_cache_dst, nc_dst) {
+			if ((ncp->nc_flag & NCF_ISDOTDOT) != 0)
+				continue;
+			if ((vn_irflag_read(ncp->nc_dvp) & VIRF_INOTIFY) != 0) {
+				inotify_log(vp, ncp->nc_dvp, ncp->nc_name,
+				    ncp->nc_nlen, event);
+			}
+		}
+		mtx_unlock(vlp);
 	}
-	mtx_unlock(vlp);
 }
 
 #ifdef DDB

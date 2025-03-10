@@ -714,7 +714,7 @@ u_quad_t init_va_filerev(void);
 int	speedup_syncer(void);
 int	vn_vptocnp(struct vnode **vp, char *buf, size_t *buflen);
 int	vn_getcwd(char *buf, char **retbuf, size_t *buflen);
-void	vn_inotify(struct vnode *vp, int event);
+void	vn_inotify(struct vnode *vp, struct nameidata *ndp, int event);
 int	vn_fullpath(struct vnode *vp, char **retbuf, char **freebuf);
 int	vn_fullpath_global(struct vnode *vp, char **retbuf, char **freebuf);
 int	vn_fullpath_hardlink(struct vnode *vp, struct vnode *dvp,
@@ -790,8 +790,8 @@ void	vn_lock_pair(struct vnode *vp1, bool vp1_locked, int lkflags1,
 int	vn_open(struct nameidata *ndp, int *flagp, int cmode, struct file *fp);
 int	vn_open_cred(struct nameidata *ndp, int *flagp, int cmode,
 	    u_int vn_open_flags, struct ucred *cred, struct file *fp);
-int	vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
-	    struct thread *td, struct file *fp);
+int	vn_open_vnode(struct vnode *vp, struct nameidata *nd, int fmode,
+	    struct ucred *cred, struct thread *td, struct file *fp);
 void	vn_pages_remove(struct vnode *vp, vm_pindex_t start, vm_pindex_t end);
 void	vn_pages_remove_valid(struct vnode *vp, vm_pindex_t start,
 	    vm_pindex_t end);
