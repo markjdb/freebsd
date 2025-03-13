@@ -1229,8 +1229,8 @@ vattr_null(struct vattr *vap)
  * number of vnodes to reach some minimum value regardless of what
  * you set kern.maxvnodes to.  Do not set kern.maxvnodes too low.
  *
- * @param reclaim_nc_src Only reclaim directories with outgoing namecache
- * 			 entries if this argument is strue
+ * @param reclaim_nc_src Reclaim directories with outgoing namecache
+ * 			 entries only if this argument is true
  * @param trigger	 Only reclaim vnodes with fewer than this many resident
  *			 pages.
  * @param target	 How many vnodes to reclaim.
