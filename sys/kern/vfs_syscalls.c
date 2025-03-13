@@ -4664,7 +4664,7 @@ kern_fhopen(struct thread *td, const struct fhandle *u_fhp, int flags)
 #ifdef INVARIANTS
 	td->td_dupfd = -1;
 #endif
-	error = vn_open_vnode(vp, NULL, fmode, td->td_ucred, td, fp);
+	error = vn_open_vnode(vp, fmode, td->td_ucred, td, fp);
 	if (error != 0) {
 		KASSERT(fp->f_ops == &badfileops,
 		    ("VOP_OPEN in fhopen() set f_ops"));
