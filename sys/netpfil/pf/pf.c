@@ -5962,7 +5962,8 @@ nextrule:
 		    &match_rules, udp_mapping);
 		if (action != PF_PASS) {
 			pf_udp_mapping_release(udp_mapping);
-			pd->act.log |= PF_LOG_FORCE;
+			if (r->log || (nr != NULL && nr->log))
+				pd->act.log |= PF_LOG_FORCE;
 			if (action == PF_DROP &&
 			    (r->rule_flag & PFRULE_RETURN))
 				pf_return(r, nr, pd, sk, th,

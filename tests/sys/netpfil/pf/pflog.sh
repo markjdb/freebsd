@@ -246,6 +246,16 @@ state_max_body()
 	# then a drop because of the state limit.  Ideally only the drop would
 	# be logged; if this is fixed, the count will be 2 instead of 3.
 	atf_check -o match:3 grep -c . pflog.txt
+
+	pft_set_rules alcatraz "pass inet keep state (max 1)"
+
+	atf_check -s exit:0 -o ignore \
+	    ping -c 1 192.0.2.1
+
+	atf_check -s exit:2 -o ignore \
+	    ping -c 1 192.0.2.1
+
+	atf_check -o match:3 grep -c . pflog.txt
 }
 
 state_max_cleanup()
