@@ -619,6 +619,7 @@ restart:
 		goto error;
 	}
 	vp = nd.ni_vp;
+	VOP_INOTIFY(vp, NULL, IN_CREATE);
 	ASSERT_VOP_ELOCKED(vp, "uipc_bind");
 	soun = (struct sockaddr_un *)sodupsockaddr(nam, M_WAITOK);
 

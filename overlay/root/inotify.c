@@ -60,6 +60,10 @@ handle_events(int fd, int *wd, int argc, char* argv[])
 	       printf("IN_CLOSE_NOWRITE: ");
 	   if (event->mask & IN_CLOSE_WRITE)
 	       printf("IN_CLOSE_WRITE: ");
+	   if (event->mask & IN_CREATE)
+	       printf("IN_CREATE: ");
+	   if (event->mask & IN_DELETE)
+	       printf("IN_DELETE: ");
 
 	   /* Print the name of the watched directory. */
 
@@ -122,8 +126,7 @@ main(int argc, char* argv[])
       - file was closed */
 
    for (i = 1; i < argc; i++) {
-       wd[i] = inotify_add_watch(fd, argv[i],
-				 IN_OPEN | IN_CLOSE);
+       wd[i] = inotify_add_watch(fd, argv[i], _IN_ALL_EVENTS);
        if (wd[i] == -1) {
 	   fprintf(stderr, "Cannot watch '%s': %s\n",
 		   argv[i], strerror(errno));

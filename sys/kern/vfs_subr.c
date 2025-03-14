@@ -6440,8 +6440,10 @@ vop_read_post(void *ap, int rc)
 {
 	struct vop_read_args *a = ap;
 
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(a->a_vp, NOTE_READ);
+		VOP_INOTIFY(a->a_vp, NULL, IN_ACCESS);
+	}
 }
 
 void

@@ -1739,6 +1739,8 @@ kern_linkat_vp(struct thread *td, struct vnode *vp, int fd, const char *path,
 			VOP_VPUT_PAIR(nd.ni_dvp, &vp, true);
 			vn_finished_write(mp);
 			NDFREE_PNBUF(&nd);
+			if (error == 0)
+				VOP_INOTIFY(vp, NULL, IN_CREATE);
 			vp = NULL;
 		} else {
 			vput(nd.ni_dvp);
@@ -1839,6 +1841,8 @@ restart:
 		goto out2;
 #endif
 	error = VOP_SYMLINK(nd.ni_dvp, &nd.ni_vp, &nd.ni_cnd, &vattr, syspath);
+	if (error != 0)
+		VOP_INOTIFY(nd.ni_vp, NULL, IN_CREATE);
 #ifdef MAC
 out2:
 #endif
@@ -3902,6 +3906,8 @@ restart:
 		goto out;
 #endif
 	error = VOP_MKDIR(nd.ni_dvp, &nd.ni_vp, &nd.ni_cnd, &vattr);
+	if (error == 0)
+		VOP_INOTIFY(nd.ni_vp, NULL, IN_CREATE);
 #ifdef MAC
 out:
 #endif

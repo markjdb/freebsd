@@ -1229,6 +1229,8 @@ out:
 	 */
 	if (error == 0) {
 		td->td_retval[0] = 0;
+		if (sbytes > 0)
+			VOP_INOTIFY(vp, NULL, IN_ACCESS);
 	}
 	if (sent != NULL) {
 		(*sent) = sbytes;

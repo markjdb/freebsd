@@ -295,6 +295,7 @@ restart:
 				}
 				return (error);
 			}
+			VOP_INOTIFY(vp, NULL, IN_CREATE);
 			fmode &= ~O_TRUNC;
 		} else {
 			if (ndp->ni_dvp == ndp->ni_vp)
@@ -1676,6 +1677,8 @@ vn_truncate_locked(struct vnode *vp, off_t length, bool sync,
 			vattr.va_vaflags |= VA_SYNC;
 		error = VOP_SETATTR(vp, &vattr, cred);
 		VOP_ADD_WRITECOUNT_CHECKED(vp, -1);
+		if (error == 0)
+			VOP_INOTIFY(vp, NULL, IN_MODIFY);
 	}
 	return (error);
 }
