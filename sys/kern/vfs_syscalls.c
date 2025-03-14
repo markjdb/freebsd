@@ -1422,8 +1422,8 @@ kern_mknodat(struct thread *td, int fd, const char *path, enum uio_seg pathseg,
 	NDPREINIT(&nd);
 restart:
 	bwillwrite();
-	NDINIT_ATRIGHTS(&nd, CREATE, LOCKPARENT | AUDITVNODE1 | NOCACHE,
-	    pathseg, path, fd, &cap_mknodat_rights);
+	NDINIT_ATRIGHTS(&nd, CREATE, LOCKPARENT | AUDITVNODE1 |
+	    namei_create_nocache, pathseg, path, fd, &cap_mknodat_rights);
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	vp = nd.ni_vp;
@@ -1530,8 +1530,8 @@ kern_mkfifoat(struct thread *td, int fd, const char *path,
 	NDPREINIT(&nd);
 restart:
 	bwillwrite();
-	NDINIT_ATRIGHTS(&nd, CREATE, LOCKPARENT | AUDITVNODE1 | NOCACHE,
-	    pathseg, path, fd, &cap_mkfifoat_rights);
+	NDINIT_ATRIGHTS(&nd, CREATE, LOCKPARENT | AUDITVNODE1 |
+	    namei_create_nocache, pathseg, path, fd, &cap_mkfifoat_rights);
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	if (nd.ni_vp != NULL) {
@@ -1689,7 +1689,7 @@ kern_linkat_vp(struct thread *td, struct vnode *vp, int fd, const char *path,
 		return (EPERM);		/* POSIX */
 	}
 	NDINIT_ATRIGHTS(&nd, CREATE,
-	    LOCKPARENT | AUDITVNODE2 | NOCACHE, segflag, path, fd,
+	    LOCKPARENT | AUDITVNODE2 | namei_create_nocache, segflag, path, fd,
 	    &cap_linkat_target_rights);
 	if ((error = namei(&nd)) == 0) {
 		if (nd.ni_vp != NULL) {
@@ -1807,8 +1807,8 @@ kern_symlinkat(struct thread *td, const char *path1, int fd, const char *path2,
 	NDPREINIT(&nd);
 restart:
 	bwillwrite();
-	NDINIT_ATRIGHTS(&nd, CREATE, LOCKPARENT | AUDITVNODE1 | NOCACHE, segflg,
-	    path2, fd, &cap_symlinkat_rights);
+	NDINIT_ATRIGHTS(&nd, CREATE, LOCKPARENT | AUDITVNODE1 |
+	    namei_create_nocache, segflg, path2, fd, &cap_symlinkat_rights);
 	if ((error = namei(&nd)) != 0)
 		goto out;
 	if (nd.ni_vp) {

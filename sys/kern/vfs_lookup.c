@@ -109,6 +109,29 @@ uma_zone_t namei_zone;
 /* Placeholder vnode for mp traversal. */
 static struct vnode *vp_crossmp;
 
+/*
+ * By default we do not create cache entries for newly created files, so as to
+ * avoid filling it when performing large operations, e.g., extracting a
+ * tarball.  The sysctl below can be used to override this.
+ */
+int namei_create_nocache = NOCACHE;
+
+static int
+sysctl_namei_create_nocache(SYSCTL_HANDLER_ARGS)
+{
+	int error, val;
+
+	val = namei_create_nocache == NOCACHE;
+	error = sysctl_handle_int(oidp, &val, sizeof(val), req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	namei_create_nocache = val != 0 ? 0 : NOCACHE;
+	return (0);
+}
+SYSCTL_PROC(_vfs, OID_AUTO, namei_create_nocache, CTLTYPE_INT | CTLFLAG_RWTUN,
+    NULL, 0, sysctl_namei_create_nocache, "I",
+    "Cache names of newly created files");
+
 static int
 crossmp_vop_islocked(struct vop_islocked_args *ap)
 {

@@ -312,4 +312,6 @@ struct nchstats {
 
 extern struct nchstats nchstats;
 
+extern int namei_create_nocache;	/* cache on namei(CREATE)? */
+
 #endif /* !_SYS_NAMEI_H_ */

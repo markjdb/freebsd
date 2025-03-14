@@ -241,13 +241,11 @@ restart:
 		ndp->ni_cnd.cn_nameiop = CREATE;
 		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags);
 		/*
-		 * Set NOCACHE to avoid flushing the cache when
-		 * rolling in many files at once.
-		 *
 		 * Set NC_KEEPPOSENTRY to keep positive entries if they already
 		 * exist despite NOCACHE.
 		 */
-		ndp->ni_cnd.cn_flags |= LOCKPARENT | NOCACHE | NC_KEEPPOSENTRY;
+		ndp->ni_cnd.cn_flags |= LOCKPARENT | namei_create_nocache |
+		    NC_KEEPPOSENTRY;
 		if ((fmode & O_EXCL) == 0 && (fmode & O_NOFOLLOW) == 0)
 			ndp->ni_cnd.cn_flags |= FOLLOW;
 		if ((vn_open_flags & VN_OPEN_INVFS) == 0)
