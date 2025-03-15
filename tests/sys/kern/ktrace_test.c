@@ -382,7 +382,7 @@ ATF_TC_BODY(ktrace__cap_sockaddr, tc)
 	    IPPROTO_UDP)) != -1);
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(5000);
-	addr.sin_addr.s_addr = INADDR_ANY;
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	CHILD_REQUIRE(bind(sfd, (const struct sockaddr *)&addr,
 	    sizeof(addr)) != -1);
 
@@ -409,7 +409,7 @@ ATF_TC_BODY(ktrace__cap_sockaddr, tc)
 	saddr = (struct sockaddr_in *)&violation.cap_data.cap_sockaddr;
 	ATF_REQUIRE_EQ(saddr->sin_family, AF_INET);
 	ATF_REQUIRE_EQ(saddr->sin_port, htons(5000));
-	ATF_REQUIRE_EQ(saddr->sin_addr.s_addr, INADDR_ANY);
+	ATF_REQUIRE_EQ(saddr->sin_addr.s_addr, htonl(INADDR_LOOPBACK));
 	close(sfd);
 }
 
