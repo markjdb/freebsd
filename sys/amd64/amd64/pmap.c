@@ -9307,12 +9307,16 @@ pmap_advise(pmap_t pmap, vm_offset_t sva, vm_offset_t eva, int advice)
 					m = PHYS_TO_VM_PAGE(*pte & PG_FRAME);
 					vm_page_dirty(m);
 				}
-				atomic_clear_long(pte, PG_M | PG_A);
-			} else if ((*pte & PG_A) != 0)
-				atomic_clear_long(pte, PG_A);
-			else
+			} else
 				goto maybe_invlrng;
 
+			/*
+			 * Avoid clearing the accessed bit for wired mappings.
+			 * Superpage demotion assumes that a wired mapping is
+			 * always accessed.
+			 */
+			atomic_clear_long(pte,
+			    PG_M | ((*pte & PG_W) == 0 ? PG_A : 0));
 			if ((*pte & PG_G) != 0) {
 				if (va == va_next)
 					va = sva;
