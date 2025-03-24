@@ -633,6 +633,9 @@ read_mtree_keywords(FILE *fp, fsnode *node)
 				}
 				/* Ignore. */
 			} else if (strcmp(keyword, "time") == 0) {
+				/* Ignore if a default timestamp is present. */
+				if (stampst.st_ino != 0)
+					break;
 				if (value == NULL) {
 					error = ENOATTR;
 					break;
@@ -722,7 +725,17 @@ read_mtree_keywords(FILE *fp, fsnode *node)
 		return (error);
 
 	st->st_mode = (st->st_mode & ~S_IFMT) | node->type;
-
+	/* Store default timestamp, if present. */
+	if (stampst.st_ino != 0) {
+		st->st_atime = stampst.st_atime;
+		st->st_ctime = stampst.st_ctime;
+		st->st_mtime = stampst.st_mtime;
+#if HAVE_STRUCT_STAT_ST_MTIMENSEC
+		st->st_atimensec = stampst.st_atimensec;
+		st->st_mtimensec = stampst.st_mtimensec;
+		st->st_ctimensec = stampst.st_ctimensec;
+#endif
+	}
 	/* Nothing more to do for the global defaults. */
 	if (node->name == NULL)
 		return (0);
