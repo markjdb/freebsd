@@ -723,6 +723,9 @@ rangelock_lock_int(struct rangelock *lock, bool trylock, vm_ooffset_t start,
 	void *cookie;
 	enum RL_INSERT_RES res;
 
+	KASSERT(start <= end,
+	    ("%s: invalid range %#jx-%#jx", __func__, start, end));
+
 	if (rangelock_cheat_lock(lock, locktype, trylock, &cookie))
 		return (cookie);
 	for (res = RL_LOCK_RETRY; res == RL_LOCK_RETRY;) {
