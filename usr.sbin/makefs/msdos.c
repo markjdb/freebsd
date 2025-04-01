@@ -129,11 +129,6 @@ msdos_parse_opts(const char *option, fsinfo_t *fsopts)
 	else if (strcmp(msdos_options[rv].name, "hidden_sectors") == 0)
 		msdos_opt->hidden_sectors_set = 1;
 
-	if (stampst.st_ino) {
-		msdos_opt->timestamp_set = 1;
-		msdos_opt->timestamp = stampst.st_mtime;
-	}
-
 	return 1;
 }
 
