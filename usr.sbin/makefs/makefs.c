@@ -42,6 +42,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <libutil.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +98,7 @@ main(int argc, char *argv[])
 	fstype_t	*fstype;
 	fsinfo_t	 fsoptions;
 	fsnode		*root;
+	time_t	 	 ts;
 	int		 ch, i, len;
 	const char	*subtree;
 	const char	*specfile;
@@ -126,6 +128,18 @@ main(int argc, char *argv[])
 	if (ch == -1)
 		err(1, "Unable to get system time");
 
+	switch (source_date_epoch(&ts)) {
+	case -1:
+		err(1, "Cannot get timestamp from SOURCE_DATE_EPOCH");
+	case 0:
+#ifdef HAVE_STRUCT_STAT_BIRTHTIME
+		stampst.st_birthtime =
+#endif
+		    stampst.st_mtime = stampst.st_ctime = stampst.st_atime = ts;
+		break;
+	default:
+		break;
+	}
 
 	while ((ch = getopt(argc, argv, "B:b:Dd:f:F:M:m:N:O:o:pR:s:S:t:T:xZ")) != -1) {
 		switch (ch) {
