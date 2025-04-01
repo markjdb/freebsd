@@ -315,6 +315,53 @@ T_flag_mtree_cleanup()
 	common_cleanup
 }
 
+atf_test_case source_date_epoch cleanup
+source_date_epoch_body()
+{
+	timestamp=1742574909
+	create_test_dirs
+
+	mkdir -p $TEST_INPUTS_DIR/dir1
+	export SOURCE_DATE_EPOCH=$timestamp
+	atf_check -e empty -o not-empty -s exit:0 \
+	    $MAKEFS -M 1m $TEST_IMAGE $TEST_INPUTS_DIR
+
+	mount_image
+	eval $(stat -s  $TEST_MOUNT_DIR/dir1)
+	atf_check_equal $st_atime $timestamp
+	atf_check_equal $st_mtime $timestamp
+	atf_check_equal $st_ctime $timestamp
+}
+
+source_date_epoch_cleanup()
+{
+	common_cleanup
+}
+
+atf_test_case T_flag_source_date_epoch cleanup
+T_flag_source_date_epoch_body()
+{
+	timestamp_env=1742574909
+	timestamp_T=1742574910
+	create_test_dirs
+
+	mkdir -p $TEST_INPUTS_DIR/dir1
+	export SOURCE_DATE_EPOCH=$timestamp_env
+	atf_check -e empty -o not-empty -s exit:0 \
+	    $MAKEFS -T $timestamp_T -M 1m $TEST_IMAGE $TEST_INPUTS_DIR
+
+	mount_image
+	eval $(stat -s  $TEST_MOUNT_DIR/dir1)
+	atf_check_equal $st_atime $timestamp_T
+	atf_check_equal $st_mtime $timestamp_T
+	atf_check_equal $st_ctime $timestamp_T
+}
+
+T_flag_source_date_epoch_cleanup()
+{
+	common_cleanup
+}
+
 atf_init_test_cases()
 {
 
@@ -326,10 +373,12 @@ atf_init_test_cases()
 	atf_add_test_case from_mtree_spec_file
 	atf_add_test_case from_multiple_dirs
 	atf_add_test_case from_single_dir
+	atf_add_test_case source_date_epoch
 
 	atf_add_test_case o_flag_version_1
 	atf_add_test_case o_flag_version_2
 	atf_add_test_case T_flag_dir
 	atf_add_test_case T_flag_F_flag
 	atf_add_test_case T_flag_mtree
+	atf_add_test_case T_flag_source_date_epoch
 }

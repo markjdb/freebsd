@@ -42,6 +42,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <libutil.h>
 #include <limits.h>
 #include <locale.h>
 #include <stdio.h>
@@ -87,7 +88,7 @@ struct timespec	start_time;
 struct stat stampst;
 
 static	fstype_t *get_fstype(const char *);
-static int get_tstamp(const char *, struct stat *);
+static	void	set_stampst(time_t);
 static	void	usage(fstype_t *, fsinfo_t *);
 
 int
@@ -98,6 +99,7 @@ main(int argc, char *argv[])
 	fstype_t	*fstype;
 	fsinfo_t	 fsoptions;
 	fsnode		*root;
+	time_t	 	 ts;
 	int		 ch, i, len;
 	const char	*subtree;
 	const char	*specfile;
@@ -134,6 +136,15 @@ main(int argc, char *argv[])
 	if (ch == -1)
 		err(1, "Unable to get system time");
 
+	switch (source_date_epoch(&ts)) {
+	case -1:
+		err(1, "Cannot get timestamp from SOURCE_DATE_EPOCH");
+	case 0:
+		set_stampst(ts);
+		break;
+	default:
+		break;
+	}
 
 	while ((ch = getopt(argc, argv, "B:b:Dd:f:F:M:m:N:O:o:pR:s:S:t:T:xZ")) != -1) {
 		switch (ch) {
@@ -264,11 +275,20 @@ main(int argc, char *argv[])
 			break;
 
 		case 'T':
-			if (get_tstamp(optarg, &stampst) == -1)
+		{
+			char *eb;
+			long long l;
+
+			if (stat(optarg, &stampst) != -1)
+				break;
+			errno = 0;
+			l = strtoll(optarg, &eb, 0);
+			if (eb == optarg || *eb != '\0' || errno)
 				errx(1, "Cannot get timestamp from `%s'",
 				    optarg);
+			set_stampst((time_t)l);
 			break;
-
+		}
 		case 'x':
 			fsoptions.onlyspec = 1;
 			break;
@@ -475,30 +495,14 @@ copy_opts(const option_t *o)
 	return memcpy(ecalloc(i, sizeof(*o)), o, i * sizeof(*o));
 }
 
-static int
-get_tstamp(const char *b, struct stat *st)
+static void
+set_stampst(time_t when)
 {
-	time_t when;
-	char *eb;
-	long long l;
-
-	if (stat(b, st) != -1)
-		return 0;
-
-	{
-		errno = 0;
-		l = strtoll(b, &eb, 0);
-		if (b == eb || *eb || errno)
-			return -1;
-		when = (time_t)l;
-	}
-
-	st->st_ino = 1;
+	stampst.st_ino = 1;
 #if HAVE_STRUCT_STAT_BIRTHTIME
-	st->st_birthtime =
+	stampst.st_birthtime =
 #endif
-	st->st_mtime = st->st_ctime = st->st_atime = when;
-	return 0;
+	stampst.st_mtime = stampst.st_ctime = stampst.st_atime = when;
 }
 
 static void
