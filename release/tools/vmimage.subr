@@ -295,6 +295,9 @@ vm_create_disk() {
 		make -C ${WORLDDIR}/stand -V .OBJDIR)"
 	BOOTFILES="$(realpath ${BOOTFILES})"
 	MAKEFSARGS="-s ${VMSIZE} -D"
+	if [ -n "${REPRODUCIBLE_BUILD}" ]; then
+		MAKEFSARGS="$MAKEFSARGS -T 1704067200"
+	fi
 
 	case "${TARGET}:${TARGET_ARCH}" in
 		amd64:amd64 | i386:i386)
