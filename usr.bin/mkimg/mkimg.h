@@ -29,6 +29,10 @@
 
 #include <sys/queue.h>
 #include <sys/types.h>
+#include <stdbool.h>
+
+extern bool reproducible;
+extern time_t source_date_epoch;
 
 struct part {
 	TAILQ_ENTRY(part) link;
