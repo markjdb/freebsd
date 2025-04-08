@@ -41,6 +41,7 @@
 .Op Fl f Ar format
 .Op Fl o Ar outfile
 .Op Fl a Ar active
+.Op Fl R
 .Op Fl v
 .Op Fl y
 .Op Fl s Ar scheme Op Fl p Ar partition ...
@@ -136,6 +137,13 @@ The
 .Fl -capacity
 option is a shorthand to specify the minimum and maximum capacity at the
 same time.
+.Pp
+The
+.Fl R
+option enables reproducible mode: any timestamps or random identifiers will
+be fixed so as to ensure consistent output.
+See also the description of
+.Ev SOURCE_DATE_EPOCH .
 .Pp
 The
 .Fl v
@@ -329,6 +337,9 @@ the specification of a partition's contents
 .It Ev TMPDIR
 Directory to put temporary files in; default is
 .Pa /tmp .
+.It Ev SOURCE_DATE_EPOCH
+The source of any timestamps embedded in the output file.
+The value must be an ASCII representation of a UNIX timestamp.
 .El
 .Sh EXAMPLES
 To create a bootable disk image that is partitioned using the GPT scheme and
