@@ -76,7 +76,10 @@ make_esp_file() {
         shift; shift || : # Ignore failure to shift
     done
 
-    makefs -t msdos \
+    if [ -n "$REPRODUCIBLE_BUILD" ]; then
+        makefsargs="-o volume_id=1 -T 1704067200"
+    fi
+    makefs -t msdos $makefsargs \
 	-o fat_type=${fatbits} \
 	-o sectors_per_cluster=1 \
 	-o volume_label=EFISYS \
