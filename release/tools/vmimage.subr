@@ -345,7 +345,10 @@ vm_create_disk() {
 	buildfs
 
 	echo "Building final disk image...  Please wait."
-	mkimg -s ${PARTSCHEME} -f ${VMFORMAT} \
+	if [ -n "${REPRODUCIBLE_BUILD}" ]; then
+		MKIMGARGS="-R"
+	fi
+	mkimg ${MKIMGARGS} -s ${PARTSCHEME} -f ${VMFORMAT} \
 		${BOOTPARTS} \
 		${SWAPOPT} \
 		${CONFIG_DRIVE} \
