@@ -139,6 +139,7 @@ cw-${_CW:tl}-${_FS}-${_FMT}: ${QEMUTGT}
 		${WITHOUT_QEMU:DWITHOUT_QEMU=true} \
 		${NO_ROOT:DNO_ROOT=true} \
 		PKG_INSTALL_EPOCH=${PKG_INSTALL_EPOCH:U${GITEPOCH}} \
+		${WITH_REPRODUCIBLE_BUILD:DREPRODUCIBLE_BUILD=true} \
 		${.CURDIR}/scripts/mk-vmimage.sh \
 		-C ${.CURDIR}/tools/vmimage.subr -d ${.OBJDIR}/${.TARGET} \
 		-F ${"${_CW:MEC2-BUILDER}" != "":?ufs:${_FS}} \
@@ -192,6 +193,7 @@ vm-image:	${QEMUTGT}
 		${WITHOUT_QEMU:DWITHOUT_QEMU=true} \
 		${NO_ROOT:DNO_ROOT=true} \
 		PKG_INSTALL_EPOCH=${PKG_INSTALL_EPOCH:U${GITEPOCH}} \
+		${WITH_REPRODUCIBLE_BUILD:DREPRODUCIBLE_BUILD=true} \
 		${.CURDIR}/scripts/mk-vmimage.sh \
 		-C ${.CURDIR}/tools/vmimage.subr \
 		-d ${.OBJDIR}/${.TARGET}-${FORMAT}-${FS} -F ${FS} \
