@@ -130,6 +130,7 @@ cw-${_CW:tl}-${_FS}-${_FMT}: ${QEMUTGT}
 		QEMUSTATIC=${QEMUSTATIC} \
 		${WITHOUT_QEMU:DWITHOUT_QEMU=true} \
 		${NO_ROOT:DNO_ROOT=true} \
+		${WITH_REPRODUCIBLE_BUILD:DREPRODUCIBLE_BUILD=true} \
 		${.CURDIR}/scripts/mk-vmimage.sh \
 		-C ${.CURDIR}/tools/vmimage.subr -d ${.OBJDIR}/${.TARGET} -F ${_FS} \
 		-i ${.OBJDIR}/${_CW:tl}.${_FS}.${_FMT}.img -s ${VMSIZE} -f ${_FMT} \
@@ -181,6 +182,7 @@ vm-image:	${QEMUTGT}
 		QEMUSTATIC=${QEMUSTATIC} \
 		${WITHOUT_QEMU:DWITHOUT_QEMU=true} \
 		${NO_ROOT:DNO_ROOT=true} \
+		${WITH_REPRODUCIBLE_BUILD:DREPRODUCIBLE_BUILD=true} \
 		${.CURDIR}/scripts/mk-vmimage.sh \
 		-C ${.CURDIR}/tools/vmimage.subr \
 		-d ${.OBJDIR}/${.TARGET}-${FORMAT}-${FS} -F ${FS} \
