@@ -358,6 +358,7 @@ vm_create_disk() {
 	echo "Disk image ${VMIMAGE} created."
 
 	if [ ${ESP} = "yes" ]; then
+                cp -f ${espfilename} /tmp/efi
 		rm ${espfilename}
 	fi
 
