@@ -77,7 +77,7 @@ make_esp_file() {
     done
 
     if [ -n "$REPRODUCIBLE_BUILD" ]; then
-        makefsargs="-T 1704067200"
+        makefsargs="-o volume_id=1 -T 1704067200"
     fi
     makefs -t msdos $makefsargs \
 	-o fat_type=${fatbits} \
