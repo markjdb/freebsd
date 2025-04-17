@@ -4787,7 +4787,7 @@ cache_fplookup_final_modifying(struct cache_fpl *fpl)
 	MPASS((cnp->cn_flags & MAKEENTRY) == 0);
 	MPASS((cnp->cn_flags & ISDOTDOT) == 0);
 
-	docache = (cnp->cn_flags & NOCACHE) ^ NOCACHE;
+	docache = (cnp->cn_flags & NOCACHE) == 0;
 	if (cnp->cn_nameiop == DELETE || cnp->cn_nameiop == RENAME)
 		docache = false;
 

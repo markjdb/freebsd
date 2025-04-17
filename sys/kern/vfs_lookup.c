@@ -1071,7 +1071,7 @@ vfs_lookup(struct nameidata *ndp)
 	 * The docache variable is set to zero when requested by the
 	 * NOCACHE flag and for all modifying operations except CREATE.
 	 */
-	docache = (cnp->cn_flags & NOCACHE) ^ NOCACHE;
+	docache = (cnp->cn_flags & NOCACHE) == 0;
 	if (cnp->cn_nameiop == DELETE ||
 	    (wantparent && cnp->cn_nameiop != CREATE &&
 	     cnp->cn_nameiop != LOOKUP))
