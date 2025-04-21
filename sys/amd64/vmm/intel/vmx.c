@@ -3035,6 +3035,7 @@ vmx_pmap_deactivate(struct vmx *vmx, pmap_t pmap)
 static int
 vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 {
+	struct thread *td;
 	int rc, handled, launched;
 	struct vmx *vmx;
 	struct vmx_vcpu *vcpu;
@@ -3046,6 +3047,7 @@ vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 	struct region_descriptor gdtr, idtr;
 	uint16_t ldt_sel;
 
+	td = curthread;
 	vcpu = vcpui;
 	vmx = vcpu->vmx;
 	vmcs = vcpu->vmcs;
@@ -3187,8 +3189,10 @@ vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		 */
 		vmx_pmap_activate(vmx, pmap);
 
+		TD_ENTER_VM(td);
 		vmx_run_trace(vcpu);
 		rc = vmx_enter_guest(vmxctx, vmx, launched);
+		TD_EXIT_VM(td);
 
 		vmx_pmap_deactivate(vmx, pmap);
 		vmx_dr_leave_guest(vmxctx);

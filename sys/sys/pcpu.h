@@ -184,7 +184,7 @@ struct pcpu {
 	u_int		pc_cpuid;		/* This cpu number */
 	STAILQ_ENTRY(pcpu) pc_allcpu;
 	struct lock_list_entry *pc_spinlocks;
-	long		pc_cp_time[CPUSTATES];	/* statclock ticks */
+	long		pc_cp_time[CPUSTATES_VM]; /* statclock ticks */
 	struct _device	*pc_device;		/* CPU device handle */
 	void		*pc_netisr;		/* netisr SWI cookie */
 	int8_t		pc_vfs_freevnodes;	/* freevnodes counter */

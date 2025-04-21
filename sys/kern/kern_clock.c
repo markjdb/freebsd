@@ -91,73 +91,87 @@ SDT_PROBE_DEFINE2(sched, , , tick, "struct thread *", "struct proc *");
 static int
 sysctl_kern_cp_time(SYSCTL_HANDLER_ARGS)
 {
-	int error;
-	long cp_time[CPUSTATES];
+	long cp_time[CPUSTATES_VM];
+	void *p;
+	size_t size;
+	int count;
 #ifdef SCTL_MASK32
-	int i;
-	unsigned int cp_time32[CPUSTATES];
+	unsigned int cp_time32[CPUSTATES_VM];
 #endif
 
-	read_cpu_time(cp_time);
 #ifdef SCTL_MASK32
 	if (req->flags & SCTL_MASK32) {
-		if (!req->oldptr)
-			return SYSCTL_OUT(req, 0, sizeof(cp_time32));
-		for (i = 0; i < CPUSTATES; i++)
-			cp_time32[i] = (unsigned int)cp_time[i];
-		error = SYSCTL_OUT(req, cp_time32, sizeof(cp_time32));
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, sizeof(cp_time32)));
+		count = req->oldlen == sizeof(cp_time32) ?
+		    CPUSTATES_VM : CPUSTATES;
 	} else
 #endif
 	{
-		if (!req->oldptr)
-			return SYSCTL_OUT(req, 0, sizeof(cp_time));
-		error = SYSCTL_OUT(req, cp_time, sizeof(cp_time));
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, sizeof(cp_time)));
+		count = req->oldlen == sizeof(cp_time) ?
+		    CPUSTATES_VM : CPUSTATES;
 	}
-	return error;
+	read_cpu_time(cp_time, -1, count);
+#ifdef SCTL_MASK32
+	if (req->flags & SCTL_MASK32) {
+		for (int i = 0; i < CPUSTATES_VM; i++)
+			cp_time32[i] = (unsigned int)cp_time[i];
+		p = cp_time32;
+		size = sizeof(unsigned int) * count;
+	} else
+#endif
+	{
+		p = cp_time;
+		size = sizeof(long) * count;
+	}
+	return (SYSCTL_OUT(req, p, size));
 }
 
 SYSCTL_PROC(_kern, OID_AUTO, cp_time, CTLTYPE_LONG|CTLFLAG_RD|CTLFLAG_MPSAFE,
     0,0, sysctl_kern_cp_time, "LU", "CPU time statistics");
 
-static long empty[CPUSTATES];
-
 static int
 sysctl_kern_cp_times(SYSCTL_HANDLER_ARGS)
 {
-	struct pcpu *pcpu;
-	int error;
-	int c;
-	long *cp_time;
+	long cp_time[CPUSTATES_VM];
 #ifdef SCTL_MASK32
-	unsigned int cp_time32[CPUSTATES];
-	int i;
+	unsigned int cp_time32[CPUSTATES_VM];
 #endif
+	void *p;
+	size_t defsize, size;
+	int count, cpu, error;
 
-	if (!req->oldptr) {
 #ifdef SCTL_MASK32
-		if (req->flags & SCTL_MASK32)
-			return SYSCTL_OUT(req, 0, sizeof(cp_time32) * (mp_maxid + 1));
-		else
+	if (req->flags & SCTL_MASK32) {
+		defsize = sizeof(unsigned int) * CPUSTATES_VM * (mp_maxid + 1);
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, defsize));
+		count = req->oldlen >= defsize ? CPUSTATES_VM : CPUSTATES;
+		size = sizeof(unsigned int) * count;
+		p = cp_time32;
+	} else
 #endif
-			return SYSCTL_OUT(req, 0, sizeof(long) * CPUSTATES * (mp_maxid + 1));
+	{
+		defsize = sizeof(long) * CPUSTATES_VM * (mp_maxid + 1);
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, defsize));
+		count = req->oldlen >= defsize ? CPUSTATES_VM : CPUSTATES;
+		size = sizeof(long) * count;
+		p = cp_time;
 	}
-	for (error = 0, c = 0; error == 0 && c <= mp_maxid; c++) {
-		if (!CPU_ABSENT(c)) {
-			pcpu = pcpu_find(c);
-			cp_time = pcpu->pc_cp_time;
-		} else {
-			cp_time = empty;
-		}
+	for (error = 0, cpu = 0; error == 0 && cpu <= mp_maxid; cpu++) {
+		read_cpu_time(cp_time, cpu, count);
 #ifdef SCTL_MASK32
 		if (req->flags & SCTL_MASK32) {
-			for (i = 0; i < CPUSTATES; i++)
+			for (int i = 0; i < CPUSTATES_VM; i++)
 				cp_time32[i] = (unsigned int)cp_time[i];
-			error = SYSCTL_OUT(req, cp_time32, sizeof(cp_time32));
-		} else
+		}
 #endif
-			error = SYSCTL_OUT(req, cp_time, sizeof(long) * CPUSTATES);
+		error = SYSCTL_OUT(req, p, size);
 	}
-	return error;
+	return (error);
 }
 
 SYSCTL_PROC(_kern, OID_AUTO, cp_times, CTLTYPE_LONG|CTLFLAG_RD|CTLFLAG_MPSAFE,
@@ -306,18 +320,32 @@ SYSCTL_INT(_debug_deadlkres, OID_AUTO, sleepfreq, CTLFLAG_RWTUN, &sleepfreq, 0,
     "Number of seconds between any deadlock resolver thread run");
 #endif	/* DEADLKRES */
 
-void
-read_cpu_time(long *cp_time)
+static void
+read_one_cpu_time(long *cp_time, int cpu, int count)
 {
 	struct pcpu *pc;
-	int i, j;
 
-	/* Sum up global cp_time[]. */
-	bzero(cp_time, sizeof(long) * CPUSTATES);
-	CPU_FOREACH(i) {
-		pc = pcpu_find(i);
-		for (j = 0; j < CPUSTATES; j++)
-			cp_time[j] += pc->pc_cp_time[j];
+	pc = pcpu_find(cpu);
+	for (int j = 0; j < count; j++)
+		cp_time[j] += pc->pc_cp_time[j];
+	if (count == CPUSTATES)
+		cp_time[CP_SYS] += pc->pc_cp_time[CP_VM];
+}
+
+void
+read_cpu_time(long *cp_time, int cpu, int count)
+{
+	KASSERT(count == CPUSTATES || count == CPUSTATES_VM,
+	    ("%s: invalid count %d", __func__, count));
+
+	bzero(cp_time, sizeof(long) * count);
+	if (cpu == -1) {
+		int i;
+
+		CPU_FOREACH(i)
+			read_one_cpu_time(cp_time, i, count);
+	} else if (!CPU_ABSENT(cpu)) {
+		read_one_cpu_time(cp_time, cpu, count);
 	}
 }
 
@@ -725,7 +753,9 @@ statclock(int cnt, int usermode)
 		} else {
 			td->td_pticks += cnt;
 			td->td_sticks += cnt;
-			if (!TD_IS_IDLETHREAD(td))
+			if ((td->td_pflags2 & TDP2_VM_RUN) != 0)
+				cp_time[CP_VM] += cnt;
+			else if (!TD_IS_IDLETHREAD(td))
 				cp_time[CP_SYS] += cnt;
 			else
 				cp_time[CP_IDLE] += cnt;

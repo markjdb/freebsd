@@ -728,7 +728,7 @@ linprocfs_dostat(PFS_FILL_ARGS)
 		zero_pad = "\n";
 	}
 
-	read_cpu_time(cp_time);
+	read_cpu_time(cp_time, -1, CPUSTATES);
 	getboottime(&boottime);
 	/* Parameters common to all versions */
 	sbuf_printf(sb, "cpu %lu %lu %lu %lu",
@@ -812,7 +812,7 @@ linprocfs_douptime(PFS_FILL_ARGS)
 	struct timeval tv;
 
 	getmicrouptime(&tv);
-	read_cpu_time(cp_time);
+	read_cpu_time(cp_time, -1, CPUSTATES);
 	sbuf_printf(sb, "%lld.%02ld %ld.%02lu\n",
 	    (long long)tv.tv_sec, tv.tv_usec / 10000,
 	    T2S(cp_time[CP_IDLE] / mp_ncpus),

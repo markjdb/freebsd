@@ -602,6 +602,7 @@ riscv_sync_interrupts(struct hypctx *hypctx)
 int
 vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 {
+	struct thread *td;
 	struct hypctx *hypctx;
 	struct vm_exit *vme;
 	struct vcpu *vcpu;
@@ -609,6 +610,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 	uint64_t hvip;
 	bool handled;
 
+	td = curthread;
 	hypctx = (struct hypctx *)vcpui;
 	vcpu = hypctx->vcpu;
 	vme = vm_exitinfo(vcpu);
@@ -674,7 +676,9 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 		    __func__, csr_read(vsatp), hypctx->guest_regs.hyp_sstatus,
 		    hypctx->guest_regs.hyp_hstatus);
 
+		TD_ENTER_VM(td);
 		vmm_switch(hypctx);
+		TD_EXIT_VM(td);
 
 		dprintf("%s: Leaving guest VM, hstatus %lx\n", __func__,
 		    hypctx->guest_regs.hyp_hstatus);

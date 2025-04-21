@@ -569,6 +569,7 @@ enum {
 #define	TDP2_COMPAT32RB	0x00000002 /* compat32 ABI for robust lists */
 #define	TDP2_ACCT	0x00000004 /* Doing accounting */
 #define	TDP2_SAN_QUIET	0x00000008 /* Disable warnings from K(A|M)SAN */
+#define	TDP2_VM_RUN	0x00000010 /* Running a guest virtual machine */
 
 /*
  * Reasons that the current thread can not be run yet.
@@ -598,6 +599,17 @@ enum {
 
 #define	TD_CAN_ABORT(td)	(TD_ON_SLEEPQ((td)) &&			\
 				    ((td)->td_flags & TDF_SINTR) != 0)
+
+#define	TD_ENTER_VM(td) do {						\
+	KASSERT(((td)->td_pflags2 & TDP2_VM_RUN) == 0,			\
+	    ("thread %p already running a VM", (td)));			\
+	(td)->td_pflags2 |= TDP2_VM_RUN;				\
+} while (0)
+#define	TD_EXIT_VM(td) do {						\
+	KASSERT(((td)->td_pflags2 & TDP2_VM_RUN) != 0,			\
+	    ("thread %p not running a VM", (td)));			\
+	(td)->td_pflags2 &= ~TDP2_VM_RUN;				\
+} while (0)
 
 #define	KTDSTATE(td)							\
 	(((td)->td_inhibitors & TDI_SLEEPING) != 0 ? "sleep"  :		\

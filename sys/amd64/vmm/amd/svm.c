@@ -2108,6 +2108,7 @@ svm_dr_leave_guest(struct svm_regctx *gctx)
 static int
 svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 {
+	struct thread *td;
 	struct svm_regctx *gctx;
 	struct svm_softc *svm_sc;
 	struct svm_vcpu *vcpu;
@@ -2119,6 +2120,7 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 	int handled;
 	uint16_t ldt_sel;
 
+	td = curthread;
 	vcpu = vcpui;
 	svm_sc = vcpu->sc;
 	state = svm_get_vmcb_state(vcpu);
@@ -2224,7 +2226,9 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		/* Launch Virtual Machine. */
 		SVM_CTR1(vcpu, "Resume execution at %#lx", state->rip);
 		svm_dr_enter_guest(gctx);
+		TD_ENTER_VM(td);
 		svm_launch(vmcb_pa, gctx, get_pcpu());
+		TD_EXIT_VM(td);
 		svm_dr_leave_guest(gctx);
 
 		svm_pmap_deactivate(pmap);

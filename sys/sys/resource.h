@@ -170,6 +170,8 @@ struct loadavg {
 #define	CP_INTR		3
 #define	CP_IDLE		4
 #define	CPUSTATES	5
+#define	CP_VM		5	/* not included by default */
+#define	CPUSTATES_VM	6
 
 /* getrlimitusage flags */
 #define	GETRLIMITUSAGE_EUID	0x0001
@@ -179,7 +181,7 @@ struct loadavg {
 #ifdef _KERNEL
 
 extern struct loadavg averunnable;
-void	read_cpu_time(long *cp_time);	/* Writes array of CPUSTATES */
+void	read_cpu_time(long *cp_time, int cpu, int count);
 
 #else
 

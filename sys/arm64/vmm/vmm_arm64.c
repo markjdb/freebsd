@@ -1061,6 +1061,7 @@ fault:
 int
 vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 {
+	struct thread *td;
 	uint64_t excp_type;
 	int handled;
 	register_t daif;
@@ -1070,6 +1071,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 	struct vm_exit *vme;
 	int mode;
 
+	td = curthread;
 	hypctx = (struct hypctx *)vcpui;
 	hyp = hypctx->hyp;
 	vcpu = hypctx->vcpu;
@@ -1142,7 +1144,9 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 		vgic_flush_hwstate(hypctx);
 
 		/* Call into EL2 to switch to the guest */
+		TD_ENTER_VM(td);
 		excp_type = vmm_enter_guest(hyp, hypctx);
+		TD_EXIT_VM(td);
 
 		vgic_sync_hwstate(hypctx);
 		vtimer_sync_hwstate(hypctx);
