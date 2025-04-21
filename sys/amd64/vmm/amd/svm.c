@@ -2161,6 +2161,7 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 	/* Update Guest RIP */
 	state->rip = rip;
 
+	TD_ENTER_VM(td);
 	do {
 		/*
 		 * Disable global interrupts to guarantee atomicity during
@@ -2226,9 +2227,7 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		/* Launch Virtual Machine. */
 		SVM_CTR1(vcpu, "Resume execution at %#lx", state->rip);
 		svm_dr_enter_guest(gctx);
-		TD_ENTER_VM(td);
 		svm_launch(vmcb_pa, gctx, get_pcpu());
-		TD_EXIT_VM(td);
 		svm_dr_leave_guest(gctx);
 
 		svm_pmap_deactivate(pmap);
@@ -2252,6 +2251,7 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		/* Handle #VMEXIT and if required return to user space. */
 		handled = svm_vmexit(svm_sc, vcpu, vmexit);
 	} while (handled);
+	TD_EXIT_VM(td);
 
 	svm_msr_guest_exit(vcpu);
 

@@ -638,6 +638,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 
 	vmmops_vcpu_restore_csrs(hypctx);
 
+	TD_ENTER_VM(td);
 	for (;;) {
 		dprintf("%s: pc %lx\n", __func__, pc);
 
@@ -676,9 +677,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 		    __func__, csr_read(vsatp), hypctx->guest_regs.hyp_sstatus,
 		    hypctx->guest_regs.hyp_hstatus);
 
-		TD_ENTER_VM(td);
 		vmm_switch(hypctx);
-		TD_EXIT_VM(td);
 
 		dprintf("%s: Leaving guest VM, hstatus %lx\n", __func__,
 		    hypctx->guest_regs.hyp_hstatus);
@@ -721,6 +720,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 			hypctx->guest_regs.hyp_sepc += vme->inst_length;
 		}
 	}
+	TD_EXIT_VM(td);
 
 	vmmops_vcpu_save_csrs(hypctx);
 

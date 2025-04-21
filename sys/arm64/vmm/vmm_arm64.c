@@ -1079,6 +1079,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 
 	hypctx->tf.tf_elr = (uint64_t)pc;
 
+	TD_ENTER_VM(td);
 	for (;;) {
 		if (hypctx->has_exception) {
 			hypctx->has_exception = false;
@@ -1144,9 +1145,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 		vgic_flush_hwstate(hypctx);
 
 		/* Call into EL2 to switch to the guest */
-		TD_ENTER_VM(td);
 		excp_type = vmm_enter_guest(hyp, hypctx);
-		TD_EXIT_VM(td);
 
 		vgic_sync_hwstate(hypctx);
 		vtimer_sync_hwstate(hypctx);
@@ -1177,6 +1176,7 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 			/* Resume guest execution from the next instruction. */
 			hypctx->tf.tf_elr += vme->inst_length;
 	}
+	TD_EXIT_VM(td);
 
 	return (0);
 }

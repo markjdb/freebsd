@@ -3075,6 +3075,7 @@ vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 
 	vmcs_write(VMCS_GUEST_RIP, rip);
 	vmx_set_pcpu_defaults(vmx, vcpu, pmap);
+	TD_ENTER_VM(td);
 	do {
 		KASSERT(vmcs_guest_rip() == rip, ("%s: vmcs guest rip mismatch "
 		    "%#lx/%#lx", __func__, vmcs_guest_rip(), rip));
@@ -3189,10 +3190,8 @@ vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		 */
 		vmx_pmap_activate(vmx, pmap);
 
-		TD_ENTER_VM(td);
 		vmx_run_trace(vcpu);
 		rc = vmx_enter_guest(vmxctx, vmx, launched);
-		TD_EXIT_VM(td);
 
 		vmx_pmap_deactivate(vmx, pmap);
 		vmx_dr_leave_guest(vmxctx);
@@ -3223,6 +3222,7 @@ vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		vmx_exit_trace(vcpu, rip, exit_reason, handled);
 		rip = vmexit->rip;
 	} while (handled);
+	TD_EXIT_VM(td);
 
 	/*
 	 * If a VM exit has been handled then the exitcode must be BOGUS

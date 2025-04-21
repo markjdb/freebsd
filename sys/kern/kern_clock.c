@@ -89,83 +89,90 @@ SDT_PROVIDER_DECLARE(sched);
 SDT_PROBE_DEFINE2(sched, , , tick, "struct thread *", "struct proc *");
 
 static int
-sysctl_kern_cp_time(SYSCTL_HANDLER_ARGS)
+sysctl_kern_cp_time1(struct sysctl_req *req, int count)
 {
 	long cp_time[CPUSTATES_VM];
 	void *p;
 	size_t size;
-	int count;
 #ifdef SCTL_MASK32
 	unsigned int cp_time32[CPUSTATES_VM];
 #endif
 
+	count = nitems(cp_time);
 #ifdef SCTL_MASK32
 	if (req->flags & SCTL_MASK32) {
-		if (req->oldptr == NULL)
-			return (SYSCTL_OUT(req, NULL, sizeof(cp_time32)));
-		count = req->oldlen == sizeof(cp_time32) ?
-		    CPUSTATES_VM : CPUSTATES;
-	} else
-#endif
-	{
-		if (req->oldptr == NULL)
-			return (SYSCTL_OUT(req, NULL, sizeof(cp_time)));
-		count = req->oldlen == sizeof(cp_time) ?
-		    CPUSTATES_VM : CPUSTATES;
-	}
-	read_cpu_time(cp_time, -1, count);
-#ifdef SCTL_MASK32
-	if (req->flags & SCTL_MASK32) {
-		for (int i = 0; i < CPUSTATES_VM; i++)
-			cp_time32[i] = (unsigned int)cp_time[i];
 		p = cp_time32;
 		size = sizeof(unsigned int) * count;
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, size));
 	} else
 #endif
 	{
 		p = cp_time;
 		size = sizeof(long) * count;
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, size));
 	}
+	read_cpu_time(cp_time, -1, count);
+#ifdef SCTL_MASK32
+	if (req->flags & SCTL_MASK32) {
+		for (int i = 0; i < count; i++)
+			cp_time32[i] = (unsigned int)cp_time[i];
+	}
+#endif
 	return (SYSCTL_OUT(req, p, size));
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, cp_time, CTLTYPE_LONG|CTLFLAG_RD|CTLFLAG_MPSAFE,
-    0,0, sysctl_kern_cp_time, "LU", "CPU time statistics");
+static int
+sysctl_kern_cp_time(SYSCTL_HANDLER_ARGS)
+{
+	return (sysctl_kern_cp_time1(req, CPUSTATES));
+}
+SYSCTL_PROC(_kern, OID_AUTO, cp_time,
+    CTLTYPE_LONG | CTLFLAG_RD | CTLFLAG_MPSAFE, 0, 0,
+    sysctl_kern_cp_time, "LU",
+    "CPU time statistics");
 
 static int
-sysctl_kern_cp_times(SYSCTL_HANDLER_ARGS)
+sysctl_kern_cp_vm_time(SYSCTL_HANDLER_ARGS)
+{
+	return (sysctl_kern_cp_time1(req, CPUSTATES_VM));
+}
+SYSCTL_PROC(_kern, OID_AUTO, cp_vm_time,
+    CTLTYPE_LONG | CTLFLAG_RD | CTLFLAG_MPSAFE, 0, 0,
+    sysctl_kern_cp_vm_time, "LU",
+    "CPU time statistics with separate VM time");
+
+static int
+sysctl_kern_cp_times1(struct sysctl_req *req, int count)
 {
 	long cp_time[CPUSTATES_VM];
 #ifdef SCTL_MASK32
 	unsigned int cp_time32[CPUSTATES_VM];
 #endif
 	void *p;
-	size_t defsize, size;
-	int count, cpu, error;
+	size_t size;
+	int cpu, error;
 
 #ifdef SCTL_MASK32
 	if (req->flags & SCTL_MASK32) {
-		defsize = sizeof(unsigned int) * CPUSTATES_VM * (mp_maxid + 1);
-		if (req->oldptr == NULL)
-			return (SYSCTL_OUT(req, NULL, defsize));
-		count = req->oldlen >= defsize ? CPUSTATES_VM : CPUSTATES;
-		size = sizeof(unsigned int) * count;
 		p = cp_time32;
+		size = sizeof(unsigned int) * count;
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, size * (mp_maxid + 1)));
 	} else
 #endif
 	{
-		defsize = sizeof(long) * CPUSTATES_VM * (mp_maxid + 1);
-		if (req->oldptr == NULL)
-			return (SYSCTL_OUT(req, NULL, defsize));
-		count = req->oldlen >= defsize ? CPUSTATES_VM : CPUSTATES;
-		size = sizeof(long) * count;
 		p = cp_time;
+		size = sizeof(long) * count;
+		if (req->oldptr == NULL)
+			return (SYSCTL_OUT(req, NULL, size * (mp_maxid + 1)));
 	}
 	for (error = 0, cpu = 0; error == 0 && cpu <= mp_maxid; cpu++) {
 		read_cpu_time(cp_time, cpu, count);
 #ifdef SCTL_MASK32
 		if (req->flags & SCTL_MASK32) {
-			for (int i = 0; i < CPUSTATES_VM; i++)
+			for (int i = 0; i < count; i++)
 				cp_time32[i] = (unsigned int)cp_time[i];
 		}
 #endif
@@ -174,8 +181,25 @@ sysctl_kern_cp_times(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, cp_times, CTLTYPE_LONG|CTLFLAG_RD|CTLFLAG_MPSAFE,
-    0,0, sysctl_kern_cp_times, "LU", "per-CPU time statistics");
+static int
+sysctl_kern_cp_times(SYSCTL_HANDLER_ARGS)
+{
+	return (sysctl_kern_cp_times1(req, CPUSTATES));
+}
+SYSCTL_PROC(_kern, OID_AUTO, cp_times,
+    CTLTYPE_LONG | CTLFLAG_RD | CTLFLAG_MPSAFE, 0, 0,
+    sysctl_kern_cp_times, "LU",
+    "per-CPU time statistics");
+
+static int
+sysctl_kern_cp_vm_times(SYSCTL_HANDLER_ARGS)
+{
+	return (sysctl_kern_cp_times1(req, CPUSTATES_VM));
+}
+SYSCTL_PROC(_kern, OID_AUTO, cp_vm_times,
+    CTLTYPE_LONG | CTLFLAG_RD | CTLFLAG_MPSAFE, 0, 0,
+    sysctl_kern_cp_vm_times, "LU",
+    "per-CPU time statistics with separate VM time");
 
 #ifdef DEADLKRES
 static const char *blessed[] = {
