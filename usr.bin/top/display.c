@@ -203,7 +203,7 @@ display_init(struct statics * statics)
 	num_swap = 7;
 	assert(num_swap > 0);
 	lswap = calloc(num_swap, sizeof(int));
-	num_cpustates = CPUSTATES;
+	num_cpustates = CPUSTATES_VM;
 	assert(num_cpustates > 0);
 	lcpustates = calloc(num_cpustates * sizeof(int), statics->ncpus);
 	cpustate_columns = calloc(num_cpustates, sizeof(int));

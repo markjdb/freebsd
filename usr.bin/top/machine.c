@@ -103,9 +103,9 @@ static int lastpid;
 
 /* these are for calculating cpu state percentages */
 
-static long cp_time[CPUSTATES];
-static long cp_old[CPUSTATES];
-static long cp_diff[CPUSTATES];
+static long cp_time[CPUSTATES_VM];
+static long cp_old[CPUSTATES_VM];
+static long cp_diff[CPUSTATES_VM];
 
 /* these are for detailing the process states */
 
@@ -118,9 +118,9 @@ static int process_states[nitems(procstatenames)];
 
 /* these are for detailing the cpu states */
 
-static int cpu_states[CPUSTATES];
+static int cpu_states[CPUSTATES_VM];
 static const char *cpustatenames[] = {
-	"user", "nice", "system", "interrupt", "idle", NULL
+	"user", "nice", "system", "interrupt", "idle", "VM", NULL
 };
 
 /* these are for detailing the memory statistics */
@@ -357,19 +357,19 @@ machine_init(struct statics *statics)
 
 	/* Allocate state for per-CPU stats. */
 	GETSYSCTL("kern.smp.maxcpus", maxcpu);
-	times = calloc(maxcpu * CPUSTATES, sizeof(long));
+	times = calloc(maxcpu * CPUSTATES_VM, sizeof(long));
 	if (times == NULL)
 		err(1, "calloc for kern.smp.maxcpus");
-	size = sizeof(long) * maxcpu * CPUSTATES;
-	if (sysctlbyname("kern.cp_times", times, &size, NULL, 0) == -1)
-		err(1, "sysctlbyname kern.cp_times");
+	size = sizeof(long) * maxcpu * CPUSTATES_VM;
+	if (sysctlbyname("kern.cp_vm_times", times, &size, NULL, 0) == -1)
+		err(1, "sysctlbyname kern.cp_vm_times");
 	pcpu_cp_time = calloc(1, size);
-	maxid = MIN(size / CPUSTATES / sizeof(long) - 1, CPU_SETSIZE - 1);
+	maxid = MIN(size / CPUSTATES_VM / sizeof(long) - 1, CPU_SETSIZE - 1);
 	CPU_ZERO(&cpumask);
 	for (i = 0; i <= maxid; i++) {
 		empty = 1;
-		for (j = 0; empty && j < CPUSTATES; j++) {
-			if (times[i * CPUSTATES + j] != 0)
+		for (j = 0; empty && j < CPUSTATES_VM; j++) {
+			if (times[i * CPUSTATES_VM + j] != 0)
 				empty = 0;
 		}
 		if (!empty)
@@ -377,9 +377,9 @@ machine_init(struct statics *statics)
 	}
 	ncpus = CPU_COUNT(&cpumask);
 	assert(ncpus > 0);
-	pcpu_cp_old = calloc(ncpus * CPUSTATES, sizeof(long));
-	pcpu_cp_diff = calloc(ncpus * CPUSTATES, sizeof(long));
-	pcpu_cpu_states = calloc(ncpus * CPUSTATES, sizeof(int));
+	pcpu_cp_old = calloc(ncpus * CPUSTATES_VM, sizeof(long));
+	pcpu_cp_diff = calloc(ncpus * CPUSTATES_VM, sizeof(long));
+	pcpu_cpu_states = calloc(ncpus * CPUSTATES_VM, sizeof(int));
 	statics->ncpus = ncpus;
 
 	/* Allocate state of battery units reported via ACPI. */
@@ -460,10 +460,11 @@ get_system_info(struct system_info *si)
 	size_t size;
 
 	/* get the CPU stats */
-	size = (maxid + 1) * CPUSTATES * sizeof(long);
-	if (sysctlbyname("kern.cp_times", pcpu_cp_time, &size, NULL, 0) == -1)
-		err(1, "sysctlbyname kern.cp_times");
-	GETSYSCTL("kern.cp_time", cp_time);
+	size = (maxid + 1) * CPUSTATES_VM * sizeof(long);
+	if (sysctlbyname("kern.cp_vm_times", pcpu_cp_time, &size, NULL, 0) ==
+	    -1)
+		err(1, "sysctlbyname kern.cp_vm_times");
+	GETSYSCTL("kern.cp_vm_time", cp_time);
 	GETSYSCTL("vm.loadavg", sysload);
 	GETSYSCTL("kern.lastpid", lastpid);
 
@@ -475,13 +476,13 @@ get_system_info(struct system_info *si)
 	for (i = j = 0; i <= maxid; i++) {
 		if (!CPU_ISSET(i, &cpumask))
 			continue;
-		percentages(CPUSTATES, &pcpu_cpu_states[j * CPUSTATES],
-		    &pcpu_cp_time[j * CPUSTATES],
-		    &pcpu_cp_old[j * CPUSTATES],
-		    &pcpu_cp_diff[j * CPUSTATES]);
+		percentages(CPUSTATES_VM, &pcpu_cpu_states[j * CPUSTATES_VM],
+		    &pcpu_cp_time[j * CPUSTATES_VM],
+		    &pcpu_cp_old[j * CPUSTATES_VM],
+		    &pcpu_cp_diff[j * CPUSTATES_VM]);
 		j++;
 	}
-	percentages(CPUSTATES, cpu_states, cp_time, cp_old, cp_diff);
+	percentages(CPUSTATES_VM, cpu_states, cp_time, cp_old, cp_diff);
 
 	/* sum memory & swap statistics */
 	{
