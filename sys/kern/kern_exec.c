@@ -120,6 +120,7 @@ static int sysctl_kern_usrstack(SYSCTL_HANDLER_ARGS);
 static int sysctl_kern_stackprot(SYSCTL_HANDLER_ARGS);
 static int do_execve(struct thread *td, struct image_args *args,
     struct mac *mac_p, struct vmspace *oldvmspace);
+static void exec_close(struct image_params *imgp, struct thread *td);
 
 /* XXX This should be vm_size_t. */
 SYSCTL_PROC(_kern, KERN_PS_STRINGS, ps_strings, CTLTYPE_ULONG|CTLFLAG_RD|
@@ -681,16 +682,11 @@ interpret:
 		 * so nothing should illegitimately be blocked.
 		 */
 		MPASS(imgp->textset);
-		VOP_UNSET_TEXT_CHECKED(newtextvp);
-		imgp->textset = false;
 		/* free name buffer and old vnode */
+		exec_close(imgp, td);
 #ifdef MAC
 		mac_execve_interpreter_enter(newtextvp, &interpvplabel);
 #endif
-		if (imgp->opened) {
-			VOP_CLOSE(newtextvp, FREAD, td->td_ucred, td);
-			imgp->opened = false;
-		}
 		vput(newtextvp);
 		imgp->vp = newtextvp = NULL;
 		if (args->fname != NULL) {
@@ -953,10 +949,7 @@ exec_fail_dealloc:
 		exec_unmap_first_page(imgp);
 
 	if (imgp->vp != NULL) {
-		if (imgp->opened)
-			VOP_CLOSE(imgp->vp, FREAD, td->td_ucred, td);
-		if (imgp->textset)
-			VOP_UNSET_TEXT_CHECKED(imgp->vp);
+		exec_close(imgp, td);
 		if (error != 0)
 			vput(imgp->vp);
 		else
@@ -1892,6 +1885,19 @@ exec_check_permissions(struct image_params *imgp)
 	if (error == 0)
 		imgp->opened = true;
 	return (error);
+}
+
+static void
+exec_close(struct image_params *imgp, struct thread *td)
+{
+	if (imgp->opened) {
+		VOP_CLOSE(imgp->vp, FREAD, td->td_ucred, td);
+		imgp->opened = false;
+	}
+	if (imgp->textset) {
+		VOP_UNSET_TEXT_CHECKED(imgp->vp);
+		imgp->textset = false;
+	}
 }
 
 /*
