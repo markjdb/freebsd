@@ -63,6 +63,11 @@ typedef	__size_t	size_t;
 #define	_SIZE_T_DECLARED
 #endif
 
+#ifndef _TIME_T_DECLARED
+typedef	__time_t	time_t;
+#define	_TIME_T_DECLARED
+#endif
+
 #ifndef _UID_T_DECLARED
 typedef	__uid_t		uid_t;
 #define	_UID_T_DECLARED
@@ -133,6 +138,7 @@ int	realhostname(char *_host, size_t _hsize, const struct in_addr *_ip);
 int	realhostname_sa(char *_host, size_t _hsize, struct sockaddr *_addr,
 	    int _addrlen);
 int	_secure_path(const char *_path, uid_t _uid, gid_t _gid);
+int	source_date_epoch(time_t *tp);
 void	trimdomain(char *_fullhost, int _hostsize);
 const char *
 	uu_lockerr(int _uu_lockresult);
