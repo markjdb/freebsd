@@ -18,7 +18,7 @@ SRCS=	_secure_path.c auth.c cpuset.c expand_number.c flopen.c fparseln.c \
 	login_class.c login_crypt.c login_ok.c login_times.c login_tty.c \
 	mntopts.c \
 	pidfile.c property.c pty.c pw_scan.c pw_util.c quotafile.c \
-	realhostname.c stub.c trimdomain.c uucplock.c
+	realhostname.c source_date_epoch.c stub.c trimdomain.c uucplock.c
 INCS=	libutil.h login_cap.h mntopts.h
 
 CFLAGS+= -DNO__SCCSID
