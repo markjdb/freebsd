@@ -2982,6 +2982,42 @@ retry:
 }
 
 /*
+ * Purge the entry to vp from dvp with the specified name.
+ */
+static void
+cache_purge_name_impl(struct vnode *dvp, struct vnode *vp,
+    struct componentname *cnp)
+{
+	struct cache_freebatch batch;
+	struct namecache *ncp;
+	struct mtx *vlp, *vlp2;
+
+	TAILQ_INIT(&batch);
+	vlp = VP2VNODELOCK(vp);
+	vlp2 = NULL;
+	mtx_lock(vlp);
+retry:
+	TAILQ_FOREACH(ncp, &vp->v_cache_dst, nc_dst) {
+		if (cache_ncp_match(ncp, dvp, cnp)) {
+			if (!cache_zap_locked_vnode_kl2(ncp, vp, &vlp2))
+				goto retry;
+			TAILQ_INSERT_TAIL(&batch, ncp, nc_dst);
+			break;
+		}
+	}
+	ncp = atomic_load_ptr(&vp->v_cache_dd);
+	if (ncp != NULL && (ncp->nc_flag & NCF_ISDOTDOT) != 0) {
+		if (!cache_zap_locked_vnode_kl2(ncp, vp, &vlp2))
+			goto retry;
+		TAILQ_INSERT_TAIL(&batch, ncp, nc_dst);
+	}
+	mtx_unlock(vlp);
+	if (vlp2 != NULL)
+		mtx_unlock(vlp2);
+	cache_free_batch(&batch);
+}
+
+/*
  * Opportunistic check to see if there is anything to do.
  */
 static bool
@@ -3002,6 +3038,14 @@ cache_purge(struct vnode *vp)
 	if (!cache_has_entries(vp))
 		return;
 	cache_purge_impl(vp);
+}
+
+static void
+cache_purge_name(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
+{
+	if (!cache_has_entries(vp))
+		return;
+	cache_purge_name_impl(dvp, vp, cnp);
 }
 
 /*
@@ -3070,12 +3114,13 @@ cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
 	if (tvp != NULL)
 		ASSERT_VOP_IN_SEQC(tvp);
 
-	cache_purge(fvp);
+	cache_purge_name(fdvp, fvp, fcnp);
 	if (tvp != NULL) {
-		cache_purge(tvp);
+		cache_purge_name(tdvp, tvp, tcnp);
 		KASSERT(!cache_remove_cnp(tdvp, tcnp),
 		    ("%s: lingering negative entry", __func__));
 	} else {
+		/* Purge negative entries. */
 		cache_remove_cnp(tdvp, tcnp);
 	}
 
