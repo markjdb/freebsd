@@ -61,7 +61,7 @@ vm_install_base() {
 
 	cd ${WORLDDIR} && \
 		make DESTDIR=${DESTDIR} ${INSTALLOPTS} \
-		installworld installkernel distribution || \
+		installworld -s installkernel distribution || \
 		err "\n\nCannot install the base system to ${DESTDIR}."
 
 	# Bootstrap etcupdate(8) database.
