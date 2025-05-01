@@ -64,7 +64,7 @@ perform()
 
 cert_files_in()
 {
-	find -L "$@" -type f \( \
+	find -s -L "$@" -type f \( \
 	     -name '*.pem' -or \
 	     -name '*.crt' -or \
 	     -name '*.cer' \
@@ -114,14 +114,14 @@ create_trusted()
 
 	hash=$(do_hash "$1") || return
 	certhash=$(openssl x509 -sha1 -in "$1" -noout -fingerprint)
-	for otherfile in $(find $UNTRUSTDESTDIR -name "$hash.*") ; do
+	for otherfile in $(find -s $UNTRUSTDESTDIR -name "$hash.*") ; do
 		otherhash=$(openssl x509 -sha1 -in "$otherfile" -noout -fingerprint)
 		if [ "$certhash" = "$otherhash" ] ; then
 			info "Skipping untrusted certificate $hash ($otherfile)"
 			return 0
 		fi
 	done
-	for otherfile in $(find $CERTDESTDIR -name "$hash.*") ; do
+	for otherfile in $(find -s $CERTDESTDIR -name "$hash.*") ; do
 		otherhash=$(openssl x509 -sha1 -in "$otherfile" -noout -fingerprint)
 		if [ "$certhash" = "$otherhash" ] ; then
 			verbose "Skipping duplicate entry for certificate $hash"
@@ -197,7 +197,7 @@ do_scan()
 			SPLITDIR=$(mktemp -d)
 			eolcvt "$CFILE" | egrep '^(---|[0-9A-Za-z/+=]+$)' | \
 				split -p '^-+BEGIN CERTIFICATE-+$' - "$SPLITDIR/x"
-			for CERT in $(find "$SPLITDIR" -type f) ; do
+			for CERT in $(find -s "$SPLITDIR" -type f) ; do
 				"$CFUNC" "$CERT"
 			done
 			rm -rf "$SPLITDIR"
@@ -210,7 +210,7 @@ do_list()
 {
 	local CFILE subject
 
-	for CFILE in $(find "$@" \( -type f -or -type l \) -name '*.[0-9]') ; do
+	for CFILE in $(find -s "$@" \( -type f -or -type l \) -name '*.[0-9]') ; do
 		if [ ! -s "$CFILE" ] ; then
 			info "Unable to read $CFILE"
 			ERRORS=$((ERRORS + 1))
@@ -272,7 +272,7 @@ cmd_trust()
 		if [ -s "$UTFILE" ] ; then
 			hash=$(do_hash "$UTFILE")
 			certhash=$(openssl x509 -sha1 -in "$UTFILE" -noout -fingerprint)
-			for UNTRUSTEDFILE in $(find $UNTRUSTDESTDIR -name "$hash.*") ; do
+			for UNTRUSTEDFILE in $(find -s $UNTRUSTDESTDIR -name "$hash.*") ; do
 				untrustedhash=$(openssl x509 -sha1 -in "$UNTRUSTEDFILE" -noout -fingerprint)
 				if [ "$certhash" = "$untrustedhash" ] ; then
 					info "Removing $(basename "$UNTRUSTEDFILE") from untrusted list"
