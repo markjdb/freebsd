@@ -232,6 +232,9 @@ static struct bool_flags pr_flag_allow[NBBY * NBPW] = {
 	{"allow.adjtime", "allow.noadjtime", PR_ALLOW_ADJTIME},
 	{"allow.settime", "allow.nosettime", PR_ALLOW_SETTIME},
 	{"allow.routing", "allow.norouting", PR_ALLOW_ROUTING},
+#ifdef AUDIT
+	{"allow.setaudit", "allow.nosetaudit", PR_ALLOW_SETAUDIT},
+#endif
 };
 static unsigned pr_allow_all = PR_ALLOW_ALL_STATIC;
 const size_t pr_flag_allow_size = sizeof(pr_flag_allow);
@@ -3964,7 +3967,6 @@ prison_priv_check(struct ucred *cred, int priv)
 		 */
 	case PRIV_KTRACE:
 
-#if 0
 		/*
 		 * Allow jailed processes to configure audit identity and
 		 * submit audit records (login, etc).  In the future we may
@@ -3973,6 +3975,11 @@ prison_priv_check(struct ucred *cred, int priv)
 		 */
 	case PRIV_AUDIT_GETAUDIT:
 	case PRIV_AUDIT_SETAUDIT:
+		if (cred->cr_prison->pr_allow & PR_ALLOW_SETAUDIT)
+			return (0);
+		else
+			return (EPERM);
+#if 0
 	case PRIV_AUDIT_SUBMIT:
 #endif
 
@@ -4702,6 +4709,10 @@ SYSCTL_JAIL_PARAM(_allow, settime, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Jail may set system time");
 SYSCTL_JAIL_PARAM(_allow, routing, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Jail may modify routing table");
+#ifdef AUDIT
+SYSCTL_JAIL_PARAM(_allow, setaudit, CTLTYPE_INT | CTLFLAG_RW,
+    "B", "Jail may set and get audit session state");
+#endif
 
 SYSCTL_JAIL_PARAM_SUBNODE(allow, mount, "Jail mount/unmount permission flags");
 SYSCTL_JAIL_PARAM(_allow_mount, , CTLTYPE_INT | CTLFLAG_RW,
