@@ -50,6 +50,7 @@
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
+#include <sys/inotify.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #ifdef KTRACE

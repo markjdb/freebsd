@@ -51,6 +51,7 @@
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filio.h>
+#include <sys/inotify.h>
 #include <sys/ktr.h>
 #include <sys/ktrace.h>
 #include <sys/limits.h>
@@ -303,7 +304,8 @@ restart:
 				NDREINIT(ndp);
 				goto restart;
 			}
-			if ((vn_open_flags & VN_OPEN_NAMECACHE) != 0)
+			if ((vn_open_flags & VN_OPEN_NAMECACHE) != 0 ||
+			    (vn_irflag_read(ndp->ni_dvp) & VIRF_INOTIFY) != 0)
 				ndp->ni_cnd.cn_flags |= MAKEENTRY;
 #ifdef MAC
 			error = mac_vnode_check_create(cred, ndp->ni_dvp,
@@ -313,12 +315,14 @@ restart:
 				error = VOP_CREATE(ndp->ni_dvp, &ndp->ni_vp,
 				    &ndp->ni_cnd, vap);
 			vp = ndp->ni_vp;
-			if (error == 0 && (fmode & O_EXCL) != 0 &&
-			    (fmode & (O_EXLOCK | O_SHLOCK)) != 0) {
-				VI_LOCK(vp);
-				vp->v_iflag |= VI_FOPENING;
-				VI_UNLOCK(vp);
-				first_open = true;
+			if (error == 0) {
+				if ((fmode & O_EXCL) != 0 &&
+				    (fmode & (O_EXLOCK | O_SHLOCK)) != 0) {
+					VI_LOCK(vp);
+					vp->v_iflag |= VI_FOPENING;
+					VI_UNLOCK(vp);
+					first_open = true;
+				}
 			}
 			VOP_VPUT_PAIR(ndp->ni_dvp, error == 0 ? &vp : NULL,
 			    false);
@@ -479,6 +483,7 @@ vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 		if (vp->v_type != VFIFO && vp->v_type != VSOCK &&
 		    VOP_ACCESS(vp, VREAD, cred, td) == 0)
 			fp->f_flag |= FKQALLOWED;
+		INOTIFY(vp, IN_OPEN);
 		return (0);
 	}
 
@@ -1180,8 +1185,8 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (error == 0)
 #endif
 		error = VOP_READ(vp, uio, ioflag, fp->f_cred);
-	fp->f_nextoff[UIO_READ] = uio->uio_offset;
 	VOP_UNLOCK(vp);
+	fp->f_nextoff[UIO_READ] = uio->uio_offset;
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
 	    orig_offset != uio->uio_offset)
 		/*
@@ -1250,8 +1255,8 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (error == 0)
 #endif
 		error = VOP_WRITE(vp, uio, ioflag, fp->f_cred);
-	fp->f_nextoff[UIO_WRITE] = uio->uio_offset;
 	VOP_UNLOCK(vp);
+	fp->f_nextoff[UIO_WRITE] = uio->uio_offset;
 	if (need_finished_write)
 		vn_finished_write(mp);
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
@@ -1741,6 +1746,8 @@ vn_truncate_locked(struct vnode *vp, off_t length, bool sync,
 			vattr.va_vaflags |= VA_SYNC;
 		error = VOP_SETATTR(vp, &vattr, cred);
 		VOP_ADD_WRITECOUNT_CHECKED(vp, -1);
+		if (error == 0)
+			INOTIFY(vp, IN_MODIFY);
 	}
 	return (error);
 }
