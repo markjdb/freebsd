@@ -465,6 +465,8 @@ typedef int (__sys_kcmp_t)(pid_t, pid_t, int, uintptr_t, uintptr_t);
 typedef int (__sys_getrlimitusage_t)(u_int, int, rlim_t *);
 typedef int (__sys_fchroot_t)(int);
 typedef int (__sys_setcred_t)(u_int, const struct setcred *, size_t);
+typedef int (__sys_inotify_add_watch_t)(int, const char *, uint32_t);
+typedef int (__sys_inotify_rm_watch_t)(int, int);
 
 void __sys_exit(int rval);
 int __sys_fork(void);
@@ -866,6 +868,8 @@ int __sys_kcmp(pid_t pid1, pid_t pid2, int type, uintptr_t idx1, uintptr_t idx2)
 int __sys_getrlimitusage(u_int which, int flags, rlim_t * res);
 int __sys_fchroot(int fd);
 int __sys_setcred(u_int flags, const struct setcred * wcred, size_t size);
+int __sys_inotify_add_watch(int fd, const char * path, uint32_t mask);
+int __sys_inotify_rm_watch(int fd, int wd);
 __END_DECLS
 
 #endif /* __LIBSYS_H_ */
