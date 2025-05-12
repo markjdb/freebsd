@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_ktrace.h"
@@ -44,6 +43,7 @@
 #include <sys/filedesc.h>
 #include <sys/imgact.h>
 #include <sys/imgact_elf.h>
+#include <sys/inotify.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -1883,8 +1883,10 @@ exec_check_permissions(struct image_params *imgp)
 	 * general case).
 	 */
 	error = VOP_OPEN(vp, FREAD, td->td_ucred, td, NULL);
-	if (error == 0)
+	if (error == 0) {
+		INOTIFY(vp, IN_OPEN);
 		imgp->opened = true;
+	}
 	return (error);
 }
 
@@ -1893,6 +1895,7 @@ exec_close(struct image_params *imgp, struct thread *td)
 {
 	if (imgp->opened) {
 		VOP_CLOSE(imgp->vp, FREAD, td->td_ucred, td);
+		INOTIFY(imgp->vp, IN_CLOSE);
 		imgp->opened = false;
 	}
 	if (imgp->textset) {
