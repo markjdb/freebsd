@@ -23,7 +23,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #define L2CAP_SOCKET_CHECKED
 
 #include <sys/types.h>
@@ -31,6 +30,7 @@
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/extattr.h>
+#include <sys/inotify.h>
 #include <sys/linker.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
