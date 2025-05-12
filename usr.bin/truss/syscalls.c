@@ -31,7 +31,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 /*
  * This file has routines used to print out system calls and their
  * arguments.
@@ -316,6 +315,8 @@ static const struct syscall_decode decoded_syscalls[] = {
 		    { Ptr | OUT, 3 }, { Ptr | OUT, 4 } } },
 	{ .name = "gettimeofday", .ret_type = 1, .nargs = 2,
 	  .args = { { Timeval | OUT, 0 }, { Ptr, 1 } } },
+	{ .name = "inotify_add_watch", .ret_type = 1, .nargs = 3,
+	  .args = { { Int, 0 }, { Name | IN, 1 }, { Int, 2 } } },
 	{ .name = "ioctl", .ret_type = 1, .nargs = 3,
 	  .args = { { Int, 0 }, { Ioctl, 1 }, { Ptr, 2 } } },
 	{ .name = "kevent", .ret_type = 1, .nargs = 6,
