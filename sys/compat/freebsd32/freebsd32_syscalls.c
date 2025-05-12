@@ -597,4 +597,6 @@ const char *freebsd32_syscallnames[] = {
 	"getrlimitusage",			/* 589 = getrlimitusage */
 	"fchroot",			/* 590 = fchroot */
 	"freebsd32_setcred",			/* 591 = freebsd32_setcred */
+	"inotify_add_watch_at",			/* 592 = inotify_add_watch_at */
+	"inotify_rm_watch",			/* 593 = inotify_rm_watch */
 };

@@ -1886,6 +1886,16 @@ struct setcred_args {
 	char wcred_l_[PADL_(const struct setcred *)]; const struct setcred * wcred; char wcred_r_[PADR_(const struct setcred *)];
 	char size_l_[PADL_(size_t)]; size_t size; char size_r_[PADR_(size_t)];
 };
+struct inotify_add_watch_at_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char dfd_l_[PADL_(int)]; int dfd; char dfd_r_[PADR_(int)];
+	char path_l_[PADL_(const char *)]; const char * path; char path_r_[PADR_(const char *)];
+	char mask_l_[PADL_(uint32_t)]; uint32_t mask; char mask_r_[PADR_(uint32_t)];
+};
+struct inotify_rm_watch_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char wd_l_[PADL_(int)]; int wd; char wd_r_[PADR_(int)];
+};
 int	sys_exit(struct thread *, struct exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2287,6 +2297,8 @@ int	sys_kcmp(struct thread *, struct kcmp_args *);
 int	sys_getrlimitusage(struct thread *, struct getrlimitusage_args *);
 int	sys_fchroot(struct thread *, struct fchroot_args *);
 int	sys_setcred(struct thread *, struct setcred_args *);
+int	sys_inotify_add_watch_at(struct thread *, struct inotify_add_watch_at_args *);
+int	sys_inotify_rm_watch(struct thread *, struct inotify_rm_watch_args *);
 
 #ifdef COMPAT_43
 
@@ -3268,6 +3280,8 @@ int	freebsd13_swapoff(struct thread *, struct freebsd13_swapoff_args *);
 #define	SYS_AUE_getrlimitusage	AUE_NULL
 #define	SYS_AUE_fchroot	AUE_NULL
 #define	SYS_AUE_setcred	AUE_SETCRED
+#define	SYS_AUE_inotify_add_watch_at	AUE_INOTIFY
+#define	SYS_AUE_inotify_rm_watch	AUE_INOTIFY
 
 #undef PAD_
 #undef PADL_
