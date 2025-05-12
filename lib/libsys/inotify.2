@@ -1,0 +1,122 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2025 Klara, Inc.
+.\"
+.Dd April 16, 2025
+.Dt inotify 2
+.Os
+.Sh
+.Nm inotify_init
+.Nm inotify_init1
+.Nm inotify_add_watch
+.Nm inotify_rm_watch
+.Sh
+.Lb libc
+.Sh SYNOPSIS
+.In sys/inotify.h
+.Ft int
+.Fo inotify_init
+.Fc
+.Ft int
+.Fo inotify_init1
+.Fa int flags
+.Fc
+.Ft int
+.Fo inotify_add_watch
+.Fa int fd
+.Fa const char *pathname
+.Fa uint32_t mask
+.Fc
+.Ft int
+.Fo inotify_rm_watch
+.Fa int fd
+.Fa uint32_t wd
+.Fc
+.Bd -literal
+struct inotify_event {
+	int wd;			/* Watch descriptor */
+	uint32_t mask;		/* Event and flags */
+	uint32_t cookie;	/* Unique ID which links rename events */
+	uint32_t len;		/* Name field size, including terminator */
+	char name[0];		/* Filename (nul-terminated) */
+};
+.Ed
+.Sh DESCRIPTION
+The inotify system calls provide an interface to monitor file system events.
+They aim to be compatible with the Linux inotify interface.
+.Pp
+inotify allows one or more files or directories to be watched for events, such
+as file open or close.
+Watched files or directories are associated with a file descriptor returned
+by
+.Xr inotify_init 2
+or
+.Xr inotify_init1 2 .
+When an event occurs, a record describing the event becomes available for reading
+from the inotify file descriptor.
+Each inotify descriptor thus refers to a queue of events waiting to be read.
+.Pp
+To watch a file or directory, the
+.Xr inotify_add_watch 2
+system call must be used.
+It takes a path and a mask of events to watch for.
+When watching a directory, events are generated for files
+.Pp
+The following events are defined:
+.Bl -tag -width IN_CLOSE_NOWRITE
+.It Dv IN_ACCESS
+.It Dv IN_ATTRIB
+.It Dv IN_CLOSE_WRITE
+.It Dv IN_CLOSE_NOWRITE
+.It Dv IN_CREATE
+.It Dv IN_DELETE
+.It Dv IN_DELETE_SELF
+.It Dv IN_MODIFY
+.It Dv IN_MOVE_SELF
+.It Dv IN_MOVED_FROM
+.It Dv IN_MOVED_TO
+.It Dv IN_OPEN
+.El
+.Pp
+A number of flags may also be specified in the
+.Ar mask :
+.Bl -tag -width IN_DONT_FOLLOW
+.It Dv IN_DONT_FOLLOW
+If
+.Ar pathname
+is a symbolic link, do not follow it.
+.It Dv IN_EXCL_UNLINK
+This currently has no effect, see the
+.Sx BUGS
+section.
+.In Dv IN_MASK_ADD
+.In Dv IN_ONESHOT
+.In Dv IN_ONLYDIR
+.In Dv IN_MASK_CREATE
+.El
+.Sh SYSCTL VARIABLES
+.Sh STANDARDS
+The
+.Nm
+interface originates from Linux and is non-standard.
+This implementation aims to be compatible with that of Linux and is based
+on the documentation available at
+.Pa https://man7.org/linux/man-pages/man7/inotify.7.html .
+.Sh BUGS
+If a file in a watched directory has multiple hard links,
+an access via any hard link for that file will generate an event.
+This is not the case for the Linux implementation, where only accesses
+via the hard link in the watched directory will generate an event.
+.Pp
+If a watched directory contains multiple hard links of a file,
+.Pp
+When a file is unlinked, no more events will be generated for that file,
+even if it continues to be accessed.
+By default, the Linux implementation will continue to generate events in
+this case.
+Thus, the
+.Fx
+implementation behaves as though
+.Dv IN_EXCL_UNLINK
+is always set.
