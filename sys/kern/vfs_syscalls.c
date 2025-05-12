@@ -50,6 +50,7 @@
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
+#include <sys/inotify.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #ifdef KTRACE
@@ -4312,6 +4313,7 @@ unionread:
 		VOP_UNLOCK(vp);
 		goto fail;
 	}
+	INOTIFY(vp, IN_ACCESS);
 	if (count == auio.uio_resid &&
 	    (vp->v_vflag & VV_ROOT) &&
 	    (vp->v_mount->mnt_flag & MNT_UNION)) {
@@ -5129,6 +5131,10 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	retlen = len;
 	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &retlen,
 	    flags, infp->f_cred, outfp->f_cred, td);
+	if (error == 0 && retlen > 0) {
+		INOTIFY(invp, IN_ACCESS);
+		INOTIFY(outvp, IN_MODIFY);
+	}
 out:
 	if (rl_rcookie != NULL)
 		vn_rangelock_unlock(invp, rl_rcookie);

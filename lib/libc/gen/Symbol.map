@@ -459,6 +459,10 @@ FBSD_1.8 {
 	aio_write2;
 	execvpe;
 	fts_open_b;
+	inotify_add_watch;
+	inotify_init;
+	inotify_init1;
+	inotify_rm_watch;
 	psiginfo;
 	rtld_get_var;
 	rtld_set_var;

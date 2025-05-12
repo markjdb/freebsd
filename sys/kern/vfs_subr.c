@@ -38,7 +38,6 @@
  * External virtual filesystem routines
  */
 
-#include <sys/cdefs.h>
 #include "opt_ddb.h"
 #include "opt_watchdog.h"
 
@@ -57,6 +56,7 @@
 #include <sys/extattr.h>
 #include <sys/file.h>
 #include <sys/fcntl.h>
+#include <sys/inotify.h>
 #include <sys/jail.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
@@ -5247,7 +5247,8 @@ destroy_vpollinfo_free(struct vpollinfo *vi)
 static void
 destroy_vpollinfo(struct vpollinfo *vi)
 {
-
+	KASSERT(TAILQ_EMPTY(&vi->vpi_inotify),
+	    ("%s: pollinfo %p has lingering watches", __func__, vi));
 	knlist_clear(&vi->vpi_selinfo.si_note, 1);
 	seldrain(&vi->vpi_selinfo);
 	destroy_vpollinfo_free(vi);
@@ -5261,7 +5262,7 @@ v_addpollinfo(struct vnode *vp)
 {
 	struct vpollinfo *vi;
 
-	if (vp->v_pollinfo != NULL)
+	if (atomic_load_ptr(&vp->v_pollinfo) != NULL)
 		return;
 	vi = malloc(sizeof(*vi), M_VNODEPOLL, M_WAITOK | M_ZERO);
 	mtx_init(&vi->vpi_lock, "vnode pollinfo", NULL, MTX_DEF);
@@ -6077,8 +6078,10 @@ vop_create_post(void *ap, int rc)
 	a = ap;
 	dvp = a->a_dvp;
 	vn_seqc_write_end(dvp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
+		INOTIFY_NAME(*a->a_vpp, dvp, a->a_cnp, IN_CREATE);
+	}
 }
 
 void
@@ -6123,8 +6126,10 @@ vop_deleteextattr_post(void *ap, int rc)
 	a = ap;
 	vp = a->a_vp;
 	vn_seqc_write_end(vp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(a->a_vp, NOTE_ATTRIB);
+		INOTIFY(vp, IN_ATTRIB);
+	}
 }
 
 void
@@ -6154,6 +6159,7 @@ vop_link_post(void *ap, int rc)
 	if (!rc) {
 		VFS_KNOTE_LOCKED(vp, NOTE_LINK);
 		VFS_KNOTE_LOCKED(tdvp, NOTE_WRITE);
+		INOTIFY_NAME(vp, tdvp, a->a_cnp, IN_CREATE);
 	}
 }
 
@@ -6177,8 +6183,10 @@ vop_mkdir_post(void *ap, int rc)
 	a = ap;
 	dvp = a->a_dvp;
 	vn_seqc_write_end(dvp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE | NOTE_LINK);
+		INOTIFY_NAME(*a->a_vpp, dvp, a->a_cnp, IN_CREATE);
+	}
 }
 
 #ifdef DEBUG_VFS_LOCKS
@@ -6213,8 +6221,10 @@ vop_mknod_post(void *ap, int rc)
 	a = ap;
 	dvp = a->a_dvp;
 	vn_seqc_write_end(dvp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
+		INOTIFY_NAME(*a->a_vpp, dvp, a->a_cnp, IN_CREATE);
+	}
 }
 
 void
@@ -6258,6 +6268,8 @@ vop_remove_post(void *ap, int rc)
 	if (!rc) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
 		VFS_KNOTE_LOCKED(vp, NOTE_DELETE);
+		INOTIFY_NAME(vp, dvp, a->a_cnp, IN_ATTRIB);
+		INOTIFY_NAME(vp, dvp, a->a_cnp, IN_DELETE);
 	}
 }
 
@@ -6287,8 +6299,12 @@ vop_rename_post(void *ap, int rc)
 		}
 
 		VFS_KNOTE_UNLOCKED(a->a_fvp, NOTE_RENAME);
-		if (a->a_tvp)
+		INOTIFY_MOVE(a->a_fvp, a->a_fdvp, a->a_fcnp, a->a_tdvp,
+		    a->a_tcnp);
+		if (a->a_tvp) {
 			VFS_KNOTE_UNLOCKED(a->a_tvp, NOTE_DELETE);
+			INOTIFY_NAME(a->a_tvp, a->a_tdvp, a->a_tcnp, IN_DELETE);
+		}
 	}
 	if (a->a_tdvp != a->a_fdvp)
 		vdrop(a->a_fdvp);
@@ -6328,6 +6344,7 @@ vop_rmdir_post(void *ap, int rc)
 		vp->v_vflag |= VV_UNLINKED;
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE | NOTE_LINK);
 		VFS_KNOTE_LOCKED(vp, NOTE_DELETE);
+		INOTIFY_NAME(vp, dvp, a->a_cnp, IN_DELETE);
 	}
 }
 
@@ -6351,8 +6368,10 @@ vop_setattr_post(void *ap, int rc)
 	a = ap;
 	vp = a->a_vp;
 	vn_seqc_write_end(vp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(vp, NOTE_ATTRIB);
+		INOTIFY(vp, IN_ATTRIB);
+	}
 }
 
 void
@@ -6397,8 +6416,10 @@ vop_setextattr_post(void *ap, int rc)
 	a = ap;
 	vp = a->a_vp;
 	vn_seqc_write_end(vp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(vp, NOTE_ATTRIB);
+		INOTIFY(vp, IN_ATTRIB);
+	}
 }
 
 void
@@ -6421,8 +6442,10 @@ vop_symlink_post(void *ap, int rc)
 	a = ap;
 	dvp = a->a_dvp;
 	vn_seqc_write_end(dvp);
-	if (!rc)
+	if (!rc) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
+		INOTIFY_NAME(*a->a_vpp, dvp, a->a_cnp, IN_CREATE);
+	}
 }
 
 void
