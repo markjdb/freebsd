@@ -478,7 +478,11 @@ vm_reserv_depopulate(vm_reserv_t rv, int index)
 	}
 	vmd = VM_DOMAIN(rv->domain);
 	if (rv->popcnt == 0) {
+		vm_page_t m;
+
 		vm_reserv_remove(rv);
+		for (m = rv->pages; m < rv->pages + VM_LEVEL_0_NPAGES; m++)
+			vm_page_dequeue(m);
 		vm_domain_free_lock(vmd);
 		vm_phys_free_pages(rv->pages, VM_FREEPOOL_DEFAULT,
 		    VM_LEVEL_0_ORDER);

@@ -64,7 +64,6 @@
  *	Resident memory management module.
  */
 
-#include <sys/cdefs.h>
 #include "opt_vm.h"
 
 #include <sys/param.h>
@@ -2110,6 +2109,7 @@ again:
 	if (vm_object_reserv(object) &&
 	    (m = vm_reserv_alloc_page(object, pindex, domain, req, pages)) !=
 	    NULL) {
+		vm_page_dequeue(m);
 		goto found;
 	}
 #endif
@@ -2118,6 +2118,7 @@ again:
 		m = uma_zalloc(vmd->vmd_pgcache[VM_FREEPOOL_DEFAULT].zone,
 		    M_NOWAIT | M_NOVM);
 		if (m != NULL) {
+			vm_page_dequeue(m);
 			flags |= PG_PCPU_CACHE;
 			goto found;
 		}
@@ -2151,7 +2152,6 @@ again:
 	 * At this point we had better have found a good page.
 	 */
 found:
-	vm_page_dequeue(m);
 	vm_page_alloc_check(m);
 
 	/*
@@ -2473,7 +2473,6 @@ again:
 	}
 
 found:
-	vm_page_dequeue(m);
 	vm_page_alloc_check(m);
 
 	/*
@@ -2645,7 +2644,6 @@ vm_page_alloc_noobj_contig_domain(int domain, int req, u_long npages,
 	if ((req & VM_ALLOC_WIRED) != 0)
 		vm_wire_add(npages);
 	for (m = m_ret; m < &m_ret[npages]; m++) {
-		vm_page_dequeue(m);
 		vm_page_alloc_check(m);
 
 		/*
@@ -2738,6 +2736,8 @@ vm_page_zone_release(void *arg, void **store, int cnt)
 	vm_domain_free_lock(vmd);
 	for (i = 0; i < cnt; i++) {
 		m = (vm_page_t)store[i];
+		if (pgcache->pool == VM_FREEPOOL_DEFAULT)
+			vm_page_dequeue(m);
 		vm_phys_free_pages(m, pgcache->pool, 0);
 	}
 	vm_domain_free_unlock(vmd);
@@ -4130,6 +4130,7 @@ vm_page_free_toq(vm_page_t m)
 		uma_zfree(zone, m);
 		return;
 	}
+	vm_page_dequeue(m);
 	vm_domain_free_lock(vmd);
 	vm_phys_free_pages(m, m->pool, 0);
 	vm_domain_free_unlock(vmd);
