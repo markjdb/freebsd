@@ -180,11 +180,19 @@ struct pmap_physseg {
 #define	VM_FREEPOOL_DEFAULT	0
 #define	VM_FREEPOOL_DIRECT	1
 
-/*
- * Create one free page list.
- */
-#define	VM_NFREELIST		1
+/* XXX-MJ */
+#define	VM_NFREELIST		2
 #define	VM_FREELIST_DEFAULT	0
+#define	VM_FREELIST_DMA32	1
+
+#ifdef __powerpc64__
+/*
+ * Create the DMA32 free list only if the number of physical pages above
+ * physical address 4G is at least 16M, which amounts to 64GB of physical
+ * memory.
+ */
+#define	VM_DMA32_NPAGES_THRESHOLD	16777216
+#endif
 
 #ifdef __powerpc64__
 /* The largest allocation size is 16MB. */
