@@ -52,6 +52,23 @@ CFLAGS+= -DNDEBUG
 MK_WERROR=	no
 .endif
 
+.if ${MK_REPRODUCIBLE_BUILD} != "no" && !defined(DEBUG_PREFIX)
+.if defined(SRCTOP)
+DEBUG_PREFIX+= ${SRCTOP:S,/$,,}=/usr/src
+.endif
+.if defined(OBJROOT)
+# Strip off compat subdirectories.
+DEBUG_PREFIX+= ${OBJROOT:S,/$,,:C,/obj-[^/]*$,,}=/usr/obj
+.endif
+.endif
+
+.if defined(DEBUG_PREFIX)
+.for map in ${DEBUG_PREFIX}
+CFLAGS+= -ffile-prefix-map=${map}
+CXXFLAGS+= -ffile-prefix-map=${map}
+.endfor
+.endif
+
 .if defined(DEBUG_FLAGS)
 CFLAGS+= ${DEBUG_FLAGS}
 
