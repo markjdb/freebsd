@@ -562,8 +562,10 @@ main(int argc, char *argv[])
 	int bcfd, outfd;
 	int c, error;
 
+#if 0
 	if (source_date_epoch(&timestamp) == -1)
 		err(1, "Cannot get timestamp from SOURCE_DATE_EPOCH");
+#endif
 
 	bcfd = -1;
 	outfd = 1;	/* Write to stdout by default */
