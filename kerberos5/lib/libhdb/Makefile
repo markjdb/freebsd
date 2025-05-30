@@ -91,6 +91,7 @@ CLEANFILES=	${GEN} ${GEN:S/.x$/.c/:S/.hx$/.h/} hdb_asn1_files \
 ${GEN:[2..-1]}: .NOMETA
 ${GEN}: hdb.asn1
 	${ASN1_COMPILE} ${.ALLSRC:M*.asn1} hdb_asn1
+	${ASN1_FIXUP} ${GEN}
 
 .SUFFIXES: .h .c .x .hx
 
