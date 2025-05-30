@@ -275,22 +275,25 @@ INCS+=	ocsp_asn1.h pkcs10_asn1.h crmf_asn1.h
 ${GEN_OCSP:[2..-1]}: .NOMETA
 ${GEN_OCSP}: ocsp.asn1 ocsp.opt
 	${ASN1_COMPILE} --option-file=${.ALLSRC:M*.opt} \
-	 ${.ALLSRC:M*.asn1} ocsp_asn1
+	    ${.ALLSRC:M*.asn1} ocsp_asn1
+	${ASN1_FIXUP} ${GEN_OCSP}
 
 .ORDER: ${GEN_PKCS10}
 ${GEN_PKCS10:[2..-1]}: .NOMETA
 ${GEN_PKCS10}: pkcs10.asn1 pkcs10.opt
 	${ASN1_COMPILE} --option-file=${.ALLSRC:M*.opt} \
-	${.ALLSRC:M*.asn1} pkcs10_asn1
+	    ${.ALLSRC:M*.asn1} pkcs10_asn1
+	${ASN1_FIXUP} ${GEN_PKCS10}
 
 .ORDER: ${GEN_CRMF}
 ${GEN_CRMF:[2..-1]}: .NOMETA
 ${GEN_CRMF}: crmf.asn1
 	${ASN1_COMPILE} ${.ALLSRC:M*.asn1} crmf_asn1
+	${ASN1_FIXUP} ${GEN_CRMF}
 
 .SUFFIXES: .h .c .x .hx
 
-.x.c:   
+.x.c:
 	${CP} ${.IMPSRC} ${.TARGET}
 
 .hx.h:

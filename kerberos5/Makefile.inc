@@ -40,6 +40,7 @@ ETSRCS+=	${KRB5DIR}/lib/gssapi/krb5/gkrb5_err.et
 ${_ET}.c: .NOMETA
 ${_ET}.h ${_ET}.c: ${ET}
 	compile_et ${.ALLSRC}
+	${ASN1_FIXUP} ${_ET}.h ${_ET}.c
 CLEANFILES+=	${_ET}.h ${_ET}.c
 .endif
 .endfor
@@ -48,5 +49,7 @@ CLEANFILES+=	${_ET}.h ${_ET}.c
 .endif # defined(SRCS)
 
 ASN1_COMPILE=	asn1_compile
+# Avoid hard-coding absolute paths in generated files.
+ASN1_FIXUP=	sed -i '' 's|^/\* Generated from ${SRCTOP}|/* Generated from .|'
 MAKE_ROKEN=	make-roken
 SLC=		slc
