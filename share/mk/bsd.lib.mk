@@ -59,7 +59,6 @@ DEBUG_PREFIX+= ${SRCTOP:S,/$,,}=/usr/src
 .if defined(OBJROOT)
 # Strip off compat subdirectories.
 DEBUG_PREFIX+= ${OBJROOT:S,/$,,:C,/obj-[^/]*$,,}=/usr/obj
-.warning debug prefix is ${DEBUG_PREFIX}
 .endif
 .endif
 
