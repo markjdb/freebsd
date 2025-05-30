@@ -57,7 +57,9 @@ MK_WERROR=	no
 DEBUG_PREFIX+= ${SRCTOP:S,/$,,}=/usr/src
 .endif
 .if defined(OBJROOT)
-DEBUG_PREFIX+= ${OBJROOT:S,/$,,}=/usr/obj
+# Strip off compat subdirectories.
+DEBUG_PREFIX+= ${OBJROOT:S,/$,,:C,/obj-[^/]*$,,}=/usr/obj
+.warning debug prefix is ${DEBUG_PREFIX}
 .endif
 .endif
 
