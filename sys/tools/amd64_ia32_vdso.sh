@@ -30,7 +30,7 @@
 
 set -e
 
-${CC} -x assembler-with-cpp -DLOCORE -fPIC -nostdinc -c -m32 \
+${CC} ${CFLAGS} -x assembler-with-cpp -DLOCORE -fPIC -nostdinc -c -m32 \
    -o ia32_sigtramp.pico -I. -I"${S}" -include opt_global.h \
    "${S}"/amd64/ia32/ia32_sigtramp.S
 
@@ -58,7 +58,7 @@ then
     exit 1
 fi
 
-${CC} ${DEBUG} -x assembler-with-cpp -DLOCORE -fPIC -nostdinc -c \
+${CC} ${CFLAGS} ${DEBUG} -x assembler-with-cpp -DLOCORE -fPIC -nostdinc -c \
    -o elf-vdso32.so.o -I. -I"${S}" -include opt_global.h \
    -DVDSO_NAME=elf_vdso32_so_1 -DVDSO_FILE=\"elf-vdso32.so.1\" \
    "${S}"/tools/vdso_wrap.S
