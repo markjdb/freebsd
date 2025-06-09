@@ -384,6 +384,8 @@ linux_ptrace_get_syscall_info(struct thread *td, pid_t pid,
 	memset(&si, 0, sizeof(si));
 
 	if (lwpinfo.pl_flags & PL_FLAG_SCE) {
+		syscallarg_t args[nitems(td->td_sa.args)];
+
 		si.op = LINUX_PTRACE_SYSCALL_INFO_ENTRY;
 		si.entry.nr = lwpinfo.pl_syscall_code;
 		/*
@@ -396,13 +398,16 @@ linux_ptrace_get_syscall_info(struct thread *td, pid_t pid,
 		 * whether it can fetch them all using this API;
 		 * otherwise it bails out.
 		 */
-		error = kern_ptrace(td, PT_GET_SC_ARGS, pid,
-		    &si.entry.args, sizeof(si.entry.args));
+		memset(args, 0, sizeof(args));
+		error = kern_ptrace(td, PT_GET_SC_ARGS, pid, args,
+		    sizeof(args));
 		if (error != 0) {
 			linux_msg(td, "PT_GET_SC_ARGS failed with error %d",
 			    error);
 			return (error);
 		}
+		for (size_t i = 0; i < nitems(si.entry.args); i++)
+			si.entry.args[i] = args[i];
 	} else if (lwpinfo.pl_flags & PL_FLAG_SCX) {
 		si.op = LINUX_PTRACE_SYSCALL_INFO_EXIT;
 		error = kern_ptrace(td, PT_GET_SC_RET, pid, &sr, sizeof(sr));
