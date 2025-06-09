@@ -1801,8 +1801,10 @@ p9fs_readdir(struct vop_readdir_args *ap)
 		count = p9_client_readdir(vofid, (char *)io_buffer,
 		    diroffset, count);
 
-		if (count == 0)
+		if (count == 0) {
+			*ap->a_eofflag = 1;
 			break;
+		}
 
 		if (count < 0) {
 			error = EIO;
