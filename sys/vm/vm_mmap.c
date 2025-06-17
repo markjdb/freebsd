@@ -54,6 +54,7 @@
 #include <sys/sysproto.h>
 #include <sys/elf.h>
 #include <sys/filedesc.h>
+#include <sys/pctrie.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/procctl.h>
@@ -89,6 +90,8 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_page.h>
+#include <vm/vm_radix.h>
+#include <vm/vm_reserv.h>
 #include <vm/vnode_pager.h>
 
 #ifdef HWPMC_HOOKS
@@ -1644,4 +1647,140 @@ vm_mmap_to_errno(int rv)
 	default:
 		return (EINVAL);
 	}
+}
+
+static int
+vm_map_swizzle(vm_map_t map, vm_offset_t start, vm_offset_t end, int *vecp)
+{
+	struct pctrie_iter pages;
+	vm_page_t m, *ma;
+	vm_map_entry_t entry;
+	vm_object_t object;
+	vm_pindex_t starti;
+	int error;
+
+	error = 0;
+	ma = mallocarray(atop(end - start), sizeof(*ma), M_TEMP,
+	    M_WAITOK | M_ZERO);
+
+	vm_map_lock(map);
+	/*
+	 * Check preconditions:
+	 * - the address range must belong to a single map entry,
+	 * - the object mapped by that entry must be singly mapped,
+	 * - the object must be an anonymous object,
+	 */
+	if (!vm_map_lookup_entry(map, start, &entry)) {
+		error = ENOMEM;
+		goto out;
+	}
+	if (entry->end < end) {
+		error = EINVAL;
+		goto out;
+	}
+	object = entry->object.vm_object;
+	if (object == NULL) {
+		/* No pages are mapped, so there's nothing to do. */
+		error = 0;
+		goto out;
+	}
+	if ((object->flags & OBJ_ONEMAPPING) == 0 || object->ref_count != 1 ||
+	    object->type != OBJT_SWAP) {
+		error = EINVAL;
+		goto out;
+	}
+
+	/*
+	 * Do the swizzle:
+	 * 1. Remove physical mappings of pages in the range.
+	 * 1a. Break reservations of pages in the range.
+	 * 2. Remove pages from the trie.
+	 * 3. Insert them using the order defined in vecp.
+	 * We could optionally remap the range here too...
+	 */
+	VM_OBJECT_WLOCK(object);
+	pmap_map_delete(map->pmap, start, end);
+	vm_reserv_break_all(object); /* XXX-MJ overkill */
+
+	starti = OFF_TO_IDX(entry->offset) + OFF_TO_IDX(start - entry->start);
+	vm_page_iter_limit_init(&pages, object, starti + atop(end - start));
+again:
+	for (m = vm_radix_iter_lookup_ge(&pages, starti); m != NULL;
+	    m = vm_radix_iter_step(&pages)) {
+		/* XXX-MJ the page might be wired too */
+		if (vm_page_tryxbusy(m) == 0) {
+			if (vm_page_busy_sleep(m, "vmswiz", 0))
+				VM_OBJECT_WLOCK(object);
+			pctrie_iter_reset(&pages);
+			goto again;
+		}
+		vm_radix_iter_remove(&pages);
+		KASSERT(ma[m->pindex - starti] == NULL,
+		    ("vm_map_swizzle: page %p already in ma", m));
+		ma[m->pindex - starti] = m;
+	}
+
+	for (size_t i = 0; i < atop(end - start); i++) {
+		if (ma[i] != NULL) {
+			ma[i]->object = NULL;
+			vm_page_insert(ma[i], object, starti + vecp[i]);
+			vm_page_xunbusy(ma[i]);
+		}
+	}
+	VM_OBJECT_WUNLOCK(object);
+out:
+	vm_map_unlock(map);
+	free(ma, M_TEMP);
+
+	return (error);
+
+}
+
+int
+kern_mswizzle(struct thread *td, uintptr_t addr, size_t size, int *uvecp)
+{
+	vm_map_t map;
+	vm_offset_t start, end;
+	size_t pages, vsize;
+	int error, *seen, *vecp;
+
+	start = trunc_page(addr);
+	end = round_page(addr + size);
+	if (end < addr)
+		return (EINVAL);
+
+	pages = atop(end - start);
+	vsize = sizeof(int) * pages;
+	vecp = malloc(vsize, M_TEMP, M_WAITOK);
+	error = copyin(uvecp, vecp, vsize);
+	if (error != 0) {
+		free(vecp, M_TEMP);
+		return (error);
+	}
+
+	/*
+	 * Check whether this is a valid permutation.
+	 */
+	seen = malloc(pages * sizeof(int), M_TEMP, M_WAITOK | M_ZERO);
+	for (size_t i = 0; i < pages; i++) {
+		if (vecp[i] < 0 || vecp[i] >= pages || seen[vecp[i]] != 0) {
+			free(vecp, M_TEMP);
+			free(seen, M_TEMP);
+			return (EINVAL);
+		}
+		seen[vecp[i]] = 1;
+	}
+	free(seen, M_TEMP);
+
+	map = &td->td_proc->p_vmspace->vm_map;
+	error = vm_map_swizzle(map, start, end, vecp);
+	free(vecp, M_TEMP);
+
+	return (error);
+}
+
+int
+sys_mswizzle(struct thread *td, struct mswizzle_args *uap)
+{
+	return (kern_mswizzle(td, (uintptr_t)uap->addr, uap->len, uap->vec));
 }
