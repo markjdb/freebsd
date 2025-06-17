@@ -809,4 +809,6 @@ FBSDprivate_1.0 {
 	__sys_setcred;
 	_exterrctl;
 	__sys_exterrctl;
+	_mswizzle;
+	__sys_mswizzle;
 };

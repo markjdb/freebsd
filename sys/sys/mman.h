@@ -330,6 +330,7 @@ int	getpagesizes(size_t *, int);
 int	madvise(void *, size_t, int);
 int	mincore(const void *, size_t, char *);
 int	minherit(void *, size_t, int);
+int	mswizzle(void *, size_t, int *);
 #endif
 int	mlock(const void *, size_t);
 #ifndef _MMAP_DECLARED

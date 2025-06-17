@@ -3356,4 +3356,11 @@
 		    _In_reads_bytes_(4) void *ptr
 		);
 	}
+593	AUE_NULL	STD {
+		int mswizzle(
+		    _In_ void *addr,
+		    size_t len,
+		    _In_ int *vec
+		);
+	}
 ; vim: syntax=off

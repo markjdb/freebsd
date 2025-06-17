@@ -434,4 +434,5 @@ MIASM =  \
 	getrlimitusage.o \
 	fchroot.o \
 	setcred.o \
-	exterrctl.o
+	exterrctl.o \
+	mswizzle.o

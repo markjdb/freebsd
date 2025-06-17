@@ -381,6 +381,7 @@ FBSD_1.8 {
 	exterrctl;
 	fchroot;
 	getrlimitusage;
+	mswizzle;
 	kcmp;
 	setcred;
 };

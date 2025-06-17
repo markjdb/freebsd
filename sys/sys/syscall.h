@@ -529,4 +529,5 @@
 #define	SYS_fchroot	590
 #define	SYS_setcred	591
 #define	SYS_exterrctl	592
-#define	SYS_MAXSYSCALL	593
+#define	SYS_mswizzle	593
+#define	SYS_MAXSYSCALL	594

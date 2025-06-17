@@ -1891,6 +1891,11 @@ struct exterrctl_args {
 	char flags_l_[PADL_(u_int)]; u_int flags; char flags_r_[PADR_(u_int)];
 	char ptr_l_[PADL_(void *)]; void * ptr; char ptr_r_[PADR_(void *)];
 };
+struct mswizzle_args {
+	char addr_l_[PADL_(void *)]; void * addr; char addr_r_[PADR_(void *)];
+	char len_l_[PADL_(size_t)]; size_t len; char len_r_[PADR_(size_t)];
+	char vec_l_[PADL_(int *)]; int * vec; char vec_r_[PADR_(int *)];
+};
 int	sys_exit(struct thread *, struct exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2293,6 +2298,7 @@ int	sys_getrlimitusage(struct thread *, struct getrlimitusage_args *);
 int	sys_fchroot(struct thread *, struct fchroot_args *);
 int	sys_setcred(struct thread *, struct setcred_args *);
 int	sys_exterrctl(struct thread *, struct exterrctl_args *);
+int	sys_mswizzle(struct thread *, struct mswizzle_args *);
 
 #ifdef COMPAT_43
 
@@ -3275,6 +3281,7 @@ int	freebsd13_swapoff(struct thread *, struct freebsd13_swapoff_args *);
 #define	SYS_AUE_fchroot	AUE_NULL
 #define	SYS_AUE_setcred	AUE_SETCRED
 #define	SYS_AUE_exterrctl	AUE_NULL
+#define	SYS_AUE_mswizzle	AUE_NULL
 
 #undef PAD_
 #undef PADL_

@@ -598,4 +598,5 @@ const char *syscallnames[] = {
 	"fchroot",			/* 590 = fchroot */
 	"setcred",			/* 591 = setcred */
 	"exterrctl",			/* 592 = exterrctl */
+	"mswizzle",			/* 593 = mswizzle */
 };
