@@ -346,7 +346,7 @@ vm_create_disk() {
 
 	echo "Building final disk image...  Please wait."
 	if [ -n "${REPRODUCIBLE_BUILD}" ]; then
-		MKIMGARGS="-R"
+		MKIMGARGS="-t 1704067200"
 	fi
 	mkimg ${MKIMGARGS} -s ${PARTSCHEME} -f ${VMFORMAT} \
 		${BOOTPARTS} \
