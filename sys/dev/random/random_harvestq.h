@@ -50,4 +50,6 @@ random_get_cyclecount(void)
 	return ((uint32_t)get_cyclecount());
 }
 
+bool random_harvest_healthtest(struct harvest_event *event);
+
 #endif /* SYS_DEV_RANDOM_RANDOM_HARVESTQ_H_INCLUDED */
