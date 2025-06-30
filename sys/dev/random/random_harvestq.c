@@ -447,7 +447,7 @@ random_early_prime(char *entropy, size_t len)
 		return (0);
 
 	for (i = 0; i < len; i += sizeof(event.he_entropy)) {
-		event.he_somecounter = (uint32_t)get_cyclecount();
+		event.he_somecounter = random_get_cyclecount();
 		event.he_size = sizeof(event.he_entropy);
 		event.he_source = RANDOM_CACHED;
 		event.he_destination =
@@ -557,7 +557,7 @@ random_harvest_queue_(const void *entropy, u_int size, enum random_entropy_sourc
 	buf = &hc->hc_entropy_buf[hc->hc_active_buf];
 	if (buf->pos < RANDOM_RING_MAX) {
 		event = &buf->ring[buf->pos++];
-		event->he_somecounter = (uint32_t)get_cyclecount();
+		event->he_somecounter = random_get_cyclecount();
 		event->he_source = origin;
 		event->he_destination = hc->hc_destination[origin]++;
 		if (size <= sizeof(event->he_entropy)) {
@@ -584,7 +584,8 @@ random_harvest_fast_(const void *entropy, u_int size)
 	u_int pos;
 
 	pos = harvest_context.hc_entropy_fast_accumulator.pos;
-	harvest_context.hc_entropy_fast_accumulator.buf[pos] ^= jenkins_hash(entropy, size, (uint32_t)get_cyclecount());
+	harvest_context.hc_entropy_fast_accumulator.buf[pos] ^=
+	    jenkins_hash(entropy, size, random_get_cyclecount());
 	harvest_context.hc_entropy_fast_accumulator.pos = (pos + 1)%RANDOM_ACCUM_MAX;
 }
 
@@ -601,7 +602,7 @@ random_harvest_direct_(const void *entropy, u_int size, enum random_entropy_sour
 
 	KASSERT(origin >= RANDOM_START && origin < ENTROPYSOURCE, ("%s: origin %d invalid\n", __func__, origin));
 	size = MIN(size, sizeof(event.he_entropy));
-	event.he_somecounter = (uint32_t)get_cyclecount();
+	event.he_somecounter = random_get_cyclecount();
 	event.he_size = size;
 	event.he_source = origin;
 	event.he_destination = harvest_context.hc_destination[origin]++;
