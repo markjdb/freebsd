@@ -300,7 +300,6 @@ random_sources_feed(void)
 	explicit_bzero(entropy, sizeof(entropy));
 }
 
-/* ARGSUSED */
 static int
 random_check_uint_harvestmask(SYSCTL_HANDLER_ARGS)
 {
@@ -331,7 +330,6 @@ SYSCTL_PROC(_kern_random_harvest, OID_AUTO, mask,
     random_check_uint_harvestmask, "IU",
     "Entropy harvesting mask");
 
-/* ARGSUSED */
 static int
 random_print_harvestmask(SYSCTL_HANDLER_ARGS)
 {
@@ -384,7 +382,6 @@ static const char *random_source_descr[ENTROPYSOURCE] = {
 	/* "ENTROPYSOURCE" */
 };
 
-/* ARGSUSED */
 static int
 random_print_harvestmask_symbolic(SYSCTL_HANDLER_ARGS)
 {
@@ -417,7 +414,6 @@ SYSCTL_PROC(_kern_random_harvest, OID_AUTO, mask_symbolic,
     random_print_harvestmask_symbolic, "A",
     "Entropy harvesting mask (symbolic)");
 
-/* ARGSUSED */
 static void
 random_harvestq_init(void *unused __unused)
 {
@@ -487,7 +483,6 @@ random_prime_loader_file(const char *type)
  * known to the kernel, and inserting it directly into the hashing
  * module, currently Fortuna.
  */
-/* ARGSUSED */
 static void
 random_harvestq_prime(void *unused __unused)
 {
@@ -516,7 +511,6 @@ random_harvestq_prime(void *unused __unused)
 }
 SYSINIT(random_device_prime, SI_SUB_RANDOM, SI_ORDER_MIDDLE, random_harvestq_prime, NULL);
 
-/* ARGSUSED */
 static void
 random_harvestq_deinit(void *unused __unused)
 {
