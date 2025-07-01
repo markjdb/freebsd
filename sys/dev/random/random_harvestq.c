@@ -655,6 +655,11 @@ random_harvestq_init(void *unused __unused)
 }
 SYSINIT(random_device_h_init, SI_SUB_RANDOM, SI_ORDER_THIRD, random_harvestq_init, NULL);
 
+uint32_t random_cyclecount_mask = 0xffffffff;
+SYSCTL_U32(_kern_random, OID_AUTO, cyclecount_mask,
+    CTLFLAG_RWTUN | CTLFLAG_MPSAFE, &random_cyclecount_mask, 0,
+    "Mask for cycle count values in harvest events");
+
 /*
  * Subroutine to slice up a contiguous chunk of 'entropy' and feed it into the
  * underlying algorithm.  Returns number of bytes actually fed into underlying
