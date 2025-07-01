@@ -43,11 +43,12 @@ struct harvest_event {
 	uint8_t		he_source;		/* origin of the entropy */
 };
 
+extern uint32_t random_cyclecount_mask;
 
 static inline uint32_t
 random_get_cyclecount(void)
 {
-	return ((uint32_t)get_cyclecount());
+	return (((uint32_t)get_cyclecount()) & random_cyclecount_mask);
 }
 
 bool random_harvest_healthtest(struct harvest_event *event);
