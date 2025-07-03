@@ -292,6 +292,11 @@ bool
 	return (p_random_alg_context->ra_seeded());
 }
 
+static bool randomdev_raw = false;
+SYSCTL_BOOL(_kern_random, OID_AUTO, randomdev_raw,
+    CTLFLAG_RWTUN, &randomdev_raw, 0,
+    "Inject raw bytes into the entropy stream rather than hashing first");
+
 static __inline void
 randomdev_accumulate(uint8_t *buf, u_int count)
 {
@@ -302,24 +307,35 @@ randomdev_accumulate(uint8_t *buf, u_int count)
 	uint32_t timestamp;
 	int i;
 
-	/* Extra timing here is helpful to scrape scheduler jitter entropy */
-	randomdev_hash_init(&hash);
-	timestamp = random_get_cyclecount();
-	randomdev_hash_iterate(&hash, &timestamp, sizeof(timestamp));
-	randomdev_hash_iterate(&hash, buf, count);
-	timestamp = random_get_cyclecount();
-	randomdev_hash_iterate(&hash, &timestamp, sizeof(timestamp));
-	randomdev_hash_finish(&hash, entropy_data);
-	for (i = 0; i < RANDOM_KEYSIZE_WORDS; i += sizeof(event.he_entropy)/sizeof(event.he_entropy[0])) {
+	if (randomdev_raw) {
+		/* Just copy the first 8 bytes of data. */
 		event.he_somecounter = random_get_cyclecount();
-		event.he_size = sizeof(event.he_entropy);
+		event.he_size = MIN(sizeof(event.he_entropy), count);
 		event.he_source = RANDOM_RANDOMDEV;
 		event.he_destination = destination++; /* Harmless cheating */
-		memcpy(event.he_entropy, entropy_data + i, sizeof(event.he_entropy));
+		memset(event.he_entropy, 0, sizeof(event.he_entropy));
+		memcpy(event.he_entropy, buf, event.he_size);
 		p_random_alg_context->ra_event_processor(&event);
+	} else {
+		/* Extra timing here is helpful to scrape scheduler jitter entropy */
+		randomdev_hash_init(&hash);
+		timestamp = random_get_cyclecount();
+		randomdev_hash_iterate(&hash, &timestamp, sizeof(timestamp));
+		randomdev_hash_iterate(&hash, buf, count);
+		timestamp = random_get_cyclecount();
+		randomdev_hash_iterate(&hash, &timestamp, sizeof(timestamp));
+		randomdev_hash_finish(&hash, entropy_data);
+		for (i = 0; i < RANDOM_KEYSIZE_WORDS; i += sizeof(event.he_entropy)/sizeof(event.he_entropy[0])) {
+			event.he_somecounter = random_get_cyclecount();
+			event.he_size = sizeof(event.he_entropy);
+			event.he_source = RANDOM_RANDOMDEV;
+			event.he_destination = destination++; /* Harmless cheating */
+			memcpy(event.he_entropy, entropy_data + i, sizeof(event.he_entropy));
+			p_random_alg_context->ra_event_processor(&event);
+		}
+		explicit_bzero(&event, sizeof(event));
+		explicit_bzero(entropy_data, sizeof(entropy_data));
 	}
-	explicit_bzero(&event, sizeof(event));
-	explicit_bzero(entropy_data, sizeof(entropy_data));
 }
 
 /* ARGSUSED */
