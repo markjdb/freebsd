@@ -15,6 +15,7 @@ LDIRS=	BSD_daemon \
 	find_interface \
 	flua \
 	indent \
+	inotify \
 	ipfw \
 	jails \
 	kld \
