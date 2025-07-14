@@ -41,7 +41,7 @@ metalog_add_data() {
 
 	if [ -n "${NO_ROOT}" ]; then
 		file=$1
-		mode=${2:=0644}
+		mode=${2:-0644}
 		echo "$file type=file uname=root gname=wheel mode=${mode}" >> \
 		    ${METALOG}
 	fi
