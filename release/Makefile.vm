@@ -144,6 +144,7 @@ cw-${_CW:tl}-${_FS}-${_FMT}: ${QEMUTGT}
 		-C ${.CURDIR}/tools/vmimage.subr -d ${.OBJDIR}/${.TARGET} \
 		-F ${"${_CW:MEC2-BUILDER}" != "":?ufs:${_FS}} \
 		-i ${.OBJDIR}/${_CW:tl}.${_FS}.${_FMT}.img -s ${VMSIZE} -f ${_FMT} \
+		${NO_ROOT:D-M ${.OBJDIR}/${.TARGET}/METALOG} \
 		-S ${WORLDDIR} -o ${.OBJDIR}/${${_CW:tu}${_FS:tu}${_FMT:tu}IMAGE} -c ${${_CW:tu}CONF} || true
 	touch ${.TARGET}
 .   endfor

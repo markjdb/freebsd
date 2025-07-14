@@ -1,7 +1,5 @@
 #!/bin/sh
 #
-#
-#
 # Common functions for virtual machine image build scripts.
 #
 
@@ -39,9 +37,13 @@ cleanup() {
 }
 
 metalog_add_data() {
+	local file mode
+
 	if [ -n "${NO_ROOT}" ]; then
-		echo "$1 type=file uname=root gname=wheel mode=0644" >> \
-		    ${DESTDIR}/METALOG
+		file=$1
+		mode=${2:=0644}
+		echo "$file type=file uname=root gname=wheel mode=${mode}" >> \
+		    ${METALOG}
 	fi
 }
 
@@ -75,7 +77,7 @@ vm_install_base() {
 		# Reroot etcupdate's internal METALOG to the whole tree
 		sed -n 's,^\.,./var/db/etcupdate/current,p' \
 		    ${DESTDIR}/var/db/etcupdate/current/METALOG | \
-		    env -i LC_COLLATE=C sort >> ${DESTDIR}/METALOG
+		    env -i LC_COLLATE=C sort >> ${METALOG}
 		rm ${DESTDIR}/var/db/etcupdate/current/METALOG
 	fi
 
@@ -210,7 +212,7 @@ buildfs() {
 	case "${VMFS}" in
 	ufs)
 		cd ${DESTDIR} && ${MAKEFS} ${MAKEFSARGS} -o label=rootfs -o version=2 -o softupdates=1 \
-			${VMBASE} .${NO_ROOT:+/METALOG}
+			${VMBASE} .${NO_ROOT:+/${METALOG}}
 		;;
 	zfs)
 		cd ${DESTDIR} && ${MAKEFS} -t zfs ${MAKEFSARGS} \
@@ -230,7 +232,7 @@ buildfs() {
 			-o fs=zroot/var/log\;setuid=off\;exec=off \
 			-o fs=zroot/var/mail\;atime=on \
 			-o fs=zroot/var/tmp\;setuid=off \
-			${VMBASE} .${NO_ROOT:+/METALOG}
+			${VMBASE} .${NO_ROOT:+/${METALOG}}
 		;;
 	*)
 		echo "Unexpected VMFS value '${VMFS}'"
