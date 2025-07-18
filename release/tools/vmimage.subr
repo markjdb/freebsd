@@ -296,7 +296,7 @@ vm_create_disk() {
 		WITH_UNIFIED_OBJDIR=yes \
 		make -C ${WORLDDIR}/stand -V .OBJDIR)"
 	BOOTFILES="$(realpath ${BOOTFILES})"
-	MAKEFSARGS="-s ${VMSIZE} -D"
+	MAKEFSARGS="-s ${VMSIZE} -DD"
 	if [ -n "${REPRODUCIBLE_BUILD}" ]; then
 		MAKEFSARGS="$MAKEFSARGS -T 1704067200"
 	fi
