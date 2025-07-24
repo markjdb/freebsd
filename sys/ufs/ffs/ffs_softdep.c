@@ -14522,7 +14522,7 @@ getdirtybuf(struct buf *bp,
 		BUF_UNLOCK(bp);
 		if (waitfor != MNT_WAIT)
 			return (NULL);
-#ifdef DEBUG_VFS_LOCKS
+#ifdef INVARIANTS
 		if (bp->b_vp->v_type != VCHR)
 			ASSERT_BO_WLOCKED(bp->b_bufobj);
 #endif

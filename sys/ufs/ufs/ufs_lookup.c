@@ -230,7 +230,7 @@ ufs_lookup_ino(struct vnode *vdp, struct vnode **vpp, struct componentname *cnp,
 
 	bmask = VFSTOUFS(vdp->v_mount)->um_mountp->mnt_stat.f_iosize - 1;
 
-#ifdef DEBUG_VFS_LOCKS
+#ifdef INVARIANTS
 	/*
 	 * Assert that the directory vnode is locked, and locked
 	 * exclusively for the last component lookup for modifying
