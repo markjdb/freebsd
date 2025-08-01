@@ -21,7 +21,8 @@ RAW_DESC=	Unformatted raw disk image
 
 .if defined(WITHOUT_QEMU)
 CLOUDWARE_TYPES?= \
-		BASIC-CI
+		BASIC-CI \
+		EC2
 .else
 CLOUDWARE_TYPES?= AZURE \
 		BASIC-CI \
@@ -138,6 +139,9 @@ cw-${_CW:tl}-${_FS}-${_FMT}: ${QEMUTGT}
 		EC2BASEIMG=${.OBJDIR}/${EC2-BASE${_FS:tu}${_FMT:tu}IMAGE} \
 		${WITHOUT_QEMU:DWITHOUT_QEMU=true} \
 		${NO_ROOT:DNO_ROOT=true} \
+		PKG_CMD=${PKG_CMD:Upkg} \
+		PKG_REPOS_DIR=${PKG_REPOS_DIR:U${.OBJDIR}/${.TARGET}/etc/pkg} \
+		PKG_REPO_NAME=${PKG_REPO_NAME:UFreeBSD} \
 		PKG_INSTALL_EPOCH=${PKG_INSTALL_EPOCH:U${GITEPOCH}} \
 		${WITH_REPRODUCIBLE_BUILD:DREPRODUCIBLE_BUILD=true} \
 		${.CURDIR}/scripts/mk-vmimage.sh \
@@ -145,7 +149,7 @@ cw-${_CW:tl}-${_FS}-${_FMT}: ${QEMUTGT}
 		-F ${"${_CW:MEC2-BUILDER}" != "":?ufs:${_FS}} \
 		-i ${.OBJDIR}/${_CW:tl}.${_FS}.${_FMT}.img -s ${VMSIZE} -f ${_FMT} \
 		${NO_ROOT:D-M ${.OBJDIR}/${.TARGET}/METALOG} \
-		-S ${WORLDDIR} -o ${.OBJDIR}/${${_CW:tu}${_FS:tu}${_FMT:tu}IMAGE} -c ${${_CW:tu}CONF} || true
+		-S ${WORLDDIR} -o ${.OBJDIR}/${${_CW:tu}${_FS:tu}${_FMT:tu}IMAGE} -c ${${_CW:tu}CONF}
 	touch ${.TARGET}
 .   endfor
 .  endfor
@@ -158,7 +162,7 @@ CLOUDTARGETS+=	cw-${_CW:tl}-${_FMT}
 CLEANFILES+=	${_CW:tl}.${_FMT}
 ${_CW:tu}${_FMT:tu}IMAGE=	${_CW:tl}.${_FMT}
 cw-${_CW:tl}-${_FMT}: cw-${_CW:tl}-${VMFS}-${_FMT}
-	ln -f ${${_CW:tu}${VMFS:tu}${_FMT:tu}IMAGE} ${${_CW:tu}${_FMT:tu}IMAGE} || true
+	ln -f ${${_CW:tu}${VMFS:tu}${_FMT:tu}IMAGE} ${${_CW:tu}${_FMT:tu}IMAGE}
 .  endfor
 
 # Targets without a disk format listed are the first disk format on the list
@@ -193,13 +197,17 @@ vm-image:	${QEMUTGT}
 		QEMUSTATIC=${QEMUSTATIC} \
 		${WITHOUT_QEMU:DWITHOUT_QEMU=true} \
 		${NO_ROOT:DNO_ROOT=true} \
+		PKG_CMD=${PKG_CMD:Upkg} \
+		PKG_REPOS_DIR=${PKG_REPOS_DIR:U${.OBJDIR}/${.TARGET}-${FORMAT}-${FS}/etc/pkg} \
+		PKG_REPO_NAME=${PKG_REPO_NAME:UFreeBSD} \
 		PKG_INSTALL_EPOCH=${PKG_INSTALL_EPOCH:U${GITEPOCH}} \
 		${WITH_REPRODUCIBLE_BUILD:DREPRODUCIBLE_BUILD=true} \
 		${.CURDIR}/scripts/mk-vmimage.sh \
 		-C ${.CURDIR}/tools/vmimage.subr \
 		-d ${.OBJDIR}/${.TARGET}-${FORMAT}-${FS} -F ${FS} \
 		-i ${.OBJDIR}/${FORMAT}.${FS}.img -s ${VMSIZE} -f ${FORMAT} \
-		-S ${WORLDDIR} -o ${.OBJDIR}/${VMBASE}.${FS}.${FORMAT} || true
+		${NO_ROOT:D-M ${.OBJDIR}/${.TARGET}-${FORMAT}-${FS}/METALOG} \
+		-S ${WORLDDIR} -o ${.OBJDIR}/${VMBASE}.${FS}.${FORMAT}
 .  endfor
 . endfor
 .endif

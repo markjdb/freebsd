@@ -153,19 +153,46 @@ vm_extra_enable_services() {
 }
 
 vm_extra_install_packages() {
-	if [ -n "${WITHOUT_QEMU}" ]; then
-		return 0
-	fi
-
 	if [ -z "${VM_EXTRA_PACKAGES}" ]; then
 		return 0
 	fi
-	chroot ${DESTDIR} ${EMULATOR} env ASSUME_ALWAYS_YES=yes \
-		/usr/sbin/pkg bootstrap -y
-	for p in ${VM_EXTRA_PACKAGES}; do
-		chroot ${DESTDIR} ${EMULATOR} env ASSUME_ALWAYS_YES=yes \
-			/usr/sbin/pkg install -y ${p}
-	done
+        if [ -n "$NO_ROOT" ]; then
+		for pkg in ${VM_EXTRA_PACKAGES}; do
+			INSTALL_AS_USER=yes \
+			ASSUME_ALWAYS_YES=yes \
+			${PKG_CMD} \
+			    -o METALOG=${METALOG}.pkg \
+			    -o REPOS_DIR=${PKG_REPOS_DIR} \
+			    -o PKG_DBDIR=${DESTDIR}/var/db/pkg \
+			    -r ${DESTDIR} \
+			    install -r ${PKG_REPO_NAME} $pkg
+		done
+	else
+		cp -R ${PKG_REPOS_DIR} ${DESTDIR}/pkg_repos
+		# XXX-MJ just for testing
+		mkdir -p ${DESTDIR}/usr/local/poudriere/data/packages/main-reproducibility
+		mount -t nullfs ${PKG_REPOS_DIR} ${DESTDIR}/pkg_repos
+		mount -t nullfs /usr/local/poudriere/data/packages/main-reproducibility \
+		    ${DESTDIR}/usr/local/poudriere/data/packages/main-reproducibility
+		# XXX-MJ
+		chroot ${DESTDIR} ${EMULATOR} env \
+		    ASSUME_ALWAYS_YES=yes \
+		    REPOS_DIR=/pkg_repos \
+		    /usr/sbin/pkg bootstrap -y
+		sleep 100000
+		for p in ${VM_EXTRA_PACKAGES}; do
+			chroot ${DESTDIR} ${EMULATOR} env \
+			    ASSUME_ALWAYS_YES=yes \
+			    REPOS_DIR=/pkg_repos \
+			    /usr/sbin/pkg install -y ${p}
+		done
+		# XXX-MJ just for testing
+		umount ${DESTDIR}/pkg_repos
+		umount ${DESTDIR}/usr/local/poudriere/data/packages/main-reproducibility
+		rm -rf ${DESTDIR}/usr/local/poudriere
+		rm -rf ${DESTDIR}/pkg_repos
+		# XXX-MJ
+	fi
 
 	return 0
 }
@@ -207,12 +234,20 @@ vm_extra_pkg_rmcache() {
 }
 
 buildfs() {
-	local md tmppool
+	local md stage tmppool
 
+	if [ -f ${METALOG}.pkg ]; then
+		cat ${METALOG}.pkg >> ${METALOG}
+	fi
+	if [ -n "${NO_ROOT}" ]; then
+		stage=${METALOG}
+	else
+		stage=.
+	fi
 	case "${VMFS}" in
 	ufs)
 		cd ${DESTDIR} && ${MAKEFS} ${MAKEFSARGS} -o label=rootfs -o version=2 -o softupdates=1 \
-			${VMBASE} .${NO_ROOT:+/${METALOG}}
+			${VMBASE} ${stage}
 		;;
 	zfs)
 		cd ${DESTDIR} && ${MAKEFS} -t zfs ${MAKEFSARGS} \
@@ -232,7 +267,7 @@ buildfs() {
 			-o fs=zroot/var/log\;setuid=off\;exec=off \
 			-o fs=zroot/var/mail\;atime=on \
 			-o fs=zroot/var/tmp\;setuid=off \
-			${VMBASE} .${NO_ROOT:+/${METALOG}}
+			${VMBASE} ${stage}
 		;;
 	*)
 		echo "Unexpected VMFS value '${VMFS}'"
