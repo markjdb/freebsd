@@ -88,7 +88,7 @@ vm_device_open(const char *name)
 
 	assert(strlen(name) <= VM_MAX_NAMELEN);
 	(void)snprintf(devpath, sizeof(devpath), "/dev/vmm/%s", name);
-	return (open(devpath, O_RDWR));
+	return (open(devpath, O_RDWR | O_CLOEXEC));
 }
 
 static int
@@ -96,7 +96,7 @@ vm_ctl_open(void)
 {
 	if (modfind("vmm") < 0)
 		(void)kldload("vmm");
-	return (open("/dev/vmmctl", O_RDWR, 0));
+	return (open("/dev/vmmctl", O_RDWR | O_CLOEXEC, 0));
 }
 
 static int
@@ -704,7 +704,7 @@ vm_create_devmem(struct vmctx *ctx, int segid, const char *name, size_t len)
 	strlcat(pathname, ".", sizeof(pathname));
 	strlcat(pathname, name, sizeof(pathname));
 
-	fd = open(pathname, O_RDWR);
+	fd = open(pathname, O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		goto done;
 
