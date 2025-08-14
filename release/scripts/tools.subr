@@ -10,4 +10,6 @@
 
 : ${ETDUMP:=etdump}
 : ${MAKEFS:=makefs}
+: ${MAKEFSARGS:=-T 1704067200}
 : ${MKIMG:=mkimg}
+: ${MKIMGARGS:=-t 1704067200}
