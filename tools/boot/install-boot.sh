@@ -12,6 +12,8 @@
 fat32min=33292
 fat16min=2100
 
+: ${MAKEFS:=makefs}
+
 die() {
     echo $*
     exit 1
@@ -76,7 +78,7 @@ make_esp_file() {
         shift; shift || : # Ignore failure to shift
     done
 
-    makefs -t msdos \
+    ${MAKEFS} -t msdos ${MAKEFSARGS} \
 	-o fat_type=${fatbits} \
 	-o sectors_per_cluster=1 \
 	-o volume_label=EFISYS \
