@@ -10,4 +10,6 @@
 
 : ${ETDUMP:=etdump}
 : ${MAKEFS:=makefs}
+: ${MAKEFSARGS:=-T ${GITEPOCH}}
 : ${MKIMG:=mkimg}
+: ${MKIMGARGS:=-t ${GITEPOCH}}
