@@ -294,7 +294,7 @@ vm_create_disk() {
 		WITH_UNIFIED_OBJDIR=yes \
 		make -C ${WORLDDIR}/stand -V .OBJDIR)"
 	BOOTFILES="$(realpath ${BOOTFILES})"
-	MAKEFSARGS="-s ${VMSIZE} -D"
+	MAKEFSARGS="${MAKEFSARGS} -s ${VMSIZE} -D"
 
 	case "${TARGET}:${TARGET_ARCH}" in
 		amd64:amd64 | i386:i386)
@@ -342,7 +342,7 @@ vm_create_disk() {
 	buildfs
 
 	echo "Building final disk image...  Please wait."
-	${MKIMG} -s ${PARTSCHEME} -f ${VMFORMAT} \
+	${MKIMG} ${MKIMGARGS} -s ${PARTSCHEME} -f ${VMFORMAT} \
 		${BOOTPARTS} \
 		${SWAPOPT} \
 		${CONFIG_DRIVE} \

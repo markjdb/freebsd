@@ -82,7 +82,7 @@ if [ -n "${METALOG}" ]; then
 	echo "./etc/fstab type=file uname=root gname=wheel mode=0644" >> ${metalogfilename}
 	MAKEFSARG=${metalogfilename}
 fi
-$MAKEFS -D -N ${BASEBITSDIR}/etc -t cd9660 $bootable -o rockridge -o label="$LABEL" -o publisher="$publisher" "$NAME" "$MAKEFSARG" "$@"
+$MAKEFS $MAKEFSARGS -D -N ${BASEBITSDIR}/etc -t cd9660 $bootable -o rockridge -o label="$LABEL" -o publisher="$publisher" "$NAME" "$MAKEFSARG" "$@"
 rm -f "$BASEBITSDIR/etc/fstab"
 rm -f ${espfilename}
 if [ -n "${METALOG}" ]; then
@@ -108,7 +108,7 @@ if [ "$bootable" != "" ]; then
 	else
 		imgsize=`stat -f %z "$NAME"`
 	fi
-	$MKIMG -s gpt \
+	$MKIMG $MKIMGARGS -s gpt \
 	    --capacity $imgsize \
 	    -b "$BASEBITSDIR/boot/pmbr" \
 	    -p freebsd-boot:="$BASEBITSDIR/boot/isoboot" \

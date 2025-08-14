@@ -52,7 +52,7 @@ if [ -n "${METALOG}" ]; then
 	echo "./etc/rc.conf.local type=file uname=root gname=wheel mode=0644" >> ${metalogfilename}
 	MAKEFSARG=${metalogfilename}
 fi
-${MAKEFS} -D -N ${BASEBITSDIR}/etc -B little -o label=FreeBSD_Install -o version=2 ${2}.part ${MAKEFSARG}
+${MAKEFS} ${MAKEFSARGS} -D -N ${BASEBITSDIR}/etc -B little -o label=FreeBSD_Install -o version=2 ${2}.part ${MAKEFSARG}
 rm ${BASEBITSDIR}/etc/fstab
 rm ${BASEBITSDIR}/etc/rc.conf.local
 if [ -n "${METALOG}" ]; then
@@ -66,10 +66,10 @@ if [ -f "${BASEBITSDIR}/boot/loader_ia32.efi" ]; then
 fi
 make_esp_file ${espfilename} ${fat32min} ${BASEBITSDIR}/boot/loader.efi bootx64 ${extra_args}
 
-${MKIMG} -s mbr \
+${MKIMG} ${MKIMGARGS} -s mbr \
     -b ${BASEBITSDIR}/boot/mbr \
     -p efi:=${espfilename} \
-    -p freebsd:-"${MKIMG} -s bsd -b ${BASEBITSDIR}/boot/boot -p freebsd-ufs:=${2}.part" \
+    -p freebsd:-"${MKIMG} ${MKIMGARGS} -s bsd -b ${BASEBITSDIR}/boot/boot -p freebsd-ufs:=${2}.part" \
     -a 2 \
     -o ${2}
 rm ${espfilename}
