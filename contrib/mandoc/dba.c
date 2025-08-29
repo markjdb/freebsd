@@ -318,7 +318,8 @@ compare_names(const void *vp1, const void *vp2)
 	cp1 = *(const char * const *)vp1;
 	cp2 = *(const char * const *)vp2;
 	return (diff = *cp2 - *cp1) ? diff :
-	    strcasecmp(cp1 + 1, cp2 + 1);
+	    (diff = strcasecmp(cp1 + 1, cp2 + 1)) ? diff :
+	    strcmp(cp1 + 1, cp2 + 1);
 }
 
 static int
