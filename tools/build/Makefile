@@ -79,10 +79,13 @@ CFLAGS.unvis.c+=	-I${.CURDIR}/../../contrib/libc-vis -DHAVE_VIS=0 -DHAVE_SVIS=0
 .endif
 
 _WITH_REALLOCARRAY!= grep -c reallocarray ${HOST_INCLUDE_ROOT}/stdlib.h || true
-.if ${_WITH_REALLOCARRAY} == 0
+_WITH_SECURE_GETENV!= grep -c secure_getenv ${HOST_INCLUDE_ROOT}/stdlib.h || true
+.if ${_WITH_REALLOCARRAY} == 0 || ${_WITH_SECURE_GETENV} == 0
 .PATH: ${.CURDIR}/../../lib/libc/stdlib
 INCS+=		stdlib.h
+.if ${_WITH_REALLOCARRAY} == 0
 SRCS+=		reallocarray.c
+.endif
 .endif
 
 .if exists(${HOST_INCLUDE_ROOT}/sys/stat.h)

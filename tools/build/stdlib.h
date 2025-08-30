@@ -33,6 +33,7 @@ __BEGIN_DECLS
    
 #if __BSD_VISIBLE
 void	*reallocarray(void *, size_t, size_t);
+char	*secure_getenv(const char *);
 #endif /* __BSD_VISIBLE */
 
 __END_DECLS
