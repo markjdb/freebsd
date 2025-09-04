@@ -326,6 +326,7 @@ pf_counter_u64_zero(struct pf_counter_u64 *pfcu64)
 _Static_assert(sizeof(time_t) == 4 || sizeof(time_t) == 8, "unexpected time_t size");
 
 SYSCTL_DECL(_net_pf);
+MALLOC_DECLARE(M_PF);
 MALLOC_DECLARE(M_PFHASH);
 MALLOC_DECLARE(M_PF_RULE_ITEM);
 
@@ -860,8 +861,8 @@ struct pf_krule {
 	u_int8_t		 keep_state;
 	sa_family_t		 af;
 	u_int8_t		 proto;
-	u_int8_t		 type;
-	u_int8_t		 code;
+	uint16_t		 type;
+	uint16_t		 code;
 	u_int8_t		 flags;
 	u_int8_t		 flagset;
 	u_int8_t		 min_ttl;
@@ -2613,6 +2614,7 @@ struct pf_kruleset	*pf_find_kruleset(const char *);
 struct pf_kruleset	*pf_get_leaf_kruleset(char *, char **);
 struct pf_kruleset	*pf_find_or_create_kruleset(const char *);
 void			 pf_rs_initialize(void);
+void			 pf_rule_tree_free(struct pf_krule_global *);
 
 
 struct pf_krule		*pf_krule_alloc(void);

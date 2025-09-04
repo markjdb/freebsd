@@ -59,8 +59,8 @@
 #error "Kernel only file. Please use sbin/pfctl/pf_ruleset.c instead."
 #endif
 
-#define rs_malloc(x)		malloc(x, M_TEMP, M_NOWAIT|M_ZERO)
-#define rs_free(x)		free(x, M_TEMP)
+#define rs_malloc(x)		malloc(x, M_PF, M_NOWAIT|M_ZERO)
+#define rs_free(x)		free(x, M_PF)
 
 VNET_DEFINE(struct pf_kanchor_global,	pf_anchors);
 VNET_DEFINE(struct pf_kanchor,		pf_main_anchor);
@@ -336,6 +336,12 @@ pf_remove_if_empty_kruleset(struct pf_kruleset *ruleset)
 	int			 i;
 
 	while (ruleset != NULL) {
+		for (int i = 0; i < PF_RULESET_MAX; i++) {
+			pf_rule_tree_free(ruleset->rules[i].active.tree);
+			ruleset->rules[i].active.tree = NULL;
+			pf_rule_tree_free(ruleset->rules[i].inactive.tree);
+			ruleset->rules[i].inactive.tree = NULL;
+		}
 		if (ruleset == &pf_main_ruleset ||
 		    !RB_EMPTY(&ruleset->anchor->children) ||
 		    ruleset->anchor->refcnt > 0 || ruleset->tables > 0 ||
