@@ -381,6 +381,8 @@ SYSINCS+=	${SRCTOP}/sys/sys/ctf.h
 SYSINCS+=	${SRCTOP}/sys/sys/kbio.h
 # for kldxref:
 SYSINCS+=	${SRCTOP}/sys/sys/module.h
+# for certctl, which relies on modern sysctl.h defining size_t for itself:
+SYSINCS+=	${SRCTOP}/sys/sys/sysctl.h
 .if ${.MAKE.OS} != "FreeBSD"
 # for libmd:
 SYSINCS+=	${SRCTOP}/sys/sys/md4.h
