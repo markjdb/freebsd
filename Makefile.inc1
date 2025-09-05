@@ -611,6 +611,7 @@ SOURCE_DATE_EPOCH=	${TIMEEPOCHNOW:gmtime}
 .else
 SOURCE_DATE_EPOCH=	${PKG_TIMESTAMP}
 .endif
+TAR_FLAGS=		--mtime=@${SOURCE_DATE_EPOCH}
 PKG_WORKERS_COUNT?=	1
 
 PKG_NAME_PREFIX?=	FreeBSD
@@ -1571,14 +1572,14 @@ distributeworld installworld stageworld: _installcheck_world .PHONY
 packageworld: .PHONY
 .for dist in base ${EXTRA_DISTRIBUTIONS}
 	${_+_}cd ${DESTDIR}/${DISTDIR}/${dist}; \
-	    ${TAR_CMD} cvf - --exclude usr/lib/debug \
+	    ${TAR_CMD} -cvf - ${TAR_FLAGS} --exclude usr/lib/debug \
 	    @${DESTDIR}/${DISTDIR}/${dist}.meta | \
 	    ${XZ_CMD} > ${PACKAGEDIR}/${dist}.txz
 .endfor
 
 .for dist in ${DEBUG_DISTRIBUTIONS}
 	${_+_}cd ${DESTDIR}/${DISTDIR}/${dist}; \
-	    ${TAR_CMD} cvf - @${DESTDIR}/${DISTDIR}/${dist}.debug.meta | \
+	    ${TAR_CMD} -cvf - ${TAR_FLAGS} @${DESTDIR}/${DISTDIR}/${dist}.debug.meta | \
 	    ${XZ_CMD} > ${PACKAGEDIR}/${dist}-dbg.txz
 .endfor
 
@@ -1941,25 +1942,25 @@ distributekernel distributekernel.debug: .PHONY
 packagekernel: .PHONY
 .if !defined(NO_INSTALLKERNEL)
 	cd ${DESTDIR}/${DISTDIR}/kernel; \
-	    ${TAR_CMD} cvf - --exclude '*.debug' \
+	    ${TAR_CMD} -cvf - ${TAR_FLAGS} --exclude '*.debug' \
 	    @${DESTDIR}/${DISTDIR}/kernel.meta | \
 	    ${XZ_CMD} > ${PACKAGEDIR}/kernel.txz
 .endif
 .if ${MK_DEBUG_FILES} != "no"
 	cd ${DESTDIR}/${DISTDIR}/kernel; \
-	    ${TAR_CMD} cvf - --include '*/*/*.debug' \
+	    ${TAR_CMD} -cvf - ${TAR_FLAGS} --include '*/*/*.debug' \
 	    @${DESTDIR}/${DISTDIR}/kernel.meta | \
 	    ${XZ_CMD} > ${DESTDIR}/${DISTDIR}/kernel-dbg.txz
 .endif
 .if ${BUILDKERNELS:[#]} > 1 && ${NO_INSTALLEXTRAKERNELS} != "yes"
 .for _kernel in ${BUILDKERNELS:[2..-1]}
 	cd ${DESTDIR}/${DISTDIR}/kernel.${_kernel}; \
-	    ${TAR_CMD} cvf - --exclude '*.debug' \
+	    ${TAR_CMD} -cvf - ${TAR_FLAGS} --exclude '*.debug' \
 	    @${DESTDIR}/${DISTDIR}/kernel.${_kernel}.meta | \
 	    ${XZ_CMD} > ${PACKAGEDIR}/kernel.${_kernel}.txz
 .if ${MK_DEBUG_FILES} != "no"
 	cd ${DESTDIR}/${DISTDIR}/kernel.${_kernel}; \
-	    ${TAR_CMD} cvf - --include '*/*/*.debug' \
+	    ${TAR_CMD} -cvf - ${TAR_FLAGS} --include '*/*/*.debug' \
 	    @${DESTDIR}/${DISTDIR}/kernel.${_kernel}.meta | \
 	    ${XZ_CMD} > ${DESTDIR}/${DISTDIR}/kernel.${_kernel}-dbg.txz
 .endif
