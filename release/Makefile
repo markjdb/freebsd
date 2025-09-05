@@ -165,6 +165,7 @@ src.txz:
 	rm -f ${DISTDIR}/usr/src
 	ln -s ${WORLDDIR} ${DISTDIR}/usr/src
 	( cd ${DISTDIR} && ${TAR_XZ_CMD} -cLvf ${.OBJDIR}/src.txz \
+	    --mtime=@${GITEPOCH} \
 	    --exclude .svn --exclude .zfs \
 	    --exclude .git --exclude @ --exclude usr/src/release/dist \
 	    --exclude usr/src/release/obj usr/src )
@@ -174,6 +175,7 @@ ports.txz:
 	rm -f ${DISTDIR}/usr/ports
 	ln -s ${PORTSDIR} ${DISTDIR}/usr/ports
 	( cd ${DISTDIR} && ${TAR_XZ_CMD} -cLvf ${.OBJDIR}/ports.txz \
+	    --mtime=@${GITEPOCH} \
 	    --exclude .git --exclude .svn \
 	    --exclude usr/ports/distfiles --exclude usr/ports/packages \
 	    --exclude 'usr/ports/INDEX*' --exclude work usr/ports )
