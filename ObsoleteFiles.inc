@@ -51,6 +51,10 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250925: kgdb python scripts moved
+OLD_FILES+=usr/libexec/kgdb/acttrace.py
+OLD_DIRS+=usr/libexec/kgdb
+
 # 20250917: VREF macro removed
 OLD_FILES+=usr/share/man/man9/VREF.9.gz
 
