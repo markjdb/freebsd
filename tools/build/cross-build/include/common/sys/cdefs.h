@@ -270,6 +270,10 @@
 #define	__ISO_C_VISIBLE		2011
 #define	__EXT1_VISIBLE		1
 
+#ifndef __GNUC_PREREQ__
+#define	__GNUC_PREREQ__(x, y)	LLVM_GNUC_PREREQ(x, y, 0)
+#endif
+
 /* Alignment builtins for better type checking and improved code generation. */
 /* Provide fallback versions for other compilers (GCC/Clang < 10): */
 #if !__has_builtin(__builtin_is_aligned)
