@@ -12,10 +12,10 @@
 
 #include <lauxlib.h>
 
-SET_DECLARE(flua_module_set, const luaL_Reg);
+SET_DECLARE(flua_mod_set, const luaL_Reg);
 #define	FLUA_MODULE_DEF(ident, modname, openfn)			\
 	static const luaL_Reg ident = {	modname, openfn };	\
-	DATA_SET(flua_module_set, ident)
+	DATA_SET(flua_mod_set, ident)
 
 #define	FLUA_MODULE_NAMED(mod, name)	\
 	FLUA_MODULE_DEF(module_ ## mod, name, luaopen_ ## mod)
