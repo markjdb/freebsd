@@ -72,7 +72,7 @@ static void __attribute__((constructor)) flua_init_env(void) {
 static void flua_setup_mods (lua_State *L) {
   const luaL_Reg **flib;
 
-  SET_FOREACH(flib, flua_module_set) {
+  SET_FOREACH(flib, flua_mod_set) {
     luaL_requiref(L, (*flib)->name, (*flib)->func, 1);
     lua_pop(L, 1);  /* remove lib */
   }
