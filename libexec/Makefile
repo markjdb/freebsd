@@ -15,6 +15,7 @@ SUBDIR=	${_atf} \
 	${_makewhatis.local} \
 	${_mknetid} \
 	${_phttpget} \
+	pkgbasify \
 	${_pppoed} \
 	rc \
 	revnetgroup \
