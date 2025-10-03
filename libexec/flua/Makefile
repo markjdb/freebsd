@@ -9,7 +9,9 @@
 FLUA_MODULES+=	lfbsd
 FLUA_MODULES+=	lfs
 FLUA_MODULES+=	libhash
+.ifndef BOOTSTRAPPING
 FLUA_MODULES+=	libjail
+.endif
 FLUA_MODULES+=	libucl
 FLUA_MODULES+=	liblyaml
 FLUA_MODULES+=	lposix
