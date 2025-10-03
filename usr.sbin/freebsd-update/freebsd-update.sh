@@ -57,6 +57,7 @@ Options:
   --currently-running release
                -- Update as if currently running this release
 Commands:
+  bootstrap    -- Convert an existing installation to use pkgbase
   fetch        -- Fetch updates from server
   cron         -- Sleep rand(3600) seconds, fetch updates, and send an
                   email if updates were found
@@ -510,6 +511,10 @@ parse_cmdline () {
 			;;
 		-k)
 			if [ $# -eq 1 ]; then usage; fi; shift
+			if [ -n "$PKGBASE" ]; then
+				echo "-k cannot be used on pkgbase systems"
+				exit 1
+			fi
 			config_KeyPrint $1 || usage
 			;;
 		-r)
@@ -3503,6 +3508,7 @@ IDS_run () {
 }
 
 #### Main functions -- call parameter-handling and core functions
+# XXX-MJ explain how pkgbase flavours work
 
 # Using the command line, configuration file, and defaults,
 # set all the parameters which are needed later.
@@ -3511,6 +3517,18 @@ get_params () {
 	parse_cmdline $@
 	parse_conffile
 	default_params
+}
+
+# XXX-MJ
+cmd_bootstrap () {
+	/usr/libexec/pkgbasify || exit 1
+}
+
+cmd_pkgbase_bootstrap () {
+	cat <<EOF
+This system has already been converted to use pkgbase, there is nothing to do.
+EOF
+	exit 1
 }
 
 # Fetch command.  Make sure that we're being called
@@ -3526,6 +3544,9 @@ cmd_fetch () {
 	fetch_check_params
 	fetch_run || exit 1
 	ISFETCHED=1
+}
+
+cmd_pkgbase_fetch () {
 }
 
 # Cron command.  Make sure the parameters are sensible; wait
@@ -3548,12 +3569,18 @@ cmd_cron () {
 	rm ${TMPFILE}
 }
 
+cmd_pkgbase_cron () {
+}
+
 # Fetch files for upgrading to a new release.
 cmd_upgrade () {
 	finalize_components_config ${COMPONENTS}
 	upgrade_check_params
 	upgrade_check_kmod_ports
 	upgrade_run || exit 1
+}
+
+cmd_pkgbase_upgrade () {
 }
 
 # Check if there are fetched updates ready to install.
@@ -3582,12 +3609,18 @@ cmd_updatesready () {
 	echo "Run '`basename $0` [options] install' to proceed."
 }
 
+cmd_pkgbase_updatesready () {
+}
+
 # Install downloaded updates.
 cmd_install () {
 	finalize_components_config ${COMPONENTS}
 	install_check_params
 	install_create_be
 	install_run || exit 1
+}
+
+cmd_pkgbase_install () {
 }
 
 # Rollback most recently installed updates.
@@ -3597,11 +3630,17 @@ cmd_rollback () {
 	rollback_run || exit 1
 }
 
+cmd_pkgbase_rollback () {
+}
+
 # Compare system against a "known good" index.
 cmd_IDS () {
 	finalize_components_config ${COMPONENTS}
 	IDS_check_params
 	IDS_run || exit 1
+}
+
+cmd_pkgbase_IDS () {
 }
 
 # Output configuration.
@@ -3610,6 +3649,10 @@ cmd_showconfig () {
 	for X in ${CONFIGOPTIONS}; do
 		echo $X=$(eval echo \$${X})
 	done
+}
+
+cmd_pkgbase_showconfig () {
+	cmd_showconfig
 }
 
 #### Entry point
@@ -3631,15 +3674,11 @@ unset GREP_OPTIONS
 # Parse command line options and the configuration file.
 get_params "$@"
 
-# Disallow use with packaged base.
 if check_pkgbase; then
-	cat <<EOF
-freebsd-update is incompatible with the use of packaged base.  Please see
-https://wiki.freebsd.org/PkgBase for more information.
-EOF
-	exit 1
+	PKGBASE=1
+	PKGBASE_PREFIX=pkgbase_
 fi
 
 for COMMAND in ${COMMANDS}; do
-	cmd_${COMMAND}
+	cmd_${PKGBASE_PREFIX}${COMMAND}
 done
