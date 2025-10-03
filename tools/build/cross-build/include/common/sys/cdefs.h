@@ -271,7 +271,7 @@
 #define	__EXT1_VISIBLE		1
 
 #ifndef __GNUC_PREREQ__
-#define	__GNUC_PREREQ__(x, y)	LLVM_GNUC_PREREQ(x, y, 0)
+#define	__GNUC_PREREQ__(x, y)	0
 #endif
 
 /* Alignment builtins for better type checking and improved code generation. */
