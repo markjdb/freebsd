@@ -16,7 +16,7 @@ FLUA_MODULES+=	libucl
 FLUA_MODULES+=	liblyaml
 FLUA_MODULES+=	lposix
 
-.ifdef BOOTSTRAPPING
+.if defined(BOOTSTRAPPING) && ${.MAKE.OS} == "FreeBSD"
 FLUA_MODULES+=	libfreebsd/sys/linker
 FLUA_MODULES+=	libfreebsd/kenv
 CFLAGS+=	-I${.CURDIR} -DBOOTSTRAPPING
