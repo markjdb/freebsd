@@ -9,14 +9,18 @@
 FLUA_MODULES+=	lfbsd
 FLUA_MODULES+=	lfs
 FLUA_MODULES+=	libhash
+.ifndef BOOTSTRAPPING
+# Bootstrap flua can't usefully do anything with libjail anyways, because it
+# can't assume it's being run on a system that even supports jails.
 FLUA_MODULES+=	libjail
+.endif
 FLUA_MODULES+=	libucl
 FLUA_MODULES+=	liblyaml
-FLUA_MODULES+=	lposix
 
 .ifdef BOOTSTRAPPING
-FLUA_MODULES+=	libfreebsd/sys/linker
-FLUA_MODULES+=	libfreebsd/kenv
+# libfreebsd is generally omitted from the bootstrap flua because its
+# functionality largely assumes a FreeBSD kernel/system headers, so it doesn't
+# really offer functionality that we can use in bootstrap.
 CFLAGS+=	-I${.CURDIR} -DBOOTSTRAPPING
 
 SHAREDIR=	${WORLDTMP}/legacy/usr/share/flua
@@ -50,6 +54,7 @@ SRCS+=	lua.c
 # FreeBSD Extensions
 .PATH: ${.CURDIR}/modules
 SRCS+=	linit_flua.c
+SRCS+=	lposix.c
 
 CFLAGS+=	-I${SRCTOP}/lib/liblua -I${.CURDIR}/modules -I${LUASRC}
 CFLAGS+=	-DLUA_PROGNAME="\"${PROG}\""

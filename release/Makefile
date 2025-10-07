@@ -116,7 +116,10 @@ DISTRIBUTIONS+= ports.txz
 DISTRIBUTIONS+= src.txz
 .endif
 
-RELEASE_TARGETS= ftp
+RELEASE_TARGETS=
+.if !defined(NODISTSETS) || empty(NODISTSETS)
+RELEASE_TARGETS+= ftp
+.endif
 IMAGES=
 .if exists(${.CURDIR}/${TARGET}/mkisoimages.sh)
 RELEASE_TARGETS+= cdrom
@@ -132,6 +135,9 @@ RELEASE_TARGETS+= mini-memstick.img
 IMAGES+=	memstick.img
 IMAGES+=	mini-memstick.img
 .endif
+.if !defined(NOPKGBASE) || empty(NOPKGBASE)
+RELEASE_TARGETS+= pkgbase-repo.tar
+.endif
 
 CLEANFILES=	packagesystem *.txz MANIFEST release ${IMAGES}
 .if defined(WITH_COMPRESSED_IMAGES) && !empty(WITH_COMPRESSED_IMAGES)
@@ -142,7 +148,7 @@ CLEANFILES+=	${I}.xz
 .if defined(WITH_DVD) && !empty(WITH_DVD)
 CLEANFILES+=	pkg-stage
 .endif
-CLEANDIRS=	dist pkgdb-dvd pkgdb-disc1 pkgbase-repo pkgbase-repo-dir ftp disc1 disc1-disc1 disc1-memstick bootonly bootonly-bootonly bootonly-memstick dvd
+CLEANDIRS=	dist pkgdb-dvd pkgdb-disc1 pkgbase-repo pkgbase-repo-dir ftp disc1 disc1-disc1 disc1-memstick bootonly bootonly-bootonly bootonly-memstick dvd pkgbase-repo.tar
 beforeclean:
 	chflags -R noschg .
 .include <bsd.obj.mk>
@@ -196,7 +202,7 @@ packagesystem: ${DISTRIBUTIONS}
 	sh ${.CURDIR}/scripts/make-manifest.sh $$(ls *.txz | grep -v container) > MANIFEST
 	touch ${.TARGET}
 
-.if !defined(NODISTSETS)
+.if !defined(NODISTSETS) || empty(NODISTSETS)
 disc1: packagesystem
 bootonly: packagesystem
 dvd: packagesystem
@@ -212,6 +218,9 @@ pkgbase-repo:
 	mkdir -p /tmp/ports /tmp/distfiles
 	( ${IMAKE} -C ${WORLDDIR} packages REPODIR=${.OBJDIR}/pkgbase-repo \
 	    INCLUDE_PKG_IN_PKGBASE_REPO=YES BOOTSTRAP_PKG_FROM_PORTS=YES )
+
+pkgbase-repo.tar: pkgbase-repo
+	tar -cf pkgbase-repo.tar -C pkgbase-repo .
 
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
@@ -242,7 +251,7 @@ disc1:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/freebsd-packages|g' >> ${.TARGET}/METALOG
 .endif
-.if !defined(NODISTSETS)
+.if !defined(NODISTSETS) || empty(NODISTSETS)
 	# Copy MANIFEST to provide legacy dist checksums in both modes
 	mkdir -p ${.TARGET}/usr/freebsd-dist
 	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
@@ -295,7 +304,7 @@ bootonly:
 	    MK_TOOLCHAIN=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
-.if !defined(NODISTSETS)
+.if !defined(NODISTSETS) || empty(NODISTSETS)
 # Copy manifest only (no distfiles) to get checksums
 	mkdir -p ${.TARGET}/usr/freebsd-dist
 	cp MANIFEST ${.TARGET}/usr/freebsd-dist
@@ -347,7 +356,7 @@ dvd:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/freebsd-packages|g' >> ${.TARGET}/METALOG
 .endif
-.if !defined(NODISTSETS)
+.if !defined(NODISTSETS) || empty(NODISTSETS)
 	# Copy MANIFEST to provide legacy dist checksums in both modes
 	mkdir -p ${.TARGET}/usr/freebsd-dist
 	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
@@ -449,7 +458,9 @@ release-install:
 .if defined(DESTDIR) && !empty(DESTDIR)
 	mkdir -p ${DESTDIR}
 .endif
+.if !defined(NODISTSETS) || empty(NODISTSETS)
 	cp -a ftp ${DESTDIR}/
+.endif
 .if !empty(IMAGES)
 .for I in ${IMAGES}
 	cp -p ${I} ${DESTDIR}/${OSRELEASE}-${I}
@@ -459,6 +470,12 @@ release-install:
 .endfor
 	( cd ${DESTDIR} && sha512 ${OSRELEASE}* > ${DESTDIR}/CHECKSUM.SHA512 )
 	( cd ${DESTDIR} && sha256 ${OSRELEASE}* > ${DESTDIR}/CHECKSUM.SHA256 )
+.endif
+.if !defined (NOPKGBASE) || empty(NOPKGBASE)
+	mkdir -p ${DESTDIR}/pkgbase
+	cp -p pkgbase-repo.tar ${DESTDIR}/pkgbase/
+	( cd ${DESTDIR}/pkgbase && sha256 pkgbase-repo.tar > CHECKSUM.SHA256 )
+	( cd ${DESTDIR}/pkgbase && sha512 pkgbase-repo.tar > CHECKSUM.SHA512 )
 .endif
 
 .include "${.CURDIR}/Makefile.inc1"

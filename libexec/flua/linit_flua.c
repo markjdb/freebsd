@@ -33,6 +33,7 @@
 
 #include "lualib.h"
 #include "lauxlib.h"
+#include "lposix.h"
 
 #include "bootstrap.h"
 
@@ -54,6 +55,8 @@ static const luaL_Reg loadedlibs[] = {
 #if defined(LUA_COMPAT_BITLIB)
   {LUA_BITLIBNAME, luaopen_bit32},
 #endif
+  /* FreeBSD Extensions */
+  {"posix", luaopen_posix},
   {NULL, NULL}
 };
 
@@ -72,7 +75,7 @@ static void __attribute__((constructor)) flua_init_env(void) {
 static void flua_setup_mods (lua_State *L) {
   const luaL_Reg **flib;
 
-  SET_FOREACH(flib, flua_module_set) {
+  SET_FOREACH(flib, FLUA_MODULE_SETNAME) {
     luaL_requiref(L, (*flib)->name, (*flib)->func, 1);
     lua_pop(L, 1);  /* remove lib */
   }
