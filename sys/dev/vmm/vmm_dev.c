@@ -123,33 +123,12 @@ vcpu_unlock_one(struct vcpu *vcpu)
 static int
 vcpu_lock_all(struct vmmdev_softc *sc)
 {
-	struct vcpu *vcpu;
-	int error;
-	uint16_t i, j, maxcpus;
-
-	error = 0;
-	vm_slock_vcpus(sc->vm);
-	maxcpus = vm_get_maxcpus(sc->vm);
-	for (i = 0; i < maxcpus; i++) {
-		vcpu = vm_vcpu(sc->vm, i);
-		if (vcpu == NULL)
-			continue;
-		error = vcpu_lock_one(vcpu);
-		if (error)
-			break;
-	}
-
-	if (error) {
-		for (j = 0; j < i; j++) {
-			vcpu = vm_vcpu(sc->vm, j);
-			if (vcpu == NULL)
-				continue;
-			vcpu_unlock_one(vcpu);
-		}
-		vm_unlock_vcpus(sc->vm);
-	}
-
-	return (error);
+	/*
+	 * Serialize vcpu_lock_all() callers.  Individual vCPUs are not locked
+	 * in a consistent order so we need to serialize to avoid deadlocks.
+	 */
+	vm_lock_vcpus(sc->vm);
+	return (vcpu_set_state_all(sc->vm, VCPU_FROZEN));
 }
 
 static void
