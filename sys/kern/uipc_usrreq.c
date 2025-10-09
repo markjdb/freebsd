@@ -2212,7 +2212,6 @@ uipc_peek_dgram(struct socket *so, struct mbuf *m, struct sockaddr **psa,
 				/* Report real length of the packet */
 				uio->uio_resid -= m_length(m, NULL) - len;
 			}
-			*flagsp |= MSG_TRUNC;
 		} else
 			*flagsp &= ~MSG_TRUNC;
 	}
@@ -3216,11 +3215,9 @@ unp_disconnect(struct unpcb *unp, struct unpcb *unp2)
 #endif
 		LIST_REMOVE(unp, unp_reflink);
 		UNP_REF_LIST_UNLOCK();
-		if (so) {
-			SOCK_LOCK(so);
-			so->so_state &= ~SS_ISCONNECTED;
-			SOCK_UNLOCK(so);
-		}
+		SOCK_LOCK(so);
+		so->so_state &= ~SS_ISCONNECTED;
+		SOCK_UNLOCK(so);
 		break;
 
 	case SOCK_STREAM:
