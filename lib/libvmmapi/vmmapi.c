@@ -150,7 +150,8 @@ vm_openf(const char *name, int flags)
 	created = false;
 
 	vm = malloc(sizeof(struct vmctx) + strlen(name) + 1);
-	assert(vm != NULL);
+	if (vm == NULL)
+		return (NULL);
 
 	vm->fd = vm->ctlfd = -1;
 	vm->memflags = 0;
@@ -218,6 +219,8 @@ vm_vcpu_open(struct vmctx *ctx, int vcpuid)
 	struct vcpu *vcpu;
 
 	vcpu = malloc(sizeof(*vcpu));
+	if (vcpu == NULL)
+		return (NULL);
 	vcpu->ctx = ctx;
 	vcpu->vcpuid = vcpuid;
 	return (vcpu);
