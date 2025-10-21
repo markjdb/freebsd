@@ -109,6 +109,14 @@ prompt before booting the kernel or stored in
 Maximum number of virtual CPUs.
 The default is the number of physical CPUs in the system.
 .El
+.Sh FILES
+.Bl -tag -width /dev/vmmctl -compact
+.It Pa /dev/vmmctl
+control interface for creating and destroying virtual machines.
+.It Pa /dev/vmm/*
+device interface for individual virtual machines.
+.It Pa /dev/vmm.io/*
+
 .Sh EXAMPLES
 Reserve three PCI devices for use by the hypervisor: bus 10 slot 0 function 0,
 bus 6 slot 5 function 0, and bus 6 slot 5 function 1.
