@@ -174,6 +174,9 @@ DECLARE_VMMOPS_FUNC(int, restore_tsc, (void *vcpui, uint64_t now));
 #endif
 #endif
 
+int vmm_modinit(void);
+int vmm_modcleanup(void);
+
 int vm_create(const char *name, struct vm **retvm);
 struct vcpu *vm_alloc_vcpu(struct vm *vm, int vcpuid);
 void vm_disable_vcpu_creation(struct vm *vm);
