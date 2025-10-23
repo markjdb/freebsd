@@ -817,10 +817,11 @@ int	bus_get_pass(void);
  * Routines to lock / unlock the newbus lock.
  * Must be taken out to interact with newbus.
  */
+void bus_topo_lock_init(void);
 void bus_topo_lock(void);
 void bus_topo_unlock(void);
-struct mtx * bus_topo_mtx(void);
 void bus_topo_assert(void);
+void bus_topo_sleep(void *chan, int pri, const char *wmesg);
 
 /**
  * Shorthands for constructing method tables.

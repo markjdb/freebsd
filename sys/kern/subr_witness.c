@@ -805,9 +805,11 @@ witness_startup(void *mem)
 	badstack_sbuf_size = witness_count * 256;
 
 	/*
-	 * We have to release Giant before initializing its witness
-	 * structure so that WITNESS doesn't get confused.
+	 * We have to release Giant and the bus topology lock before
+	 * initializing their witness structures so that WITNESS doesn't get
+	 * confused.
 	 */
+	bus_topo_unlock();
 	mtx_unlock(&Giant);
 	mtx_assert(&Giant, MA_NOTOWNED);
 
@@ -867,6 +869,7 @@ witness_startup(void *mem)
 	witness_cold = 0;
 
 	mtx_lock(&Giant);
+	bus_topo_lock();
 }
 
 void

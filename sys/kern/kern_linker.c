@@ -35,6 +35,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/boottrace.h>
+#include <sys/bus.h>
 #include <sys/eventhandler.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
@@ -229,6 +230,7 @@ linker_file_sysinit(linker_file_t lf)
 	 */
 	last = SI_SUB_DUMMY;
 	sx_xunlock(&kld_sx);
+	bus_topo_lock();
 	mtx_lock(&Giant);
 	for (sipp = start; sipp < stop; sipp++) {
 		if ((*sipp)->subsystem == SI_SUB_DUMMY)
@@ -243,6 +245,7 @@ linker_file_sysinit(linker_file_t lf)
 		last = (*sipp)->subsystem;
 	}
 	mtx_unlock(&Giant);
+	bus_topo_unlock();
 	sx_xlock(&kld_sx);
 }
 

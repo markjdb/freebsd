@@ -69,9 +69,10 @@ configure_first(void *dummy)
 static void
 configure(void *dummy)
 {
-
+	bus_topo_lock();
 	/* initialize new bus architecture */
 	root_bus_configure();
+	bus_topo_unlock();
 }
 
 static void

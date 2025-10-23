@@ -94,6 +94,7 @@ static void
 configure(void *dummy)
 {
 
+	bus_topo_lock();
 	/* initialize new bus architecture */
 	root_bus_configure();
 
@@ -105,6 +106,7 @@ configure(void *dummy)
 	if (isa_bus_device)
 		isa_probe_children(isa_bus_device);
 #endif
+	bus_topo_unlock();
 }
 
 static void

@@ -49,6 +49,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/boottrace.h>
+#include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/cpuset.h>
 #include <sys/dtrace_bsd.h>
@@ -271,6 +272,9 @@ mi_startup(void)
 #endif
 #endif
 
+	bus_topo_lock_init();
+	bus_topo_lock();
+
 	/*
 	 * Perform each system initialization task from the ordered list.  Note
 	 * that if sysinit_list is modified (e.g. by a KLD) we will nonetheless
@@ -327,6 +331,8 @@ mi_startup(void)
 	TSEXIT();	/* Here so we don't overlap with start_init. */
 	BOOTTRACE("mi_startup done");
 
+	bus_topo_unlock();
+	/* Release Giant, acquired in mutex_init() during MD initialization. */
 	mtx_assert(&Giant, MA_OWNED | MA_NOTRECURSED);
 	mtx_unlock(&Giant);
 

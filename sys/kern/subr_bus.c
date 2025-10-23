@@ -416,32 +416,41 @@ static kobj_method_t null_methods[] = {
 
 DEFINE_CLASS(null, null_methods, 0);
 
+static struct sx bus_topo_sx;
+
+void
+bus_topo_lock_init(void)
+{
+	sx_init_flags(&bus_topo_sx, "bus topology", SX_RECURSE);
+}
+
 void
 bus_topo_assert(void)
 {
 
-	GIANT_REQUIRED;	
-}
-
-struct mtx *
-bus_topo_mtx(void)
-{
-
-	return (&Giant);
+	GIANT_REQUIRED;
+	sx_assert(&bus_topo_sx, SX_XLOCKED);
 }
 
 void
 bus_topo_lock(void)
 {
-
-	mtx_lock(bus_topo_mtx());
+	sx_xlock(&bus_topo_sx);
+	mtx_lock(&Giant);
 }
 
 void
 bus_topo_unlock(void)
 {
+	mtx_unlock(&Giant);
+	sx_xunlock(&bus_topo_sx);
+}
 
-	mtx_unlock(bus_topo_mtx());
+void
+bus_topo_sleep(void *chan, int pri, const char *wmesg)
+{
+	/* Rely on the fact that Giant is released implictly. */
+	sx_sleep(chan, &bus_topo_sx, pri, wmesg, 0);
 }
 
 /*

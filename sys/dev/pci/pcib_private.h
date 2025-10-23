@@ -124,12 +124,11 @@ struct pcib_softc
     struct timeout_task pcie_ab_task;
     struct timeout_task pcie_cc_task;
     struct timeout_task pcie_dll_task;
-    struct mtx	*pcie_hp_lock;
 };
 
-#define PCIB_HP_LOCK(sc)	mtx_lock((sc)->pcie_hp_lock)
-#define PCIB_HP_UNLOCK(sc)	mtx_unlock((sc)->pcie_hp_lock)
-#define PCIB_HP_LOCK_ASSERT(sc)	mtx_assert((sc)->pcie_hp_lock, MA_OWNED)
+#define PCIB_HP_LOCK(sc)	bus_topo_lock()
+#define PCIB_HP_UNLOCK(sc)	bus_topo_unlock()
+#define PCIB_HP_LOCK_ASSERT(sc)	bus_topo_assert()
 
 #define	PCIB_SUPPORTED_ARI_VER	1
 

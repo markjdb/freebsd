@@ -596,7 +596,7 @@ vmbus_scan(struct vmbus_softc *sc)
 	 */
 	bus_topo_assert();
 	while (!sc->vmbus_scandone)
-		mtx_sleep(&sc->vmbus_scandone, bus_topo_mtx(), 0, "vmbusdev", 0);
+		bus_topo_sleep(&sc->vmbus_scandone, 0, "vmbusdev");
 
 	if (bootverbose) {
 		device_printf(sc->vmbus_dev, "device scan, probe and attach "

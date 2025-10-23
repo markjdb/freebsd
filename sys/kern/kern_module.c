@@ -27,6 +27,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/bus.h>
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/eventhandler.h>
@@ -95,12 +96,14 @@ module_shutdown(void *arg1, int arg2)
 
 	if (arg2 & RB_NOSYNC)
 		return;
+	bus_topo_lock();
 	mtx_lock(&Giant);
 	MOD_SLOCK;
 	TAILQ_FOREACH_REVERSE(mod, &modules, modulelist, link)
 		MOD_EVENT(mod, MOD_SHUTDOWN);
 	MOD_SUNLOCK;
 	mtx_unlock(&Giant);
+	bus_topo_unlock();
 }
 
 void
@@ -110,7 +113,7 @@ module_register_init(const void *arg)
 	int error;
 	module_t mod;
 
-	mtx_lock(&Giant);
+	bus_topo_lock();
 	MOD_SLOCK;
 	mod = module_lookupbyname(data->name);
 	if (mod == NULL)
@@ -142,7 +145,7 @@ module_register_init(const void *arg)
 		}
 		MOD_XUNLOCK;
 	}
-	mtx_unlock(&Giant);
+	bus_topo_unlock();
 }
 
 int
