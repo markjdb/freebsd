@@ -232,8 +232,6 @@ struct vmm_ops {
 extern const struct vmm_ops vmm_ops_intel;
 extern const struct vmm_ops vmm_ops_amd;
 
-extern u_int vm_maxcpu;			/* maximum virtual cpus */
-
 int vmm_modinit(void);
 int vmm_modcleanup(void);
 
