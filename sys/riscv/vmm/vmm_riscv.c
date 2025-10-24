@@ -67,6 +67,7 @@
 #include <machine/db_machdep.h>
 
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_vcpu.h>
 
 #include "riscv.h"
 #include "vmm_aplic.h"

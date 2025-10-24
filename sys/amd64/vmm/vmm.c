@@ -71,6 +71,7 @@
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_ktr.h>
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_vcpu.h>
 
 #include "vmm_ioport.h"
 #include "vmm_host.h"
@@ -90,45 +91,6 @@
 #include "io/iommu.h"
 
 struct vlapic;
-
-/*
- * Initialization:
- * (a) allocated when vcpu is created
- * (i) initialized when vcpu is created and when it is reinitialized
- * (o) initialized the first time the vcpu is created
- * (x) initialized before use
- */
-struct vcpu {
-	struct mtx 	mtx;		/* (o) protects 'state' and 'hostcpu' */
-	enum vcpu_state	state;		/* (o) vcpu state */
-	int		vcpuid;		/* (o) */
-	int		hostcpu;	/* (o) vcpu's host cpu */
-	int		reqidle;	/* (i) request vcpu to idle */
-	struct vm	*vm;		/* (o) */
-	void		*cookie;	/* (i) cpu-specific data */
-	struct vlapic	*vlapic;	/* (i) APIC device model */
-	enum x2apic_state x2apic_state;	/* (i) APIC mode */
-	uint64_t	exitintinfo;	/* (i) events pending at VM exit */
-	int		nmi_pending;	/* (i) NMI pending */
-	int		extint_pending;	/* (i) INTR pending */
-	int	exception_pending;	/* (i) exception pending */
-	int	exc_vector;		/* (x) exception collateral */
-	int	exc_errcode_valid;
-	uint32_t exc_errcode;
-	struct savefpu	*guestfpu;	/* (a,i) guest fpu state */
-	uint64_t	guest_xcr0;	/* (i) guest %xcr0 register */
-	void		*stats;		/* (a,i) statistics */
-	struct vm_exit	exitinfo;	/* (x) exit reason and collateral */
-	cpuset_t	exitinfo_cpuset; /* (x) storage for vmexit handlers */
-	uint64_t	nextrip;	/* (x) next instruction to execute */
-	uint64_t	tsc_offset;	/* (o) TSC offsetting */
-};
-
-#define	vcpu_lock_init(v)	mtx_init(&((v)->mtx), "vcpu lock", 0, MTX_SPIN)
-#define	vcpu_lock_destroy(v)	mtx_destroy(&((v)->mtx))
-#define	vcpu_lock(v)		mtx_lock_spin(&((v)->mtx))
-#define	vcpu_unlock(v)		mtx_unlock_spin(&((v)->mtx))
-#define	vcpu_assert_locked(v)	mtx_assert(&((v)->mtx), MA_OWNED)
 
 /*
  * Initialization:

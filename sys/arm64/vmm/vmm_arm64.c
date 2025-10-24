@@ -59,6 +59,7 @@
 #include <machine/pmap.h>
 
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_vcpu.h>
 
 #include "mmu.h"
 #include "arm64.h"

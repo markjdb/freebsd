@@ -357,34 +357,6 @@ bool vmm_is_pptdev(int bus, int slot, int func);
 
 void *vm_iommu_domain(struct vm *vm);
 
-enum vcpu_state {
-	VCPU_IDLE,
-	VCPU_FROZEN,
-	VCPU_RUNNING,
-	VCPU_SLEEPING,
-};
-
-int vcpu_set_state(struct vcpu *vcpu, enum vcpu_state state, bool from_idle);
-int vcpu_set_state_all(struct vm *vm, enum vcpu_state state);
-enum vcpu_state vcpu_get_state(struct vcpu *vcpu, int *hostcpu);
-
-static int __inline
-vcpu_is_running(struct vcpu *vcpu, int *hostcpu)
-{
-	return (vcpu_get_state(vcpu, hostcpu) == VCPU_RUNNING);
-}
-
-#ifdef _SYS_PROC_H_
-static int __inline
-vcpu_should_yield(struct vcpu *vcpu)
-{
-	struct thread *td;
-
-	td = curthread;
-	return (td->td_ast != 0 || td->td_owepreempt != 0);
-}
-#endif
-
 void *vcpu_stats(struct vcpu *vcpu);
 void vcpu_notify_event(struct vcpu *vcpu);
 void vcpu_notify_lapic(struct vcpu *vcpu);

@@ -71,31 +71,12 @@
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_ktr.h>
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_vcpu.h>
 
 #include "vmm_stat.h"
 #include "riscv.h"
 
 #include "vmm_aplic.h"
-
-struct vcpu {
-	int		flags;
-	enum vcpu_state	state;
-	struct mtx	mtx;
-	int		hostcpu;	/* host cpuid this vcpu last ran on */
-	int		vcpuid;
-	void		*stats;
-	struct vm_exit	exitinfo;
-	uint64_t	nextpc;		/* (x) next instruction to execute */
-	struct vm	*vm;		/* (o) */
-	void		*cookie;	/* (i) cpu-specific data */
-	struct fpreg	*guestfpu;	/* (a,i) guest fpu state */
-};
-
-#define	vcpu_lock_init(v)	mtx_init(&((v)->mtx), "vcpu lock", 0, MTX_SPIN)
-#define	vcpu_lock_destroy(v)	mtx_destroy(&((v)->mtx))
-#define	vcpu_lock(v)		mtx_lock_spin(&((v)->mtx))
-#define	vcpu_unlock(v)		mtx_unlock_spin(&((v)->mtx))
-#define	vcpu_assert_locked(v)	mtx_assert(&((v)->mtx), MA_OWNED)
 
 struct vmm_mmio_region {
 	uint64_t start;

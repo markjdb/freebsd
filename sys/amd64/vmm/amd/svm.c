@@ -56,6 +56,7 @@
 
 #include <dev/vmm/vmm_ktr.h>
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_vcpu.h>
 
 #include "vmm_lapic.h"
 #include "vmm_stat.h"
