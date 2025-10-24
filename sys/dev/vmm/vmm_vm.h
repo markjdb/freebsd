@@ -12,6 +12,8 @@
 
 #include <machine/vmm_vm.h>
 
+#include <dev/vmm/vmm_mem.h>
+
 struct vcpu;
 
 typedef void (*vm_rendezvous_func_t)(struct vcpu *vcpu, void *arg);

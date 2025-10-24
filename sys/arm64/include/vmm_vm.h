@@ -14,15 +14,14 @@
 
 #include <machine/vmm_instruction_emul.h>
 
-#define	VM_MAX_MMIO_REGIONS	4
 struct vmm_mmio_region {
 	uint64_t start;
 	uint64_t end;
 	mem_region_read_t read;
 	mem_region_write_t write;
 };
+#define	VM_MAX_MMIO_REGIONS	4
 
-#define	VM_MAX_SPECIAL_REGS	16
 struct vmm_special_reg {
 	uint32_t	esr_iss;
 	uint32_t	esr_mask;
@@ -30,6 +29,7 @@ struct vmm_special_reg {
 	reg_write_t	reg_write;
 	void		*arg;
 };
+#define	VM_MAX_SPECIAL_REGS	16
 
 #define	VMM_VM_MD_FIELDS						\
 	struct vmm_mmio_region mmio_region[VM_MAX_MMIO_REGIONS];	\

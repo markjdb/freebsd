@@ -59,7 +59,6 @@
 #include <machine/cpu.h>
 #include <machine/machdep.h>
 #include <machine/vmm.h>
-#include <machine/vmm_dev.h>
 #include <machine/atomic.h>
 #include <machine/pmap.h>
 #include <machine/intr.h>
