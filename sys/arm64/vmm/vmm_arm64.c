@@ -1149,6 +1149,8 @@ vmmops_run(void *vcpui, register_t pc, pmap_t pmap, struct vm_eventinfo *evinfo)
 		arm64_set_active_vcpu(hypctx);
 		vgic_flush_hwstate(hypctx);
 
+		invalidate_icache();
+
 		/* Call into EL2 to switch to the guest */
 		excp_type = vmm_enter_guest(hyp, hypctx);
 
