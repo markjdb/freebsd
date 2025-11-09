@@ -418,6 +418,7 @@ LENTRY(enter_kernel_el)
 	msr	sctlr_el1, x2
 
 	/* Check for VHE */
+	b .Lno_vhe
 	CHECK_CPU_FEAT(x2, ID_AA64MMFR1, VH, IMPL, .Lno_vhe)
 
 	/*
