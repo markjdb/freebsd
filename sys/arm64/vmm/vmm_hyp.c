@@ -568,6 +568,7 @@ vmm_hyp_call_guest(struct hyp *hyp, struct hypctx *hypctx)
 
 	host_hypctx.mdcr_el2 = READ_SPECIALREG(mdcr_el2);
 	WRITE_SPECIALREG(mdcr_el2, hypctx->mdcr_el2);
+	isb();
 
 	/* Call into the guest */
 	ret = VMM_HYP_FUNC(do_call_guest)(hypctx);
