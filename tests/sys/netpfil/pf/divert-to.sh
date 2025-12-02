@@ -87,16 +87,20 @@ in_div_body()
 
 	epair=$(vnet_mkepair)
 	vnet_mkjail div ${epair}b
-	ifconfig ${epair}a 192.0.2.1/24 up
-	jexec div ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check ifconfig ${epair}a 192.0.2.1/24 up
+	atf_check ifconfig ${epair}a inet6 2001:db8::1/64 no_dad
+	atf_check jexec div ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check jexec div ifconfig ${epair}b inet6 2001:db8::2/64 no_dad
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c3 192.0.2.2
+	atf_check -s exit:0 -o ignore ping6 -c3 2001:db8::2
 
 	jexec div pfctl -e
 	pft_set_rules div \
 		"pass all" \
-		"pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2000"
+		"pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2000" \
+		"pass in inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 2000 no state"
 
 	jexec div $(atf_get_srcdir)/../common/divapp 2000 &
 	divapp_pid=$!
@@ -105,6 +109,16 @@ in_div_body()
 
 	# divapp is expected to "eat" the packet
 	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+
+	wait $divapp_pid
+
+	jexec div $(atf_get_srcdir)/../common/divapp 2000 &
+	divapp_pid=$!
+	# Wait for the divapp to be ready
+	sleep 1
+
+	# divapp is expected to "eat" the packet
+	atf_check -s not-exit:0 -o ignore ping -c1 -t1 2001:db8::2
 
 	wait $divapp_pid
 }
@@ -126,8 +140,8 @@ in_div_in_body()
 
 	epair=$(vnet_mkepair)
 	vnet_mkjail div ${epair}b
-	ifconfig ${epair}a 192.0.2.1/24 up
-	jexec div ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check ifconfig ${epair}a 192.0.2.1/24 up
+	atf_check jexec div ifconfig ${epair}b 192.0.2.2/24 up
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c3 192.0.2.2
@@ -165,8 +179,8 @@ out_div_body()
 
 	epair=$(vnet_mkepair)
 	vnet_mkjail div ${epair}b
-	ifconfig ${epair}a 192.0.2.1/24 up
-	jexec div ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check ifconfig ${epair}a 192.0.2.1/24 up
+	atf_check jexec div ifconfig ${epair}b 192.0.2.2/24 up
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c3 192.0.2.2
@@ -205,8 +219,8 @@ out_div_out_body()
 
 	epair=$(vnet_mkepair)
 	vnet_mkjail div ${epair}b
-	ifconfig ${epair}a 192.0.2.1/24 up
-	jexec div ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check ifconfig ${epair}a 192.0.2.1/24 up
+	atf_check jexec div ifconfig ${epair}b 192.0.2.2/24 up
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c3 192.0.2.2
@@ -248,10 +262,10 @@ in_div_in_fwd_out_div_out_body()
 	epair1=$(vnet_mkepair)
 
 	vnet_mkjail router ${epair0}b ${epair1}a
-	ifconfig ${epair0}a 192.0.2.1/24 up
-	jexec router sysctl net.inet.ip.forwarding=1
-	jexec router ifconfig ${epair0}b 192.0.2.2/24 up
-	jexec router ifconfig ${epair1}a 198.51.100.1/24 up
+	atf_check ifconfig ${epair0}a 192.0.2.1/24 up
+	atf_check jexec router sysctl net.inet.ip.forwarding=1
+	atf_check jexec router ifconfig ${epair0}b 192.0.2.2/24 up
+	atf_check jexec router ifconfig ${epair1}a 198.51.100.1/24 up
 
 	vnet_mkjail site ${epair1}b
 	jexec site ifconfig ${epair1}b 198.51.100.2/24 up
@@ -302,9 +316,9 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 
 	epair=$(vnet_mkepair)
 	vnet_mkjail alcatraz ${epair}b
-	ifconfig ${epair}a 192.0.2.1/24 up
-	ifconfig ${epair}a ether 02:00:00:00:00:01
-	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check ifconfig ${epair}a 192.0.2.1/24 up
+	atf_check ifconfig ${epair}a ether 02:00:00:00:00:01
+	atf_check jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c3 192.0.2.2
@@ -386,7 +400,7 @@ pr260867_body()
 
 	epair=$(vnet_mkepair)
 
-	ifconfig ${epair}a 192.0.2.1/24 up
+	atf_check ifconfig ${epair}a 192.0.2.1/24 up
 
 	vnet_mkjail alcatraz ${epair}b
 	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
