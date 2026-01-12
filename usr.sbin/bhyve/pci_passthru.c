@@ -138,7 +138,8 @@ pcifd_open(void)
 
 	fd = open(_PATH_DEVPCI, O_RDWR, 0);
 	if (fd < 0) {
-		warn("failed to open %s", _PATH_DEVPCI);
+		if (errno != EACCES)
+			warn("failed to open %s", _PATH_DEVPCI);
 		return (-1);
 	}
 	return (fd);
