@@ -536,9 +536,15 @@
 #define	PRIV_VERIEXEC_CONTROL	702	/* Can configure veriexec */
 
 /*
+ * vmm privileges.
+ */
+#define	PRIV_VMM_CREATE		710	/* Can create non-temporal VMs. */
+#define	PRIV_VMM_DESTROY	711	/* Can destroy other users' VMs. */
+
+/*
  * Track end of privilege list.
  */
-#define	_PRIV_HIGHEST		703
+#define	_PRIV_HIGHEST		712
 
 /*
  * Validate that a named privilege is known by the privilege system.  Invalid
