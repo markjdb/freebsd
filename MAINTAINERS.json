@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "name": "bhyve",
+      "reviewers": ["markj", "corvink", "bnovkov", "jhb"],
+      "paths": ["usr.sbin/bhyve", "lib/libvmmapi", "sys/dev/vmm"]
+    }
+  ]
+}
