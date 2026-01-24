@@ -4,7 +4,7 @@
     {
       "name": "bhyve",
       "reviewers": ["markj", "corvink", "bnovkov", "jhb"],
-      "paths": ["usr.sbin/bhyve", "lib/libvmmapi", "sys/dev/vmm"]
+      "paths": ["usr.sbin/bhyve*", "lib/libvmmapi", "sys/dev/vmm"]
     }
   ]
 }
