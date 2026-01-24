@@ -25,7 +25,7 @@ def load_maintainers(filepath: Path):
                 raise ValueError(f"Entry {entry['name']} must have at least one path")
             if 'reviewers' not in entry or not entry['reviewers']:
                 raise ValueError(f"Entry {entry['name']} must have at least one reviewer")
-            for path in entry['paths']:
+            for path in entry['paths'] + entry.get('exclusions', []):
                 full_path = src / path
                 if '*' in path or '?' in path or '[' in path:
                     matches = list(src.glob(path))
@@ -37,23 +37,33 @@ def load_maintainers(filepath: Path):
         return data
 
 
+def match(path: Path, pattern):
+    if any(path.glob(pattern)):
+        return True
+    if path.is_relative_to(pattern):
+        return True
+    return False
+
+
 def reviewers_for_paths(data, query_paths):
     """Given a list of filles, return the union of all matching reviewers."""
     reviewers = set()
     for entry in data['entries']:
         for path in entry['paths']:
             for query_path in query_paths:
-                if query_path.glob(path) or query_path.is_relative_to(Path(path)):
-                    reviewers.update(entry['reviewers'])
+                if match(query_path, path):
+                    for exclusion in entry.get('exclusions', []):
+                        if match(query_path, exclusion):
+                            break
+                    else:
+                        reviewers.update(entry['reviewers'])
 
     return sorted(reviewers)
 
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print("Usage: maintainers.py <MAINTAINERS.json> <command> [args...]")
-        print("  reviewer <name>       - list paths for reviewer")
-        print("  paths <path>...       - list reviewers for paths")
+        print("Usage: maintainers.py <MAINTAINERS.json> <path> [<paths> ...]")
         sys.exit(1)
 
     file = Path(sys.argv[1])

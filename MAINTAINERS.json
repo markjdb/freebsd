@@ -4,7 +4,18 @@
     {
       "name": "bhyve",
       "reviewers": ["markj", "corvink", "bnovkov", "jhb"],
-      "paths": ["usr.sbin/bhyve*", "lib/libvmmapi", "sys/dev/vmm"]
+      "paths": ["usr.sbin/bhyve*", "lib/libvmmapi", "sys/dev/vmm", "sys/*/vmm"]
+    },
+    {
+      "name": "arm64",
+      "reviewers": ["andrew"],
+      "paths": ["sys/arm64"]
+    },
+    {
+      "name": "share",
+      "reviewers": ["imp"],
+      "paths": ["share/"],
+      "exclusions": ["share/mk"]
     }
   ]
 }
