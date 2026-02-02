@@ -34,7 +34,7 @@ extern int auto_wrap;
 extern lbool plusoption;
 extern int forw_scroll;
 extern int back_scroll;
-extern int ignore_eoi;
+extern lbool ignore_eoi;
 extern int header_lines;
 extern int header_cols;
 extern int full_screen;
@@ -64,7 +64,7 @@ public void eof_bell(void)
 	}
 #endif
 	if (quiet == NOT_QUIET)
-		bell();
+		lbell();
 	else
 		vbell();
 }
@@ -216,12 +216,13 @@ public int overlay_header(void)
  *   The first real line after the blanks will start at ch_zero().
  * "to_newline" means count file lines rather than screen lines.
  */
-public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_newline, int nblank)
+public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_newline, lbool do_stop_on_form_feed, int nblank)
 {
 	int nlines = 0;
 	lbool do_repaint;
 	lbool newline;
 	lbool first_line = TRUE;
+	lbool need_home = FALSE;
 
 	if (pos != NULL_POSITION)
 		pos = after_header_pos(pos);
@@ -250,8 +251,7 @@ public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_new
 			 */
 			pos_clear();
 			force = TRUE;
-			clear();
-			home();
+			need_home = TRUE;
 		}
 
 		if (pos != position(BOTTOM_PLUS_ONE) || empty_screen())
@@ -265,8 +265,7 @@ public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_new
 			force = TRUE;
 			if (top_scroll)
 			{
-				clear();
-				home();
+				need_home = TRUE;
 			} else if (!first_time && !is_filtering() && full_screen)
 			{
 				putstr("...skipping...\n");
@@ -327,6 +326,12 @@ public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_new
 		nlines++;
 		if (do_repaint)
 			continue;
+		if (need_home)
+		{
+			lclear();
+			home();
+			need_home = FALSE;
+		}
 		/*
 		 * If this is the first screen displayed and
 		 * we hit an early EOF (i.e. before the requested
@@ -348,13 +353,13 @@ public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_new
 			continue;
 		}
 		put_line(TRUE);
-		if (stop_on_form_feed && !do_repaint && line_is_ff() && position(TOP) != NULL_POSITION)
+		if (do_stop_on_form_feed && !do_repaint && line_is_ff() && position(TOP) != NULL_POSITION)
 			break;
 		forw_prompt = 1;
 	}
 	if (!first_line)
 		add_forw_pos(pos, FALSE);
-	if (nlines == 0 && !ignore_eoi && !ABORT_SIGS())
+	if (nlines == 0 && !ignore_eoi)
 		eof_bell();
 	else if (do_repaint)
 		repaint();
@@ -370,7 +375,7 @@ public void forw(int n, POSITION pos, lbool force, lbool only_last, lbool to_new
 /*
  * Display n lines, scrolling backward.
  */
-public void back(int n, POSITION pos, lbool force, lbool only_last, lbool to_newline)
+public void back(int n, POSITION pos, lbool force, lbool only_last, lbool to_newline, lbool do_stop_on_form_feed)
 {
 	int nlines = 0;
 	lbool do_repaint;
@@ -413,7 +418,7 @@ public void back(int n, POSITION pos, lbool force, lbool only_last, lbool to_new
 			home();
 			add_line();
 			put_line(FALSE);
-			if (stop_on_form_feed && line_is_ff())
+			if (do_stop_on_form_feed && line_is_ff())
 				break;
 		}
 	}
@@ -464,7 +469,7 @@ public void forward(int n, lbool force, lbool only_last, lbool to_newline)
 			{
 				do
 				{
-					back(1, position(TOP), TRUE, FALSE, FALSE);
+					back(1, position(TOP), TRUE, FALSE, FALSE, stop_on_form_feed);
 					pos = position(BOTTOM_PLUS_ONE);
 				} while (pos == NULL_POSITION && !ABORT_SIGS());
 			}
@@ -474,7 +479,7 @@ public void forward(int n, lbool force, lbool only_last, lbool to_newline)
 			return;
 		}
 	}
-	forw(n, pos, force, only_last, to_newline, 0);
+	forw(n, pos, force, only_last, to_newline, stop_on_form_feed, 0);
 }
 
 /*
@@ -491,7 +496,7 @@ public void backward(int n, lbool force, lbool only_last, lbool to_newline)
 		eof_bell();
 		return;
 	}
-	back(n, pos, force, only_last, to_newline);
+	back(n, pos, force, only_last, to_newline, stop_on_form_feed);
 }
 
 /*
