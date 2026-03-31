@@ -30,7 +30,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 #include "opt_ktrace.h"
 
@@ -369,32 +368,52 @@ sysarch(struct thread *td, struct sysarch_args *uap)
 		break;
 
 	case I386_SET_PKRU:
-	case AMD64_SET_PKRU:
+	case AMD64_SET_PKRU: {
+		vm_offset_t start, end;
+
+		end = round_page((uintptr_t)a64pkru.addr + a64pkru.len);
+		start = trunc_page((uintptr_t)a64pkru.addr);
+
 		/*
 		 * Read-lock the map to synchronize with parallel
 		 * pmap_vmspace_copy() on fork.
 		 */
 		map = &td->td_proc->p_vmspace->vm_map;
 		vm_map_lock_read(map);
-		error = pmap_pkru_set(PCPU_GET(curpmap),
-		    (vm_offset_t)a64pkru.addr, (vm_offset_t)a64pkru.addr +
-		    a64pkru.len, a64pkru.keyidx, a64pkru.flags);
+		if (!vm_map_check_boundary(map, start, end)) {
+			vm_map_unlock_read(map);
+			error = EINVAL;
+			break;
+		}
+		error = pmap_pkru_set(PCPU_GET(curpmap), start, end,
+		    a64pkru.keyidx, a64pkru.flags);
 		vm_map_unlock_read(map);
 		break;
+	}
 
 	case I386_CLEAR_PKRU:
-	case AMD64_CLEAR_PKRU:
+	case AMD64_CLEAR_PKRU: {
+		vm_offset_t start, end;
+
 		if (a64pkru.flags != 0 || a64pkru.keyidx != 0) {
 			error = EINVAL;
 			break;
 		}
+
+		end = round_page((uintptr_t)a64pkru.addr + a64pkru.len);
+		start = trunc_page((uintptr_t)a64pkru.addr);
+
 		map = &td->td_proc->p_vmspace->vm_map;
 		vm_map_lock_read(map);
-		error = pmap_pkru_clear(PCPU_GET(curpmap),
-		    (vm_offset_t)a64pkru.addr,
-		    (vm_offset_t)a64pkru.addr + a64pkru.len);
+		if (!vm_map_check_boundary(map, start, end)) {
+			vm_map_unlock_read(map);
+			error = EINVAL;
+			break;
+		}
+		error = pmap_pkru_clear(PCPU_GET(curpmap), start, end);
 		vm_map_unlock_read(map);
 		break;
+	}
 
 	case AMD64_DISABLE_TLSBASE:
 		clear_pcb_flags(pcb, PCB_TLSBASE);
