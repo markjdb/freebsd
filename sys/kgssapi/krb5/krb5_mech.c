@@ -543,23 +543,30 @@ krb5_import(gss_ctx_id_t ctx,
 	 * Heimdal 1.1 adds the message order stuff.
 	 */
 	if (format == KGSS_HEIMDAL_1_1) {
+		size_t window;
+
 		kc->kc_msg_order.km_flags = get_uint32(&p, &len);
 		kc->kc_msg_order.km_start = get_uint32(&p, &len);
 		kc->kc_msg_order.km_length = get_uint32(&p, &len);
 		kc->kc_msg_order.km_jitter_window = get_uint32(&p, &len);
 		kc->kc_msg_order.km_first_seq = get_uint32(&p, &len);
-		kc->kc_msg_order.km_elem =
-			malloc(kc->kc_msg_order.km_jitter_window * sizeof(uint32_t),
-			    M_GSSAPI, M_WAITOK);
+		window = MIN(kc->kc_msg_order.km_jitter_window,
+		    len / sizeof(uint32_t));
+		kc->kc_msg_order.km_elem = mallocarray(window, sizeof(uint32_t),
+		    M_GSSAPI, M_WAITOK);
 		for (i = 0; i < kc->kc_msg_order.km_jitter_window; i++)
 			kc->kc_msg_order.km_elem[i] = get_uint32(&p, &len);
 	} else {
 		kc->kc_msg_order.km_flags = 0;
+		kc->kc_msg_order.km_elem = NULL;
 	}
 
 	res = get_keys(kc);
-	if (GSS_ERROR(res))
+	if (GSS_ERROR(res)) {
+		free(kc->kc_msg_order.km_elem, M_GSSAPI);
+		kc->kc_msg_order.km_elem = NULL;
 		return (res);
+	}
 
 	/*
 	 * We don't need these anymore.
