@@ -2392,10 +2392,10 @@ vlan_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		 * We should propagate selected flags to the parent,
 		 * e.g., promiscuous mode.
 		 */
-		VLAN_SLOCK();
+		VLAN_XLOCK();
 		if (TRUNK(ifv) != NULL)
 			error = vlan_setflags(ifp, 1);
-		VLAN_SUNLOCK();
+		VLAN_XUNLOCK();
 		break;
 
 	case SIOCADDMULTI:
