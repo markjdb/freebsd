@@ -6,8 +6,6 @@ BINDIR=		${TESTSDIR}
 ATF_TESTS_C+=	if_epair
 ATF_TESTS_SH+=	if_epair_test
 ATF_TESTS_SH+=	if_bridge_test
-TEST_METADATA.if_bridge_test+=	execenv="jail"
-TEST_METADATA.if_bridge_test+=	execenv_jail_params="vnet allow.raw_sockets"
 ATF_TESTS_SH+=	if_clone_test
 ATF_TESTS_SH+=	if_gif
 ATF_TESTS_SH+=	if_lagg_test
@@ -16,6 +14,8 @@ ATF_TESTS_SH+=	if_tun_test
 ATF_TESTS_SH+=	if_vlan
 ATF_TESTS_SH+=	if_wg
 ATF_TESTS_SH+=	if_geneve
+TEST_METADATA+=	execenv="jail"
+TEST_METADATA+=	execenv_jail_params="vnet allow.raw_sockets"
 
 TESTS_SUBDIRS+=	bpf
 TESTS_SUBDIRS+=	if_ovpn
