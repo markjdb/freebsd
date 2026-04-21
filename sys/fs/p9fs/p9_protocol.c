@@ -153,6 +153,10 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 				break;
 
 			sptr = malloc(len + 1, M_TEMP, M_NOWAIT | M_ZERO);
+			if (sptr == NULL) {
+				error = ENOMEM;
+				break;
+			}
 
 			if (buf_read(buf, sptr, len)) {
 				error = EFAULT;
@@ -248,6 +252,10 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 
 			nwname = *nwname_p;
 			wnames = malloc(sizeof(char *) * nwname, M_TEMP, M_NOWAIT | M_ZERO);
+			if (wnames == NULL) {
+				error = ENOMEM;
+				break;
+			}
 
 			for (i = 0; i < nwname && (error == 0); i++)
 				error = p9_buf_readf(buf, proto_version, "s", &wnames[i]);
