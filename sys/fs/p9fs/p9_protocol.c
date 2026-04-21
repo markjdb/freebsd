@@ -604,29 +604,45 @@ p9_buf_reset(struct p9_buffer *buf)
  */
 int
 p9_dirent_read(struct p9_client *clnt, char *buf, int start, int len,
-	struct p9_dirent *dent)
+    struct dirent *dent)
 {
 	struct p9_buffer msg_buf;
-	int ret;
+	struct p9_qid qid;
 	char *nameptr;
-	uint16_t sle;
+	int64_t off;
+	int8_t type;
+	int ret;
 
 	msg_buf.size = len;
 	msg_buf.capacity = len;
 	msg_buf.sdata = buf;
 	msg_buf.offset = start;
 
-	ret = p9_buf_readf(&msg_buf, clnt->proto_version, "Qqbs", &dent->qid,
-	    &dent->d_off, &dent->d_type, &nameptr);
+	nameptr = NULL;
+	ret = p9_buf_readf(&msg_buf, clnt->proto_version, "Qqbs", &qid,
+	    &off, &type, &nameptr);
 	if (ret) {
 		P9_DEBUG(ERROR, "%s: failed: %d\n", __func__, ret);
+		ret = -1;
 		goto out;
 	}
 
-	sle = strlen(nameptr);
-	strncpy(dent->d_name, nameptr, sle);
-	dent->len = sle;
-	free(nameptr, M_TEMP);
+	dent->d_fileno = qid.path;
+	dent->d_off = off;
+	dent->d_type = type;
+	if (strlcpy(dent->d_name, nameptr, sizeof(dent->d_name)) >=
+	    sizeof(dent->d_name)) {
+		P9_DEBUG(ERROR, "%s: filename too long: %s\n", __func__,
+		    nameptr);
+		ret = -1;
+		goto out;
+	}
+	dent->d_namlen = strlen(dent->d_name);
+	dent->d_reclen = GENERIC_DIRSIZ(dent);
+	dirent_terminate(dent);
+
+	ret = msg_buf.offset;
 out:
-	return (msg_buf.offset);
+	free(nameptr, M_TEMP);
+	return (ret);
 }

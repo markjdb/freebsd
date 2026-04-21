@@ -1797,14 +1797,12 @@ p9fs_readdir(struct vop_readdir_args *ap)
 {
 	struct uio *uio;
 	struct vnode *vp;
-	struct dirent cde;
 	int64_t offset;
 	uint64_t diroffset;
 	struct p9fs_node *np;
 	int error;
 	int32_t count;
 	struct p9_client *clnt;
-	struct p9_dirent dent;
 	char *io_buffer;
 	struct p9_fid *vofid;
 
@@ -1864,40 +1862,29 @@ p9fs_readdir(struct vop_readdir_args *ap)
 
 		offset = 0;
 		while (offset + QEMU_DIRENTRY_SZ <= count) {
+			struct dirent dent;
 
 			/*
-			 * Read and make sense out of the buffer in one dirent
-			 * This is part of 9p protocol read. This reads one p9_dirent,
-			 * appends it to dirent(FREEBSD specifc) and continues to parse the buffer.
+			 * Parse a single directory entry and convert it to a
+			 * native dirent.
 			 */
-			bzero(&dent, sizeof(dent));
 			offset = p9_dirent_read(clnt, io_buffer, offset, count,
-				&dent);
+			    &dent);
 			if (offset < 0 || offset > count) {
 				error = EIO;
 				goto out;
 			}
 
-			bzero(&cde, sizeof(cde));
-			strncpy(cde.d_name, dent.d_name, dent.len);
-			cde.d_fileno = dent.qid.path;
-			cde.d_type = dent.d_type;
-			cde.d_namlen = dent.len;
-			cde.d_reclen = GENERIC_DIRSIZ(&cde);
+			/*
+			 * If there isn't enough space in the uio to return a
+			 * whole dirent, break off read
+			 */
+			if (uio->uio_resid < GENERIC_DIRSIZ(&dent))
+				break;
 
-                        /*
-                         * If there isn't enough space in the uio to return a
-                         * whole dirent, break off read
-                         */
-                        if (uio->uio_resid < GENERIC_DIRSIZ(&cde))
-                                break;
-
-			/* Transfer */
-			error = uiomove(&cde, GENERIC_DIRSIZ(&cde), uio);
-			if (error != 0) {
-				error = EIO;
+			error = uiomove(&dent, GENERIC_DIRSIZ(&dent), uio);
+			if (error != 0)
 				goto out;
-			}
 			diroffset = dent.d_off;
 		}
 	}

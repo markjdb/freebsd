@@ -106,15 +106,6 @@ struct p9_fid {
 	STAILQ_ENTRY(p9_fid) fid_next;	/* points to next fid in the list */
 };
 
-/* Directory entry structure */
-struct p9_dirent {
-	struct p9_qid qid;		/* 9P server qid for this dirent */
-	uint64_t d_off;			/* offset to the next dirent */
-	unsigned char d_type;		/* file type */
-	char d_name[P9FS_DIRENT_LEN];	/* file name */
-	int len;
-};
-
 void p9_init_zones(void);
 void p9_destroy_zones(void);
 
@@ -145,7 +136,7 @@ int p9_client_file_create(struct p9_fid *fid, char *name, uint32_t perm, int mod
 int p9_client_remove(struct p9_fid *fid);
 int p9_client_unlink(struct p9_fid *dfid, const char *name, int32_t flags);
 int p9_dirent_read(struct p9_client *clnt, char *buf, int start, int len,
-    struct p9_dirent *dirent);
+    struct dirent *dirent);
 int p9_client_statfs(struct p9_fid *fid, struct p9_statfs *stat);
 int p9_client_statread(struct p9_client *clnt, char *data, size_t len, struct p9_wstat *st);
 int p9_is_proto_dotu(struct p9_client *clnt);
