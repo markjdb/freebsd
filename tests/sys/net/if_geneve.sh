@@ -284,6 +284,8 @@ ether_ipv6_blind_options_body()
 	    ifconfig -j genevetest2 geneve1 create genevemode l2 debug \
 	    geneveid $vni1 geneveremote ${endpoint1} genevelocal ${endpoint2} up
 
+	atf_check ifconfig -j genevetest1 geneve1 inet6 no_dad
+	atf_check ifconfig -j genevetest2 geneve1 inet6 no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
 	atf_check -s exit:0 -o ignore \
