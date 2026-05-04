@@ -94,8 +94,8 @@ CFLAGS+=-DGDB_LOG
 SUBDIR+= gdb
 .endif
 
-CFLAGS+=-I${.CURDIR}		\
-	-I${.CURDIR}/../../contrib/lib9p \
+CFLAGS+=-I${.CURDIR}			\
+	-I${SRCTOP}/contrib/lib9p	\
 	-I${SRCTOP}/sys
 
 LIBADD+= vmmapi md nv uvmem pthread z util sbuf cam 9p
