@@ -2,7 +2,8 @@
 
 .include <bsd.compat.pre.mk>
 
-SUBDIR=	${_atf} \
+SUBDIR=	9pfsd \
+	${_atf} \
 	${_atrun} \
 	${_blocklistd-helper} \
 	${_comsat} \
