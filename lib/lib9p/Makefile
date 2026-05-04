@@ -13,6 +13,7 @@ LIBADD+=	casper cap_pwd cap_grp
 
 LIB=		9p
 PACKAGE=	lib${LIB}
+PRIVATELIB=	true
 SHLIB_MAJOR=	1
 SRCS=		connection.c \
 		genacl.c \
