@@ -25,45 +25,34 @@
  */
 
 #include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/kassert.h>
 #include <sys/libkern.h>
+#include <sys/queue.h>
 
 #include <fs/p9fs/p9_transport.h>
 
-TAILQ_HEAD(, p9_trans_module) transports;
-
-static void
-p9_transport_init(void *dummy __unused)
-{
-        TAILQ_INIT(&transports);
-}
-
-SYSINIT(p9_transport, SI_SUB_DRIVERS, SI_ORDER_FIRST, p9_transport_init, NULL);
+static TAILQ_HEAD(, p9_trans_module) transports =
+    TAILQ_HEAD_INITIALIZER(transports);
 
 void
 p9_register_trans(struct p9_trans_module *m)
 {
-
-        TAILQ_INSERT_TAIL(&transports, m, link);
+	TAILQ_INSERT_TAIL(&transports, m, link);
 }
         
 void
 p9_unregister_trans(struct p9_trans_module *m)
 {
-
-        TAILQ_REMOVE(&transports, m, link);
+	TAILQ_REMOVE(&transports, m, link);
 }
 
 struct p9_trans_module *
-p9_get_trans_by_name(char *name)
+p9_get_trans_by_name(const char *name)
 {
-        struct p9_trans_module *m;
+	struct p9_trans_module *m;
 
-        TAILQ_FOREACH(m, &transports, link) {
-                if (strcmp(m->name, name) == 0)
-                        return (m);
-        }
-        return (NULL);
+	TAILQ_FOREACH(m, &transports, link) {
+		if (strcmp(m->name, name) == 0)
+			return (m);
+	}
+	return (NULL);
 }
-

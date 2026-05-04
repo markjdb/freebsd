@@ -48,6 +48,6 @@ struct p9_trans_module {
 
 void p9_register_trans(struct p9_trans_module *m);
 void p9_unregister_trans(struct p9_trans_module *m);
-struct p9_trans_module *p9_get_trans_by_name(char *s);
+struct p9_trans_module *p9_get_trans_by_name(const char *s);
 
 #endif /* FS_P9FS_P9_TRANSPORT_H */
