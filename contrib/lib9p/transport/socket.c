@@ -153,14 +153,20 @@ l9p_socket_accept(struct l9p_server *server, int conn_fd,
 	char serv[NI_MAXSERV + 1];
 	int err;
 
-	err = getnameinfo(client_addr, client_addr_len, host, NI_MAXHOST, serv,
-	    NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
-
-	if (err != 0) {
-		L9P_LOG(L9P_WARNING, "cannot look up client name: %s",
-		    gai_strerror(err));
+	if (client_addr != NULL) {
+		err = getnameinfo(client_addr, client_addr_len, host,
+		    NI_MAXHOST, serv, NI_MAXSERV,
+		    NI_NUMERICHOST | NI_NUMERICSERV);
+		if (err != 0) {
+			L9P_LOG(L9P_WARNING, "cannot look up client name: %s",
+			    gai_strerror(err));
+		} else {
+			L9P_LOG(L9P_INFO, "new connection from %s:%s",
+			    host, serv);
+		}
 	} else {
-		L9P_LOG(L9P_INFO, "new connection from %s:%s", host, serv);
+		strlcpy(host, "???", sizeof(host));
+		strlcpy(serv, "???", sizeof(serv));
 	}
 
 	if (l9p_connection_init(server, &conn) != 0) {
