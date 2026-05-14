@@ -46,7 +46,9 @@
 #include <sys/osd.h>
 #include <sys/queue.h>
 #include <sys/refcount.h>
+#include <sys/rmlock.h>
 #include <sys/systm.h>
+#include <sys/tree.h>
 
 #include <net/vnet.h>
 
@@ -59,9 +61,32 @@ struct hhook {
 
 static MALLOC_DEFINE(M_HHOOK, "hhook", "Helper hooks are linked off hhook_head lists");
 
+static int
+hhook_head_cmp(const struct hhook_head *a, const struct hhook_head *b)
+{
+	if (a->hhh_type < b->hhh_type)
+		return (-1);
+	if (a->hhh_type > b->hhh_type)
+		return (1);
+	if (a->hhh_id < b->hhh_id)
+		return (-1);
+	if (a->hhh_id > b->hhh_id)
+		return (1);
+
+#ifdef VIMAGE
+	if (a->hhh_vid == b->hhh_vid || a->hhh_vid == 0 || b->hhh_vid == 0)
+		return (0);
+	return (a->hhh_vid < b->hhh_vid ? -1 : 1);
+#else
+	return (0);
+#endif
+}
+RB_HEAD(hhookheadtree, hhook_head);
+RB_GENERATE_STATIC(hhookheadtree, hhook_head, hhh_link, hhook_head_cmp);
+static struct hhookheadtree hhook_head_tree = RB_INITIALIZER(&hhook_head_tree);
+
 LIST_HEAD(hhookheadhead, hhook_head);
-struct hhookheadhead hhook_head_list;
-VNET_DEFINE(struct hhookheadhead, hhook_vhead_list);
+VNET_DEFINE_STATIC(struct hhookheadhead, hhook_vhead_list);
 #define	V_hhook_vhead_list VNET(hhook_vhead_list)
 
 static struct mtx hhook_head_list_lock;
@@ -203,7 +228,7 @@ tryagain:
 		return (ENOMEM);
 
 	HHHLIST_LOCK();
-	LIST_FOREACH(hhh, &hhook_head_list, hhh_next) {
+	RB_FOREACH(hhh, hhookheadtree, &hhook_head_tree) {
 		if (hhh->hhh_type == hki->hook_type &&
 		    hhh->hhh_id == hki->hook_id) {
 			if (i < n_heads_to_hook) {
@@ -274,7 +299,7 @@ hhook_remove_hook_lookup(const struct hookinfo *hki)
 	struct hhook_head *hhh;
 
 	HHHLIST_LOCK();
-	LIST_FOREACH(hhh, &hhook_head_list, hhh_next) {
+	RB_FOREACH(hhh, hhookheadtree, &hhook_head_tree) {
 		if (hhh->hhh_type == hki->hook_type &&
 		    hhh->hhh_id == hki->hook_id)
 			hhook_remove_hook(hhh, hki);
@@ -288,51 +313,52 @@ hhook_remove_hook_lookup(const struct hookinfo *hki)
  * Register a new helper hook point.
  */
 int
-hhook_head_register(int32_t hhook_type, int32_t hhook_id, struct hhook_head **hhh,
-    uint32_t flags)
+hhook_head_register(int32_t hhook_type, int32_t hhook_id,
+    struct hhook_head **hhhp, uint32_t flags)
 {
-	struct hhook_head *tmphhh;
+	struct hhook_head *hhh, *tmp;
 
-	tmphhh = hhook_head_get(hhook_type, hhook_id);
-
-	if (tmphhh != NULL) {
-		/* Hook point previously registered. */
-		hhook_head_release(tmphhh);
-		return (EEXIST);
-	}
-
-	tmphhh = malloc(sizeof(struct hhook_head), M_HHOOK,
+	hhh = malloc(sizeof(struct hhook_head), M_HHOOK,
 	    M_ZERO | ((flags & HHOOK_WAITOK) ? M_WAITOK : M_NOWAIT));
-
-	if (tmphhh == NULL)
+	if (hhh == NULL)
 		return (ENOMEM);
 
-	tmphhh->hhh_type = hhook_type;
-	tmphhh->hhh_id = hhook_id;
-	tmphhh->hhh_nhooks = 0;
-	STAILQ_INIT(&tmphhh->hhh_hooks);
-	HHH_LOCK_INIT(tmphhh);
-	refcount_init(&tmphhh->hhh_refcount, 1);
+	hhh->hhh_type = hhook_type;
+	hhh->hhh_id = hhook_id;
+	hhh->hhh_nhooks = 0;
+	STAILQ_INIT(&hhh->hhh_hooks);
+	HHH_LOCK_INIT(hhh);
+	refcount_init(&hhh->hhh_refcount, 1);
 
 	HHHLIST_LOCK();
+	tmp = hhook_head_get(hhook_type, hhook_id);
+	if (tmp != NULL) {
+		/* Hook point previously registered. */
+		hhook_head_release(tmp);
+		HHHLIST_UNLOCK();
+
+		HHH_LOCK_DESTROY(hhh);
+		free(hhh, M_HHOOK);
+		return (EEXIST);
+	}
 	if (flags & HHOOK_HEADISINVNET) {
-		tmphhh->hhh_flags |= HHH_ISINVNET;
+		hhh->hhh_flags |= HHH_ISINVNET;
 #ifdef VIMAGE
 		KASSERT(curvnet != NULL, ("curvnet is NULL"));
-		tmphhh->hhh_vid = (uintptr_t)curvnet;
-		LIST_INSERT_HEAD(&V_hhook_vhead_list, tmphhh, hhh_vnext);
+		hhh->hhh_vid = (uintptr_t)curvnet;
+		LIST_INSERT_HEAD(&V_hhook_vhead_list, hhh, hhh_vnext);
 #endif
 	}
-	LIST_INSERT_HEAD(&hhook_head_list, tmphhh, hhh_next);
+	RB_INSERT(hhookheadtree, &hhook_head_tree, hhh);
 	n_hhookheads++;
 	HHHLIST_UNLOCK();
 
-	khelp_new_hhook_registered(tmphhh, flags);
+	khelp_new_hhook_registered(hhh, flags);
 
-	if (hhh != NULL)
-		*hhh = tmphhh;
+	if (hhhp != NULL)
+		*hhhp = hhh;
 	else
-		refcount_release(&tmphhh->hhh_refcount);
+		refcount_release(&hhh->hhh_refcount);
 
 	return (0);
 }
@@ -345,7 +371,7 @@ hhook_head_destroy(struct hhook_head *hhh)
 	HHHLIST_LOCK_ASSERT();
 	KASSERT(n_hhookheads > 0, ("n_hhookheads should be > 0"));
 
-	LIST_REMOVE(hhh, hhh_next);
+	RB_REMOVE(hhookheadtree, &hhook_head_tree, hhh);
 #ifdef VIMAGE
 	if (hhook_head_is_virtualised(hhh) == HHOOK_HEADISINVNET)
 		LIST_REMOVE(hhh, hhh_vnext);
@@ -403,28 +429,39 @@ hhook_head_deregister_lookup(int32_t hhook_type, int32_t hhook_id)
  * Lookup and return the hhook_head struct associated with the specified type
  * and id, or NULL if not found. If found, the hhook_head's refcount is bumped.
  */
+static struct hhook_head *
+hhook_head_get_locked(int32_t hhook_type, int32_t hhook_id)
+{
+	struct hhook_head *hhh;
+	struct hhook_head tmp;
+
+	tmp.hhh_type = hhook_type;
+	tmp.hhh_id = hhook_id;
+#ifdef VIMAGE
+	tmp.hhh_vid = (uintptr_t)curvnet;
+#endif
+	hhh = RB_FIND(hhookheadtree, &hhook_head_tree, &tmp);
+	if (hhh != NULL) {
+#ifdef VIMAGE
+		if (hhook_head_is_virtualised(hhh) == HHOOK_HEADISINVNET) {
+			KASSERT(curvnet != NULL, ("curvnet is NULL"));
+			KASSERT(hhh->hhh_vid == (uintptr_t)curvnet,
+			    ("%s: vnet mismatch for %p", __func__, hhh));
+		}
+#endif
+		refcount_acquire(&hhh->hhh_refcount);
+	}
+	return (hhh);
+}
+
 struct hhook_head *
 hhook_head_get(int32_t hhook_type, int32_t hhook_id)
 {
 	struct hhook_head *hhh;
 
 	HHHLIST_LOCK();
-	LIST_FOREACH(hhh, &hhook_head_list, hhh_next) {
-		if (hhh->hhh_type == hhook_type && hhh->hhh_id == hhook_id) {
-#ifdef VIMAGE
-			if (hhook_head_is_virtualised(hhh) ==
-			    HHOOK_HEADISINVNET) {
-				KASSERT(curvnet != NULL, ("curvnet is NULL"));
-				if (hhh->hhh_vid != (uintptr_t)curvnet)
-					continue;
-			}
-#endif
-			refcount_acquire(&hhh->hhh_refcount);
-			break;
-		}
-	}
+	hhh = hhook_head_get_locked(hhook_type, hhook_id);
 	HHHLIST_UNLOCK();
-
 	return (hhh);
 }
 

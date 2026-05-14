@@ -49,9 +49,10 @@
 #ifndef _SYS_HHOOK_H_
 #define _SYS_HHOOK_H_
 
-/* XXXLAS: Is there a way around this? */
-#include <sys/lock.h>
-#include <sys/rmlock.h>
+#include <sys/_lock.h>
+#include <sys/_rmlock.h>
+#include <sys/queue.h>
+#include <sys/tree.h>
 
 /* hhook_head flags. */
 #define	HHH_ISINVNET		0x00000001 /* Is the hook point in a vnet? */
@@ -100,7 +101,7 @@ struct hhook_head {
 	int32_t				hhh_type;
 	uint32_t			hhh_flags;
 	volatile uint32_t		hhh_refcount;
-	LIST_ENTRY(hhook_head)		hhh_next;
+	RB_ENTRY(hhook_head)		hhh_link;
 	LIST_ENTRY(hhook_head)		hhh_vnext;
 };
 
