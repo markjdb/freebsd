@@ -5860,6 +5860,9 @@ zfs_freebsd_pathconf(struct vop_pathconf_args *ap)
 			*ap->a_retval = 0;
 		return (0);
 #endif
+	case _PC_SYMLINK_MAX:
+		*ap->a_retval = MAXPATHLEN;
+		return (0);
 	default:
 		return (vop_stdpathconf(ap));
 	}
