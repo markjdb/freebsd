@@ -204,7 +204,6 @@ ucode_intel_match(const uint8_t *data, size_t *len)
 	uint64_t platformid;
 	size_t resid;
 	uint32_t data_size, flags, regs[4], sig, total_size;
-	int i;
 
 	do_cpuid(1, regs);
 	sig = regs[0];
@@ -226,7 +225,8 @@ ucode_intel_match(const uint8_t *data, size_t *len)
 		if (total_size == 0)
 			total_size = UCODE_INTEL_DEFAULT_DATA_SIZE +
 			    sizeof(struct ucode_intel_header);
-		if (data_size > total_size + sizeof(struct ucode_intel_header))
+
+		if (total_size > data_size + sizeof(struct ucode_intel_header))
 			table = (const struct ucode_intel_extsig_table *)
 			    ((const uint8_t *)(hdr + 1) + data_size);
 		else
@@ -237,8 +237,24 @@ ucode_intel_match(const uint8_t *data, size_t *len)
 				*len = data_size;
 				return (hdr + 1);
 			}
-		} else if (table != NULL) {
-			for (i = 0; i < table->signature_count; i++) {
+		}
+		if (table != NULL) {
+			size_t extsize;
+
+			extsize = total_size -
+			    (data_size + sizeof(struct ucode_intel_header));
+			if (extsize < sizeof(struct ucode_intel_extsig_table)) {
+				ucode_error = VERIFICATION_FAILED;
+				break;
+			}
+			extsize -= sizeof(struct ucode_intel_extsig_table);
+			for (uint32_t i = 0; i < table->signature_count; i++) {
+				if (extsize < sizeof(struct ucode_intel_extsig)) {
+					ucode_error = VERIFICATION_FAILED;
+					goto out;
+				}
+				extsize -= sizeof(struct ucode_intel_extsig);
+
 				entry = &table->entries[i];
 				if (entry->processor_signature == sig &&
 				    (entry->processor_flags & flags) != 0) {
@@ -248,6 +264,7 @@ ucode_intel_match(const uint8_t *data, size_t *len)
 			}
 		}
 	}
+out:
 	return (NULL);
 }
 
