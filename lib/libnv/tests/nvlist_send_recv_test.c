@@ -480,7 +480,11 @@ nvlist_send_recv__send_many_fds(short sotype)
  *      net.local.dgram.maxdgram
  *      net.local.dgram.recvspace
  */
-ATF_TC_WITHOUT_HEAD(nvlist_send_recv__send_many_fds__dgram);
+ATF_TC(nvlist_send_recv__send_many_fds__dgram);
+ATF_TC_HEAD(nvlist_send_recv__send_many_fds__dgram, tc)
+{
+	atf_tc_set_md_var(tc, "require.config", "allow_sysctl_side_effects");
+}
 ATF_TC_BODY(nvlist_send_recv__send_many_fds__dgram, tc)
 {
 	u_long maxdgram, recvspace, temp_maxdgram, temp_recvspace;
