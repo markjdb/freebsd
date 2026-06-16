@@ -371,6 +371,11 @@ wg_vnet_parent_routing_body()
 
 	vnet_init
 
+	# The wg sockets are created in the parent vnet (the creating
+	# thread's cred determines the vnet), so we need loopback
+	# configured here for the 127.0.0.1 endpoints to be routable.
+	ifconfig lo0 inet 127.0.0.1/8 up
+
 	wg1=$(ifconfig wg create)
 	wg2=$(ifconfig wg create)
 

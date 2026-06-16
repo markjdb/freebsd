@@ -61,10 +61,13 @@ mldraw01_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/64
 
-	# Let IPv6 ND do its thing.
-	#ping6 -q -c 1 ff02::1%${epair}a
-	#ping6 -q -c 1 ${ip6b}
-	sleep 3
+	# Wait for DAD to complete.
+	while [ `ifconfig ${epair}a inet6 | grep -c tentative` != "0" ]; do
+		sleep 0.1
+	done
+	while [ `jexec ${jname} ifconfig ${epair}b inet6 | grep -c tentative` != "0" ]; do
+		sleep 0.1
+	done
 
 	pyname=$(atf_get ident)
 
@@ -95,15 +98,19 @@ pr233683_body() {
 
 	vnet_mkjail ${j}a ${epair}a
 	jexec ${j}a ifconfig ${epair}a inet6 2001:db8::1/64 up
-	sleep 5
+	while [ `jexec ${j}a ifconfig ${epair}a inet6 | grep -c tentative` != "0" ]; do
+		sleep 0.1
+	done
 
 	jexec ${j}a ifconfig ${epair}a inet6 2001:db8::1/64
 
 	vnet_mkjail ${j}b ${epair}b
 	jexec ${j}b ifconfig ${epair}b inet6 2001:db8::2/64 up
 
-	# Allow DAD to run
-	sleep 5
+	# Wait for DAD to complete.
+	while [ `jexec ${j}b ifconfig ${epair}b inet6 | grep -c tentative` != "0" ]; do
+		sleep 0.1
+	done
 
 	# Debug output. If the bug is present we'd expect to not see a
 	# membership for ff02::1:ff00:1

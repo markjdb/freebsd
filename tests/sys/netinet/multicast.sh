@@ -47,11 +47,17 @@ multicast_vnet_init()
 
 multicast_join()
 {
+	local i
+
 	jexec mjail2 $(atf_get_srcdir)/multicast-receive \
 	    $1 233.252.0.1 6676 $2 > out & pid=$!
-	while ! jexec mjail2 ifmcstat | grep -q 233\.252\.0\.1; do
+	for i in $(seq 500); do
+		if jexec mjail2 ifmcstat | grep -q 233\.252\.0\.1; then
+			return
+		fi
 		sleep 0.01
 	done
+	atf_fail "Timed out waiting for multicast group membership"
 }
 
 atf_test_case "IP_ADD_MEMBERSHIP_ip_mreq" "cleanup"
