@@ -4447,8 +4447,11 @@ fail:
 	return (NULL);
 }
 
+/*
+ * Try to free an item to the per-CPU cache, promoting its quick reuse.
+ */
 static __always_inline bool
-cache_free_item(uma_zone_t zone, int uz_flags, void *item, void *udata)
+cache_free_reuse(uma_zone_t zone, int uz_flags, void *item, void *udata)
 {
 	uma_cache_t cache;
 	int itemdomain;
@@ -4512,8 +4515,14 @@ cache_free_item(uma_zone_t zone, int uz_flags, void *item, void *udata)
 	return (false);
 }
 
+/*
+ * Try to free an object to the per-CPU cache, deferring its reuse.  This is
+ * used by the SMR-protected allocator, which cannot reuse the item until
+ * smr_poll() guarantees that no threads are still accessing it, and by
+ * sanitizers, which wish to defer reuse to make UAF detection more effective.
+ */
 static __always_inline bool
-cache_free_smr(uma_zone_t zone, void *item, void *udata)
+cache_free_defer(uma_zone_t zone, void *item, void *udata)
 {
 	uma_cache_t cache;
 	int itemdomain;
@@ -4532,7 +4541,6 @@ cache_free_smr(uma_zone_t zone, void *item, void *udata)
 		uma_cache_bucket_t bucket;
 
 		cache = &zone->uz_cpu[curcpu];
-		/* SMR Zones must free to the free bucket. */
 		bucket = &cache->uc_freebucket;
 #ifdef NUMA
 		if ((uz_flags & UMA_ZONE_FIRSTTOUCH) != 0 &&
@@ -4567,7 +4575,7 @@ uma_zfree_smr(uma_zone_t zone, void *item)
 		return;
 #endif
 
-	if (cache_free_smr(zone, item, NULL))
+	if (cache_free_defer(zone, item, NULL))
 		return;
 
 	/*
@@ -4611,7 +4619,13 @@ uma_zfree_arg(uma_zone_t zone, void *item, void *udata)
 	    __predict_false((uz_flags & UMA_ZFLAG_CTORDTOR) != 0))
 		item_dtor(zone, item, cache_uz_size(cache), udata, SKIP_NONE);
 
-	if (cache_free_item(zone, uz_flags, item, udata))
+#ifdef KASAN
+	if ((zone->uz_flags & UMA_ZONE_NOKASAN) == 0) {
+		if (cache_free_defer(zone, item, udata))
+			return;
+	} else
+#endif
+	if (cache_free_reuse(zone, uz_flags, item, udata))
 		return;
 
 	/*
