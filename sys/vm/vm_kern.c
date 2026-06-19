@@ -512,7 +512,6 @@ kmem_malloc_domain(int domain, vm_size_t size, int flags)
 		vmem_free(arena, addr, asize);
 		return (0);
 	}
-	kasan_mark((void *)addr, size, asize, KASAN_KMEM_REDZONE);
 	return ((void *)addr);
 }
 
