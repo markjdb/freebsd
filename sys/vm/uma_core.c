@@ -5893,6 +5893,31 @@ uma_dbg_free(uma_zone_t zone, uma_slab_t slab, void *item)
 }
 #endif /* INVARIANTS */
 
+#ifdef KASAN
+static void
+kasan_selftest(void *arg __unused)
+{
+	const size_t szs[] = {
+	    31, 32, 33, PAGE_SIZE / 2 + 1, PAGE_SIZE, PAGE_SIZE + PAGE_SIZE / 2
+	};
+	uma_zone_t zone;
+	void *obj;
+
+	for (size_t i = 0; i < nitems(szs); i++) {
+		char descr[64];
+
+		zone = uma_zcreate("kasan_test", szs[i], NULL, NULL, NULL, NULL,
+		    UMA_ALIGN_CACHE, 0);
+		obj = uma_zalloc(zone, M_WAITOK);
+		snprintf(descr, sizeof(descr), "UMA object (%zu)", szs[i]);
+		kasan_test(obj, szs[i], descr);
+		uma_zfree(zone, obj);
+		uma_zdestroy(zone);
+	}
+}
+SYSINIT(kasan_selftest, SI_SUB_LAST, SI_ORDER_ANY, kasan_selftest, NULL);
+#endif
+
 #ifdef DDB
 static int64_t
 get_uma_stats(uma_keg_t kz, uma_zone_t z, uint64_t *allocs, uint64_t *used,

@@ -48,6 +48,9 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#ifdef KASAN
+#include <sys/asan.h>
+#endif
 #include <sys/boottrace.h>
 #include <sys/conf.h>
 #include <sys/cpuset.h>
@@ -872,6 +875,22 @@ kick_init(const void *udata __unused)
 	sched_add(td, SRQ_BORING);
 }
 SYSINIT(kickinit, SI_SUB_KTHREAD_INIT, SI_ORDER_MIDDLE, kick_init, NULL);
+
+#ifdef KASAN
+extern char kasan_buf[];
+char kasan_buf[20];
+
+static void
+kasan_selftest(const void *arg __unused)
+{
+	char kasan_stack_buf[42];
+
+	kasan_test(kasan_buf, sizeof(kasan_buf), "global buffer");
+
+	kasan_test(kasan_stack_buf, sizeof(kasan_stack_buf), "stack buffer");
+}
+SYSINIT(kasan_selftest, SI_SUB_KLD + 1, SI_ORDER_ANY, kasan_selftest, NULL);
+#endif
 
 /*
  * DDB(4).

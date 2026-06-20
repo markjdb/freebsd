@@ -441,6 +441,23 @@ kasan_shadow_check(unsigned long addr, size_t size, bool write,
 	}
 }
 
+void
+kasan_test(const uint8_t *addrp, size_t sz, const char *descr)
+{
+	uintptr_t addr;
+	uint8_t code;
+
+	addr = (uintptr_t)addrp;
+	if (!kasan_shadow_Nbyte_isvalid(addr, sz, &code))
+		panic("ASan %s invalid: %s", descr, kasan_code_name(code));
+
+	if (kasan_shadow_1byte_isvalid(addr + sz, &code))
+		panic("ASan %s overflow not detected", descr);
+
+	if (kasan_shadow_1byte_isvalid(addr - 1, &code))
+		panic("ASan %s underflow not detected", descr);
+}
+
 /* -------------------------------------------------------------------------- */
 
 void *
