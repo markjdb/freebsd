@@ -108,8 +108,10 @@ p9fs_cleanup(struct p9fs_node *np)
 	vses = np->p9fs_ses;
 
 	/* Remove the vnode from hash list if vnode is not already deleted */
-	if ((np->flags & P9FS_NODE_DELETED) == 0)
+	if ((np->flags & P9FS_NODE_DELETED) == 0) {
+		printf("%s:%d %p\n", __func__, __LINE__, np);
 		vfs_hash_remove(vp);
+	}
 
 	P9FS_LOCK(vses);
 	if ((np->flags & P9FS_NODE_IN_SESSION) != 0) {
@@ -869,19 +871,12 @@ p9fs_reload_stats_dotl(struct vnode *vp, struct ucred *cred)
 	}
 
 	stat = uma_zalloc(p9fs_getattr_zone, M_WAITOK | M_ZERO);
-
 	error = p9_client_getattr(vfid, stat, P9PROTO_STATS_ALL);
-	if (error != 0) {
+	if (error != 0)
 		P9_DEBUG(ERROR, "%s: p9_client_getattr failed: %d\n", __func__, error);
-		goto out;
-	}
-
-	/* Init the vnode with the disk info */
-	p9fs_stat_vnode_dotl(stat, vp);
-out:
-	if (stat != NULL) {
-		uma_zfree(p9fs_getattr_zone, stat);
-	}
+	else
+		p9fs_stat_vnode_dotl(stat, vp);
+	uma_zfree(p9fs_getattr_zone, stat);
 
 	return (error);
 }
@@ -1019,6 +1014,7 @@ p9fs_stat_vnode_dotl(struct p9_stat_dotl *stat, struct vnode *vp)
 	inode->n_gid = stat->st_gid;
 	inode->i_mode = stat->st_mode;
 	vp->v_type = IFTOVT(inode->i_mode);
+	VNASSERT(vp->v_type != VNON, vp, ("invalid mode from %p", inode));
 	inode->i_links_count = stat->st_nlink;
 	inode->blksize = stat->st_blksize;
 	inode->blocks = stat->st_blocks;

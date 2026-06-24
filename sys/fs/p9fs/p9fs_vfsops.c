@@ -257,14 +257,14 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
     struct p9fs_node *parent, struct p9_fid *fid, struct vnode **vpp,
     char *name)
 {
+	struct p9fs_inode *inode;
 	struct p9fs_mount *vmp;
 	struct p9fs_session *vses;
 	struct vnode *vp;
 	struct p9fs_node *node;
 	struct thread *td;
 	uint32_t hash;
-	int error, error_reload = 0;
-	struct p9fs_inode *inode;
+	int error;
 
 	td = curthread;
 	vmp = VFSTOP9(mp);
@@ -278,6 +278,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		return (error);
 	else if (vp != NULL) {
 		if (vp->v_vflag & VV_ROOT) {
+			printf("%s:%d\n", __func__, __LINE__);
 			if (np == NULL)
 				p9_client_clunk(fid);
 			*vpp = vp;
@@ -287,6 +288,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		if (error != 0) {
 			node = vp->v_data;
 			/* Remove stale vnode from hash list */
+			printf("%s:%d %p\n", __func__, __LINE__, node);
 			vfs_hash_remove(vp);
 			P9FS_NODE_SETF(node, P9FS_NODE_DELETED);
 
@@ -319,7 +321,7 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 
 	/* If we dont have it, create one. */
 	if (np == NULL) {
-		np =  uma_zalloc(p9fs_node_zone, M_WAITOK | M_ZERO);
+		np = uma_zalloc(p9fs_node_zone, M_WAITOK | M_ZERO);
 		/* Initialize the VFID list */
 		P9FS_VFID_LOCK_INIT(np);
 		STAILQ_INIT(&np->vfid_list);
@@ -332,11 +334,9 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		vref(P9FS_NTOV(parent));
 		np->parent = parent;
 		np->p9fs_ses = vses; /* Map the current session */
-		inode = &np->inode;
-		/*Fill the name of the file in inode */
-		inode->i_name = malloc(strlen(name)+1, M_TEMP, M_NOWAIT | M_ZERO);
-		strlcpy(inode->i_name, name, strlen(name)+1);
+		np->inode.i_name = strdup(name, M_P9MNT);
 	} else {
+		printf("%s:%d %p %p %lu\n", __func__, __LINE__, np, mp, fid->qid.path);
 		vp->v_type = VDIR; /* root vp is a directory */
 		vp->v_vflag |= VV_ROOT;
 		vref(vp); /* Increment a reference on root vnode during mount */
@@ -360,21 +360,16 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		goto out;
 	}
 
-	/* Init the vnode with the disk info*/
-	error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
-	if (error != 0) {
-		error_reload = 1;
-		goto out;
-	}
-
-	error = vfs_hash_insert(vp, hash, flags, td, vpp,
-	    p9fs_node_cmp, &fid->qid);
+	error = vfs_hash_insert(vp, hash, flags, td, vpp, p9fs_node_cmp,
+	    &fid->qid);
 	if (error != 0) {
 		goto out;
 	}
 
 	if (*vpp == NULL) {
 		P9FS_LOCK(vses);
+		KASSERT((atomic_load_int(&np->flags) & P9FS_NODE_IN_SESSION) == 0,
+		    ("%s: node %p vnode %p already in session", __func__, np, vp));
 		STAILQ_INSERT_TAIL(&vses->virt_node_list, np, p9fs_node_next);
 		P9FS_NODE_SETF(np, P9FS_NODE_IN_SESSION);
 		P9FS_UNLOCK(vses);
@@ -390,15 +385,18 @@ p9fs_vget_common(struct mount *mp, struct p9fs_node *np, int flags,
 		}
 	}
 
+	/* Init the vnode with the disk info*/
+	error = p9fs_reload_stats_dotl(vp, curthread->td_ucred);
+	if (error != 0) {
+		vput(vp);
+		return (error);
+	}
+
 	return (0);
 out:
 	/* Something went wrong, dispose the node */
 	if (!IS_ROOT(np)) {
 		p9fs_destroy_node(&np);
-	}
-
-	if (error_reload) {
-		vput(vp);
 	}
 
 	*vpp = NULL;
@@ -431,11 +429,10 @@ p9_mount(struct mount *mp)
 	mp->mnt_data = vmp;
 	vmp->p9fs_mountp = mp;
 	vmp->mount_tag = from;
-	vmp->mount_tag_len = len;
 	vses = &vmp->p9fs_session;
 	vses->p9fs_mount = mp;
 	p9fs_root = &vses->rnp;
-	/* Hardware iosize from the Qemu */
+	/* Hardware iosize from the Qemu XXX-MJ wtf */
 	mp->mnt_iosize_max = PAGE_SIZE;
 	/*
 	 * Init the session for the p9fs root. This creates a new root fid and
@@ -526,6 +523,7 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 		 * This is used while unmounting as root when non-root
 		 * user has mounted p9fs
 		 */
+		printf("%s:%d\n", __func__, __LINE__);
 		if (vfid == NULL && clnt->trans_status == P9FS_BEGIN_DISCONNECT)
 			vfid = vmp->p9fs_session.mnt_fid;
 		else {
@@ -534,12 +532,14 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 		}
 	}
 
+	printf("%s:%d %lu %u %u\n", __func__, __LINE__,
+	    vfid->qid.path, vfid->qid.version, vfid->qid.type);
+
 	error = p9fs_vget_common(mp, np, lkflags, np, vfid, vpp, NULL);
 	if (error != 0) {
 		*vpp = NULL;
 		return (error);
 	}
-	np->v_node = *vpp;
 	return (error);
 }
 

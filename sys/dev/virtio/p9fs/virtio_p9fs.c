@@ -68,7 +68,6 @@ struct vt9p_softc {
 	bool busy;
 	struct virtqueue *vt9p_vq;
 	int max_nsegs;
-	uint16_t mount_tag_len;
 	char *mount_tag;
 	STAILQ_ENTRY(vt9p_softc) chan_next;
 };
@@ -339,8 +338,6 @@ vt9p_attach(device_t dev)
 
 	device_printf(dev, "Mount tag: %s\n", mount_tag);
 
-	mount_tag_len++;
-	chan->mount_tag_len = mount_tag_len;
 	chan->mount_tag = mount_tag;
 
 	ctx = device_get_sysctl_ctx(dev);
@@ -382,7 +379,7 @@ out:
  * for 9P communication
  */
 static int
-vt9p_create(const char *mount_tag, void **handlep)
+vt9p_create(struct mount *mp __unused, const char *mount_tag, void **handlep)
 {
 	struct vt9p_softc *sc, *chan;
 

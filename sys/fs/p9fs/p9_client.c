@@ -557,7 +557,7 @@ p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 	P9_DEBUG(TRANS, "%s: clnt %p trans %p msize %d protocol %d\n",
 	    __func__, clnt, clnt->ops, clnt->msize, clnt->proto_version);
 
-	*error = clnt->ops->create(mount_tag, &clnt->handle);
+	*error = clnt->ops->create(mp, mount_tag, &clnt->handle);
 	if (*error != 0) {
 		P9_DEBUG(ERROR, "%s: transport create failed .%d \n",
 		    __func__, *error);
@@ -1252,7 +1252,7 @@ p9_client_getattr(struct p9_fid *fid, struct p9_stat_dotl *stat_dotl,
 	req = p9_client_request(clnt, P9PROTO_TGETATTR, &err, "dq", fid->fid,
 	    request_mask);
 	if (req == NULL) {
-		P9_DEBUG(ERROR, "%s: allocation failed %d", __func__, err);
+		P9_DEBUG(ERROR, "%s: allocation failed %d\n", __func__, err);
 		goto error;
 	}
 

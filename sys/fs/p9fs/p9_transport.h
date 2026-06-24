@@ -30,6 +30,7 @@
 
 #include <sys/queue.h>
 
+struct mount;
 struct p9_req_t;
 
 /* Tranport module interface */
@@ -37,7 +38,7 @@ struct p9_trans_module {
 	TAILQ_ENTRY(p9_trans_module) link;
 	char *name;			/* name of transport */
 	/* member function to create a new conection on this transport*/
-	int (*create)(const char *mount_tag, void **handlep);
+	int (*create)(struct mount *mp, const char *mount_tag, void **handlep);
 	/* member function to terminate a connection on this transport */
 	void (*close) (void *handle);
 	/* member function to issue a request to the transport*/
