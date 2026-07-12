@@ -605,7 +605,7 @@ kasan_mark_slab_invalid(uma_keg_t keg, void *mem)
 			sz = keg->uk_ppera * PAGE_SIZE;
 		else
 			sz = keg->uk_pgoff;
-		kasan_mark(mem, 0, sz, KASAN_UMA_FREED);
+		kasan_mark(mem, 0, sz, KASAN_GENERIC_REDZONE);
 	}
 }
 #else /* !KASAN */
@@ -2296,7 +2296,7 @@ keg_layout(uma_keg_t keg)
 	u_int alignsize;
 	u_int nfmt;
 	u_int pages;
-	u_int rsize;
+	u_int size, rsize;
 	u_int slabsize;
 	u_int i, j;
 
@@ -2314,8 +2314,8 @@ keg_layout(uma_keg_t keg)
 	alignsize = keg->uk_align + 1;
 #ifdef KASAN
 	/*
-	 * ASAN requires that each allocation be aligned to the shadow map
-	 * scale factor.
+	 * kasan_mark() requires that each allocation be aligned to the shadow
+	 * map scale factor.
 	 */
 	if (alignsize < KASAN_SHADOW_SCALE)
 		alignsize = KASAN_SHADOW_SCALE;
@@ -2326,8 +2326,16 @@ keg_layout(uma_keg_t keg)
 	 * alignment.  If the requested size is smaller than we have
 	 * allocation bits for we round it up.
 	 */
-	rsize = MAX(keg->uk_size, UMA_SMALLEST_UNIT);
-	rsize = roundup2(rsize, alignsize);
+	size = MAX(keg->uk_size, UMA_SMALLEST_UNIT);
+#ifdef KASAN
+	/*
+	 * Insert a redzone after the allocation, in order to detect buffer
+	 * overflows.
+	 */
+	if ((keg->uk_flags & (UMA_ZONE_NOKASAN | UMA_ZONE_PCPU)) == 0)
+		size += KASAN_SHADOW_SCALE;
+#endif
+	rsize = roundup2(size, alignsize);
 
 	if ((keg->uk_flags & UMA_ZONE_CACHESPREAD) != 0) {
 		/*
@@ -2348,7 +2356,7 @@ keg_layout(uma_keg_t keg)
 		 * represent a single item.  We will try to fit as many
 		 * additional items into the slab as possible.
 		 */
-		slabsize = round_page(keg->uk_size);
+		slabsize = round_page(size);
 	}
 
 	/* Build a list of all of the available formats for this keg. */
@@ -2385,13 +2393,13 @@ keg_layout(uma_keg_t keg)
 	 * for small items (up to PAGE_SIZE), the iteration increment is one
 	 * page; and for large items, the increment is one item.
 	 */
-	i = (slabsize + rsize - keg->uk_size) / MAX(PAGE_SIZE, rsize);
+	i = (slabsize + rsize - size) / MAX(PAGE_SIZE, rsize);
 	KASSERT(i >= 1, ("keg %s(%p) flags=0x%b slabsize=%u, rsize=%u, i=%u",
 	    keg->uk_name, keg, keg->uk_flags, PRINT_UMA_ZFLAGS, slabsize,
 	    rsize, i));
 	for ( ; ; i++) {
 		slabsize = (rsize <= PAGE_SIZE) ? ptoa(i) :
-		    round_page(rsize * (i - 1) + keg->uk_size);
+		    round_page(rsize * (i - 1) + size);
 
 		for (j = 0; j < nfmt; j++) {
 			/* Only if we have no viable format yet. */
@@ -3491,6 +3499,10 @@ item_ctor(uma_zone_t zone, int uz_flags, int size, void *udata, int flags,
 #ifdef INVARIANTS
 	bool skipdbg;
 #endif
+
+	KASSERT(zone->uz_keg == NULL ||
+	    ((uintptr_t)item & zone->uz_keg->uk_align) == 0,
+	    ("item_ctor: underaligned item %p from %s", item, zone->uz_name));
 
 	kasan_mark_item_valid(zone, item);
 	kmsan_mark_item_uninitialized(zone, item);
