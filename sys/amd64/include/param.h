@@ -132,7 +132,7 @@
 
 #ifndef	KSTACK_PAGES
 #if defined(KASAN) || defined(KMSAN)
-#define	KSTACK_PAGES	6
+#define	KSTACK_PAGES	8
 #else
 #define	KSTACK_PAGES	4	/* pages of kstack (with pcb) */
 #endif
