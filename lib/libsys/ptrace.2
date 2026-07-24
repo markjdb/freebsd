@@ -39,8 +39,8 @@ changed to the tracing process.
 It is permissible for a tracing process to attach to more than one
 other process at a time.
 When the tracing process has completed its work, it must detach the
-traced process; if a tracing process exits without first detaching all
-processes it has attached, those processes will be killed.
+traced process; see the DETACH AND TERMINATION section below for more
+details.
 .Pp
 Most of the time, the traced process runs normally, but when it
 receives a signal
