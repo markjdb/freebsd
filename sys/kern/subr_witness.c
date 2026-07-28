@@ -1192,6 +1192,13 @@ struct verbose_tracker {
 	bool		check_generation;
 };
 
+/*
+ * Pre-allocated tracker structure.  Calling malloc() from within the witness
+ * code is not safe in general.
+ */
+static struct verbose_tracker trace_tracker_store;
+static struct verbose_tracker *trace_tracker = &trace_tracker_store;
+
 static void
 init_verbose_tracker(struct verbose_tracker *t, struct sbuf *sb,
     int alloc_flags, bool check_generation)
@@ -1801,9 +1808,16 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 					    w->w_name, w1->w_name);
 					stack_sbuf_print_flags(&sb, &pstack,
 					    M_NOWAIT, STACK_SBUF_FMT_LONG);
-				} else if (trace > 1 && print_lock_order &&
-				    (t = malloc(sizeof(struct verbose_tracker),
-				    M_TEMP, M_NOWAIT | M_ZERO)) != NULL) {
+				} else if (trace > 1 && print_lock_order) {
+					mtx_lock_spin(&w_mtx);
+					t = trace_tracker;
+					if (t == NULL) {
+						mtx_unlock_spin(&w_mtx);
+						goto printlor;
+					}
+					trace_tracker = NULL;
+					mtx_unlock_spin(&w_mtx);
+
 					/*
 					 * We make a purposeful decision to
 					 * ignore generation changes while
@@ -1831,9 +1845,12 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 					    w->w_index, w1->w_index);
 					sbuf_putc(&sb, '\n');
 					sbuf_print_verbose_witness_stacks(t);
-					free(t, M_TEMP);
-				}
 
+					mtx_lock_spin(&w_mtx);
+					trace_tracker = t;
+					mtx_unlock_spin(&w_mtx);
+				}
+printlor:
 				sbuf_printf(&sb,
 				    "lock order %s -> %s attempted at:\n",
 				    w1->w_name, w->w_name);
