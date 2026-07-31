@@ -129,7 +129,8 @@
  * 0x0000000000000000 - 0x0000003fffffffff    256GB user map
  * 0x0000004000000000 - 0xffffffbfffffffff    unmappable
  * 0xffffffc000000000 - 0xffffffc7ffffffff    32GB kernel map
- * 0xffffffc800000000 - 0xffffffcfffffffff    32GB unused
+ * 0xffffffc800000000 - 0xffffffc8ffffffff    4GB KASAN shadow map
+ * 0xffffffc900000000 - 0xffffffcfffffffff    28GB unused
  * 0xffffffd000000000 - 0xffffffefffffffff    128GB direct map
  * 0xfffffff000000000 - 0xffffffffffffffff    64GB unused
  *
@@ -138,7 +139,8 @@
  * 0x0000800000000000 - 0xffff7fffffffffff    unmappable
  * 0xffff800000000000 - 0xffffffc7ffffffff    127.75TB hole
  * 0xffffffc000000000 - 0xffffffc7ffffffff    32GB kernel map
- * 0xffffffc800000000 - 0xffffffcfffffffff    32GB unused
+ * 0xffffffc800000000 - 0xffffffc8ffffffff    4GB KASAN shadow map
+ * 0xffffffc900000000 - 0xffffffcfffffffff    28GB unused
  * 0xffffffd000000000 - 0xffffffefffffffff    128GB direct map
  * 0xfffffff000000000 - 0xffffffffffffffff    64GB unused
  *
@@ -160,6 +162,9 @@
 
 #define	VM_MIN_KERNEL_ADDRESS	(0xffffffc000000000UL)
 #define	VM_MAX_KERNEL_ADDRESS	(0xffffffc800000000UL)
+
+#define KASAN_MIN_ADDRESS 	(0xffffffc800000000UL)
+#define KASAN_MAX_ADDRESS 	(0xffffffc900000000UL)
 
 #define	DMAP_MIN_ADDRESS	(0xffffffd000000000UL)
 #define	DMAP_MAX_ADDRESS	(0xfffffff000000000UL)

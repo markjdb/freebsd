@@ -39,6 +39,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/asan.h>
 #include <sys/boot.h>
 #include <sys/buf.h>
 #include <sys/bus.h>
@@ -635,6 +636,15 @@ initriscv(struct riscv_bootparams *rvbp)
 	/* Bootstrap enough of pmap to enter the kernel proper */
 	kernlen = (lastaddr - KERNBASE);
 	pmap_bootstrap(rvbp->kern_phys, kernlen);
+	
+	/*
+	 * There's not always enough room for the initial shadow map after the
+	 * kernel, so as is done on arm64, we'll end up searching for segments
+	 * that we can safely use.
+	 */
+#if defined(KASAN) || defined(KMSAN)
+	pmap_bootstrap_san();
+#endif
 
 	physmem_init_kernel_globals();
 
@@ -658,6 +668,8 @@ initriscv(struct riscv_bootparams *rvbp)
 	if ((boothowto & RB_KDB) != 0)
 		kdb_enter(KDB_WHY_BOOTFLAGS, "Boot flags requested debugger");
 #endif
+
+	kasan_init();
 
 	env = kern_getenv("kernelname");
 	if (env != NULL)

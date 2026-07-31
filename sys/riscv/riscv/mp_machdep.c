@@ -97,6 +97,9 @@ void init_secondary(uint64_t);
 
 static struct mtx ap_boot_mtx;
 
+/* Used to initialize the PCPU ahead of calling init_secondary(). */
+void *bootpcpu;
+
 /* Stacks for AP initialization, discarded once idle threads are started. */
 void *bootstack;
 static void *bootstacks[MAXCPU];
@@ -153,15 +156,8 @@ init_secondary(uint64_t hart)
 	struct pcpu *pcpup;
 	u_int cpuid;
 
-	/* Renumber this cpu */
-	cpuid = hart;
-	if (cpuid < boot_hart)
-		cpuid += mp_maxid + 1;
-	cpuid -= boot_hart;
-
-	/* Setup the pcpu pointer */
-	pcpup = &__pcpu[cpuid];
-	__asm __volatile("mv tp, %0" :: "r"(pcpup));
+	pcpup = get_pcpu();
+	cpuid = pcpup->pc_cpuid;
 
 	/* Workaround: make sure wfi doesn't halt the hart */
 	csr_set(sie, SIE_SSIE);
@@ -395,6 +391,7 @@ cpu_init_fdt(u_int id, phandle_t node, u_int addr_size, pcell_t *reg)
 	pcpup = &__pcpu[cpuid];
 	pcpu_init(pcpup, cpuid, sizeof(struct pcpu));
 	pcpup->pc_hart = hart;
+	bootpcpu = pcpup;
 
 	dpcpu[cpuid - 1] = kmem_malloc(DPCPU_SIZE, M_WAITOK | M_ZERO);
 	dpcpu_init(dpcpu[cpuid - 1], cpuid);

@@ -35,12 +35,140 @@
 #ifndef	_MACHINE_ATOMIC_H_
 #define	_MACHINE_ATOMIC_H_
 
-#include <sys/atomic_common.h>
-
 #define	fence()	__asm __volatile("fence" ::: "memory");
 #define	mb()	fence()
 #define	rmb()	fence()
 #define	wmb()	fence()
+
+#define ARCH_SUPPORT_ATOMIC_ADD_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_ADD_ACQ_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_ADD_REL_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_SUBTRACT_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_SUBTRACT_ACQ_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_SUBTRACT_REL_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_SET_WIDTH(X) \
+	X(16) X(short) X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_SET_ACQ_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_SET_REL_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_CLEAR_WIDTH(X) \
+	X(16) X(short) X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_CLEAR_ACQ_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+#define ARCH_SUPPORT_ATOMIC_CLEAR_REL_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_FETCHADD_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_READANDCLEAR_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_SWAP_WIDTH(X) \
+	X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_TESTANDSET_WIDTH(X) \
+	X(32) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_TESTANDCLEAR_WIDTH(X) \
+	X(32) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_LOAD_ACQ_WIDTH(X) \
+	X(8) X(16) X(short) X(32) X(int) X(64) X(ptr) X(long)
+
+#define ARCH_SUPPORT_ATOMIC_STORE_REL_WIDTH(X) \
+	X(16) X(short) X(32) X(int) X(64) X(ptr) X(long)
+
+
+#if defined(SAN_NEEDS_INTERCEPTORS) && !defined(SAN_RUNTIME)
+#include <sys/atomic_san.h>
+
+#undef atomic_add_8
+#undef atomic_add_acq_8
+#undef atomic_add_rel_8
+#undef atomic_add_char
+#undef atomic_add_acq_char
+#undef atomic_add_rel_char
+
+#undef atomic_subtract_8
+#undef atomic_subtract_acq_8
+#undef atomic_subtract_rel_8
+#undef atomic_subtract_char
+#undef atomic_subtract_acq_char
+#undef atomic_subtract_rel_char
+
+#undef atomic_set_8
+#undef atomic_set_acq_8
+#undef atomic_set_rel_8
+#undef atomic_set_char
+#undef atomic_set_acq_char
+#undef atomic_set_rel_char
+
+#undef atomic_clear_8
+#undef atomic_clear_acq_8
+#undef atomic_clear_rel_8
+#undef atomic_clear_char
+#undef atomic_clear_acq_char
+#undef atomic_clear_rel_char
+
+#undef atomic_fetchadd_8
+#undef atomic_fetchadd_char
+
+#undef atomic_readandclear_8
+#undef atomic_readandclear_char
+
+#undef atomic_swap_8
+#undef atomic_swap_char
+
+#undef atomic_testandset_8
+#undef atomic_testandset_char
+#undef atomic_testandclear_8
+#undef atomic_testandclear_char
+
+#undef atomic_add_16
+#undef atomic_add_acq_16
+#undef atomic_add_rel_16
+#undef atomic_add_short
+#undef atomic_add_acq_short
+#undef atomic_add_rel_short
+
+#undef atomic_subtract_16
+#undef atomic_subtract_acq_16
+#undef atomic_subtract_rel_16
+#undef atomic_subtract_short
+#undef atomic_subtract_acq_short
+#undef atomic_subtract_rel_short
+
+#undef atomic_fetchadd_16
+#undef atomic_fetchadd_short
+
+#undef atomic_readandclear_16
+#undef atomic_readandclear_short
+
+#undef atomic_swap_16
+#undef atomic_swap_short
+
+#undef atomic_testandset_16
+#undef atomic_testandset_short
+#undef atomic_testandclear_16
+#undef atomic_testandclear_short
+
+#undef atomic_testandset_int
+#undef atomic_testandclear_int
+
+#else
+
+#include <sys/atomic_common.h>
 
 static __inline int atomic_cmpset_8(__volatile uint8_t *, uint8_t, uint8_t);
 static __inline int atomic_fcmpset_8(__volatile uint8_t *, uint8_t *, uint8_t);
@@ -658,5 +786,7 @@ atomic_thread_fence_seq_cst(void)
 
 #define	atomic_set_short		atomic_set_16
 #define	atomic_clear_short		atomic_clear_16
+
+#endif /* SAN_NEEDS_INTERCEPTORS && !SAN_RUNTIME */
 
 #endif /* _MACHINE_ATOMIC_H_ */

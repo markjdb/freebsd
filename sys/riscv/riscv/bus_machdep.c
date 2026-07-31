@@ -33,6 +33,10 @@
  * SUCH DAMAGE.
  */
 
+#if defined(KASAN)
+#define	SAN_RUNTIME
+#endif
+
 #include "opt_platform.h"
 
 #include <sys/param.h>

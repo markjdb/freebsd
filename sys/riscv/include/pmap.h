@@ -164,6 +164,10 @@ pmap_vmspace_copy(pmap_t dst_pmap __unused, pmap_t src_pmap __unused)
 
 	return (0);
 }
+#if defined(KASAN)
+void	pmap_san_enter(vm_offset_t);
+void 	pmap_bootstrap_san(void);
+#endif
 
 #endif	/* _KERNEL */
 

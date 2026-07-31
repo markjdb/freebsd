@@ -55,7 +55,7 @@ db_md_list_watchpoints(void)
 
 }
 
-static void
+static void __nosanitizeaddress
 db_stack_trace_cmd(struct thread *td, struct unwind_state *frame)
 {
 	const char *name;
@@ -118,7 +118,7 @@ db_stack_trace_cmd(struct thread *td, struct unwind_state *frame)
 	}
 }
 
-int
+int __nosanitizeaddress
 db_trace_thread(struct thread *thr, int count)
 {
 	struct unwind_state frame;
@@ -133,7 +133,7 @@ db_trace_thread(struct thread *thr, int count)
 	return (0);
 }
 
-void
+void __nosanitizeaddress
 db_trace_self(void)
 {
 	struct unwind_state frame;

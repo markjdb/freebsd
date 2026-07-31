@@ -260,6 +260,17 @@ va:
 	sd	s4, RISCV_BOOTPARAMS_DTBP_PHYS(sp)
 	sd	s3, RISCV_BOOTPARAMS_MODULEP(sp)
 
+#ifdef KASAN
+	/* KASAN needs phys addr of kernel to set up the page tables */
+	la 	t0, kernstart_pa
+	sd	s9, 0(t0)
+
+	/* Bootstrap a shadow map for the boot stack. */
+	la	a0, initstack
+	li 	a1, (PAGE_SIZE * KSTACK_PAGES)
+	call 	_C_LABEL(kasan_init_early)
+#endif
+
 	mv	a0, sp
 	call	_C_LABEL(initriscv)	/* Off we go */
 	call	_C_LABEL(mi_startup)
@@ -310,6 +321,11 @@ initstack_end:
 /*
  * Static space for the bootstrap page tables. Unused after pmap_bootstrap().
  */
+#ifdef KASAN
+	/* KASAN needs the bootstrap page table to link the early shadow map. */
+	.globl bootstrap_pt_l1
+#endif
+
 	.balign	PAGE_SIZE
 bootstrap_pt_l1:
 	.space	PAGE_SIZE
@@ -389,6 +405,13 @@ mpva:
 	/* Ensure sscratch is zero */
 	li	t0, 0
 	csrw	sscratch, t0
+
+	/*
+	 * Initialize the per-CPU pointer before calling into C code, for the
+	 * benefit of kernel sanitizers.
+	 */
+	la 	t0, bootpcpu
+	ld 	tp, 0(t0)
 
 	call	init_secondary
 END(mpentry)

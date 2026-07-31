@@ -274,11 +274,13 @@ SAN_CFLAGS+=	-mllvm -asan-mapping-offset=0xdfff208000000000
 .else
 SAN_CFLAGS+=	-fasan-shadow-offset=0xdfff208000000000
 .endif
-.elif ${MACHINE_CPUARCH} == "amd64" && \
-      ${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} >= 180000
-# Work around https://github.com/llvm/llvm-project/issues/87923, which leads to
-# an assertion failure compiling dtrace.c with asan enabled.
-SAN_CFLAGS+=	-mllvm -asan-use-stack-safety=0
+# TODO: similar for riscv
+.elif ${MACHINE_CPUARCH} == "riscv"
+.if ${COMPILER_TYPE} == "clang"
+SAN_CFLAGS+=	-mllvm -asan-mapping-offset=0xdfffffd000000000
+.else
+SAN_CFLAGS+=	-fasan-shadow-offset=0xdfffffd000000000
+.endif
 .endif
 .endif # !empty(KASAN_ENABLED)
 

@@ -482,6 +482,7 @@ SanitizerMask FreeBSD::getSupportedSanitizers() const {
   const bool IsX86 = getTriple().getArch() == llvm::Triple::x86;
   const bool IsX86_64 = getTriple().getArch() == llvm::Triple::x86_64;
   const bool IsMIPS64 = getTriple().isMIPS64();
+  const bool IsRISCV64 = getTriple().getArch() == llvm::Triple::riscv64;
   SanitizerMask Res = ToolChain::getSupportedSanitizers();
   Res |= SanitizerKind::Address;
   Res |= SanitizerKind::PointerCompare;
@@ -496,7 +497,7 @@ SanitizerMask FreeBSD::getSupportedSanitizers() const {
     Res |= SanitizerKind::Fuzzer;
     Res |= SanitizerKind::FuzzerNoLink;
   }
-  if (IsAArch64 || IsX86_64) {
+  if (IsAArch64 || IsX86_64 || IsRISCV64) {
     Res |= SanitizerKind::KernelAddress;
     Res |= SanitizerKind::KernelMemory;
     Res |= SanitizerKind::Memory;

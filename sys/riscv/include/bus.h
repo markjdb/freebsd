@@ -253,6 +253,10 @@ struct bus_space {
 			    bus_size_t, const u_int64_t *, bus_size_t);
 };
 
+#if defined(SAN_NEEDS_INTERCEPTORS) && !defined(SAN_RUNTIME)
+#include <sys/bus_san.h>
+#else
+
 /*
  * Utility macros; INTERNAL USE ONLY.
  */
@@ -494,6 +498,8 @@ BUS_POKE_FUNC(1, uint8_t)
 BUS_POKE_FUNC(2, uint16_t)
 BUS_POKE_FUNC(4, uint32_t)
 BUS_POKE_FUNC(8, uint64_t)
+
+#endif /* SAN_NEEDS_INTERCEPTORS && !SAN_RUNTIME */
 
 #include <machine/bus_dma.h>
 
