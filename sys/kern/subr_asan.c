@@ -782,32 +782,46 @@ kasan_casueword(volatile u_long *base, u_long oldval, u_long *oldvalp,
 	_ASAN_ATOMIC_FUNC_STORE(name, type)				\
 	_ASAN_ATOMIC_FUNC_STORE(rel_##name, type)
 
+#ifndef __riscv
 ASAN_ATOMIC_FUNC_ADD(8, uint8_t);
 ASAN_ATOMIC_FUNC_ADD(16, uint16_t);
+#endif
 ASAN_ATOMIC_FUNC_ADD(32, uint32_t);
 ASAN_ATOMIC_FUNC_ADD(64, uint64_t);
 ASAN_ATOMIC_FUNC_ADD(int, u_int);
 ASAN_ATOMIC_FUNC_ADD(long, u_long);
 ASAN_ATOMIC_FUNC_ADD(ptr, uintptr_t);
 
+#ifndef __riscv
 ASAN_ATOMIC_FUNC_SUBTRACT(8, uint8_t);
 ASAN_ATOMIC_FUNC_SUBTRACT(16, uint16_t);
+#endif
 ASAN_ATOMIC_FUNC_SUBTRACT(32, uint32_t);
 ASAN_ATOMIC_FUNC_SUBTRACT(64, uint64_t);
 ASAN_ATOMIC_FUNC_SUBTRACT(int, u_int);
 ASAN_ATOMIC_FUNC_SUBTRACT(long, u_long);
 ASAN_ATOMIC_FUNC_SUBTRACT(ptr, uintptr_t);
 
+#ifdef __riscv
+_ASAN_ATOMIC_FUNC_SET(8, uint8_t);
+_ASAN_ATOMIC_FUNC_SET(16, uint16_t);
+#else
 ASAN_ATOMIC_FUNC_SET(8, uint8_t);
 ASAN_ATOMIC_FUNC_SET(16, uint16_t);
+#endif
 ASAN_ATOMIC_FUNC_SET(32, uint32_t);
 ASAN_ATOMIC_FUNC_SET(64, uint64_t);
 ASAN_ATOMIC_FUNC_SET(int, u_int);
 ASAN_ATOMIC_FUNC_SET(long, u_long);
 ASAN_ATOMIC_FUNC_SET(ptr, uintptr_t);
 
+#ifdef __riscv
+_ASAN_ATOMIC_FUNC_CLEAR(8, uint8_t);
+_ASAN_ATOMIC_FUNC_CLEAR(16, uint16_t);
+#else
 ASAN_ATOMIC_FUNC_CLEAR(8, uint8_t);
 ASAN_ATOMIC_FUNC_CLEAR(16, uint16_t);
+#endif
 ASAN_ATOMIC_FUNC_CLEAR(32, uint32_t);
 ASAN_ATOMIC_FUNC_CLEAR(64, uint64_t);
 ASAN_ATOMIC_FUNC_CLEAR(int, u_int);
@@ -872,11 +886,19 @@ ASAN_ATOMIC_FUNC_LOAD(long, u_long);
 ASAN_ATOMIC_FUNC_LOAD(ptr, uintptr_t);
 
 _ASAN_ATOMIC_FUNC_STORE(bool, bool);
+#ifdef __riscv
+_ASAN_ATOMIC_FUNC_STORE(8, uint8_t);
+#else
 ASAN_ATOMIC_FUNC_STORE(8, uint8_t);
+#endif
 ASAN_ATOMIC_FUNC_STORE(16, uint16_t);
 ASAN_ATOMIC_FUNC_STORE(32, uint32_t);
 ASAN_ATOMIC_FUNC_STORE(64, uint64_t);
+#ifdef __riscv
+_ASAN_ATOMIC_FUNC_STORE(char, u_char);
+#else
 ASAN_ATOMIC_FUNC_STORE(char, u_char);
+#endif
 ASAN_ATOMIC_FUNC_STORE(short, u_short);
 ASAN_ATOMIC_FUNC_STORE(int, u_int);
 ASAN_ATOMIC_FUNC_STORE(long, u_long);
