@@ -318,8 +318,17 @@ namei_handle_root(struct nameidata *ndp, struct vnode **dpp)
 	    NI_LCF_STRICTREL_KTR)) != 0)) {
 		if ((ndp->ni_lcf & NI_LCF_STRICTREL_KTR) != 0)
 			NI_CAP_VIOLATION(ndp, cnp->cn_pnbuf);
-		if ((ndp->ni_lcf & NI_LCF_STRICTREL) != 0)
-			return (ENOTCAPABLE);
+		if ((ndp->ni_lcf & NI_LCF_STRICTREL) != 0) {
+			int error;
+
+			error = ENOTCAPABLE;
+#ifdef MAC
+			if (mac_cap_grant_lookup(ndp) == 0)
+				error = 0;
+#endif
+			if (error != 0)
+				return (ENOTCAPABLE);
+		}
 	}
 	while (*(cnp->cn_nameptr) == '/') {
 		cnp->cn_nameptr++;

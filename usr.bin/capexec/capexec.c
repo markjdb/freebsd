@@ -6,13 +6,21 @@
  */
 
 #include <sys/capsicum.h>
+#include <sys/stat.h>
 
 #include <security/mac_capsicum/mac_capsicum.h>
 
+#include <assert.h>
 #include <err.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
 
 extern char **environ;
 
@@ -23,11 +31,101 @@ usage(void)
 	    "usage: capexec [-f policy] command [args ...]\n");
 }
 
+static void
+add_path(const char *path, int macfd)
+{
+	struct mac_capsicum_vnode_ioc ioc;
+	struct stat sb;
+	int fd;
+
+	assert(path[0] == '/');
+
+	fd = open(path, O_PATH);
+	if (fd < 0)
+		err(1, "open(%s)", path);
+	if (fstat(fd, &sb) < 0)
+		err(1, "fstat(%s)", path);
+
+	memset(&ioc, 0, sizeof(ioc));
+	if (!S_ISDIR(sb.st_mode)) {
+		char *copy, *lastcn;
+
+		copy = strdup(path);
+		if (copy == NULL)
+			err(1, "strdup(%s)", path);
+
+		lastcn = strrchr(copy, '/');
+		strlcpy(ioc.name, lastcn + 1, sizeof(ioc.name));
+
+		*lastcn = '\0';
+		(void)close(fd);
+		fd = open(copy, O_PATH);
+		if (fd < 0)
+			err(1, "open(%s)", copy);
+
+		free(copy);
+	}
+	ioc.fd = fd;
+	if (ioctl(macfd, MAC_CAPSICUM_IOC_VNODE, &ioc) < 0)
+		err(1, "failed to load '%s' into policy", path);
+
+	(void)close(fd);
+}
+
+static int
+l_cwd(lua_State *L)
+{
+	char cwd[PATH_MAX];
+
+	if (getcwd(cwd, sizeof(cwd)) == NULL)
+		return (luaL_error(L, "getcwd: %s", strerror(errno)));
+
+	lua_pushstring(L, cwd);
+	return (1);
+}
+
+static void
+load_policy(const char *policy, int macfd)
+{
+	lua_State *L;
+	size_t n;
+
+	L = luaL_newstate();
+
+	lua_pushcfunction(L, l_cwd);
+	lua_setglobal(L, "cwd");
+
+	if (luaL_dofile(L, policy) != LUA_OK)
+		errx(1, "luaL_dofile(%s): %s", policy, lua_tostring(L, -1));
+
+	lua_getglobal(L, "paths");
+	if (!lua_istable(L, -1))
+		errx(1, "paths is not a table");
+
+	n = lua_rawlen(L, -1);
+	for (size_t i = 1; i <= n; i++) {
+		const char *path;
+
+		lua_rawgeti(L, -1, i);
+		if (!lua_isstring(L, -1))
+			errx(1, "paths[%zu] is not a string", i);
+
+		path = lua_tostring(L, -1);
+		if (path[0] != '/')
+			errx(1, "path '%s' is not absolute", path);
+		add_path(path, macfd);
+
+		lua_pop(L, 1);
+	}
+
+	lua_close(L);
+}
+
 int
 main(int argc, char **argv)
 {
 	const char *policy;
-	int ch, cmdfd, devfd, policyfd;
+	int ch, cmdfd, macfd;
 
 	policy = NULL;
 	while ((ch = getopt(argc, argv, "f:h")) != -1) {
@@ -46,13 +144,11 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	devfd = open(_PATH_MAC_CAPSICUM, O_RDWR | O_CLOEXEC);
-	if (devfd < 0)
+	macfd = open(_PATH_MAC_CAPSICUM, O_RDWR | O_CLOEXEC);
+	if (macfd < 0)
 		err(1, "open(" _PATH_MAC_CAPSICUM ")");
 
-	policyfd = open(policy, O_RDONLY | O_CLOEXEC);
-	if (policyfd < 0)
-		err(1, "open(%s)", policy);
+	load_policy(policy, macfd);
 
 	cmdfd = open(argv[0], O_EXEC | O_CLOEXEC);
 	if (cmdfd < 0)
@@ -60,6 +156,9 @@ main(int argc, char **argv)
 
 	if (cap_enter() < 0)
 		err(1, "cap_enter()");
+
+	if (ioctl(macfd, MAC_CAPSICUM_IOC_COMMIT) < 0)
+		err(1, "failed to commit policy");
 
 	(void)fexecve(cmdfd, argv, environ);
 	err(1, "fexecve(%s)", argv[0]);

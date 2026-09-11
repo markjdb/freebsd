@@ -87,6 +87,7 @@ struct mbuf;
 struct mount;
 struct msg;
 struct msqid_kernel;
+struct nameidata;
 struct pipepair;
 struct prison;
 struct proc;

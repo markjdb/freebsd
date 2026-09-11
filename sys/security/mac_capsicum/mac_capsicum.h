@@ -13,9 +13,12 @@
 
 struct mac_capsicum_vnode_ioc {
 	int	fd;
+	char	name[NAME_MAX + 1];
 };
 
 #define	MAC_CAPSICUM_IOC_VNODE	_IOWR('M', 1, struct mac_capsicum_vnode_ioc)
+
+#define	MAC_CAPSICUM_IOC_COMMIT	_IO('M', 2)
 
 #define	_PATH_MAC_CAPSICUM	"/dev/mac_capsicum"
 

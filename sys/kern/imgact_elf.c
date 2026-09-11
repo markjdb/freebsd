@@ -803,6 +803,7 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	u_long base_addr = 0;
 	int error;
 
+#if 0
 #ifdef CAPABILITY_MODE
 	/*
 	 * XXXJA: This check can go away once we are sufficiently confident
@@ -810,6 +811,7 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	 */
 	if (IN_CAPABILITY_MODE(td))
 		return (ECAPMODE);
+#endif
 #endif
 
 	tempdata = malloc(sizeof(*tempdata), M_TEMP, M_WAITOK | M_ZERO);
