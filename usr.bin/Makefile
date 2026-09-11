@@ -14,6 +14,7 @@ SUBDIR=	apply \
 	bzip2 \
 	bzip2recover \
 	cap_mkdb \
+	capexec \
 	chat \
 	chpass \
 	cksum \

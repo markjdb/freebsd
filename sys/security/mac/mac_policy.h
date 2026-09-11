@@ -96,6 +96,7 @@ struct shmfd;
 struct shmid_kernel;
 struct sockaddr;
 struct socket;
+struct syscall_args;
 struct sysctl_oid;
 struct sysctl_req;
 struct thread;
@@ -138,6 +139,11 @@ typedef void	(*mpo_bpfdesc_create_mbuf_t)(struct bpf_d *d,
 		    struct label *mlabel);
 typedef void	(*mpo_bpfdesc_destroy_label_t)(struct label *label);
 typedef void	(*mpo_bpfdesc_init_label_t)(struct label *label);
+
+typedef int	(*mpo_cap_check_lookup_t)(struct nameidata *ndp);
+typedef int	(*mpo_cap_check_syscall_t)(struct syscall_args *sa);
+typedef int	(*mpo_cap_check_sysctl_t)(struct sysctl_oid *oidp, void *arg1,
+		    intmax_t arg2, struct sysctl_req *req);
 
 typedef void	(*mpo_cred_associate_nfsd_t)(struct ucred *cred);
 typedef int	(*mpo_cred_check_relabel_t)(struct ucred *cred,
@@ -762,6 +768,10 @@ struct mac_policy_ops {
 	mpo_bpfdesc_create_mbuf_t		mpo_bpfdesc_create_mbuf;
 	mpo_bpfdesc_destroy_label_t		mpo_bpfdesc_destroy_label;
 	mpo_bpfdesc_init_label_t		mpo_bpfdesc_init_label;
+
+	mpo_cap_check_lookup_t			mpo_cap_check_lookup;
+	mpo_cap_check_syscall_t			mpo_cap_check_syscall;
+	mpo_cap_check_sysctl_t			mpo_cap_check_sysctl;
 
 	mpo_cred_associate_nfsd_t		mpo_cred_associate_nfsd;
 	mpo_cred_check_relabel_t		mpo_cred_check_relabel;

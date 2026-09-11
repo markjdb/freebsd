@@ -2371,7 +2371,12 @@ sysctl_root(SYSCTL_HANDLER_ARGS)
 		if ((req->oldptr && !(oid->oid_kind & CTLFLAG_CAPRD)) ||
 		    (req->newptr && !(oid->oid_kind & CTLFLAG_CAPWR))) {
 			error = EPERM;
-			goto out;
+#ifdef MAC
+			if (mac_cap_grant_sysctl(oid, arg1, arg2, req) == 0)
+				error = 0;
+#endif
+			if (error != 0)
+				goto out;
 		}
 	}
 #endif

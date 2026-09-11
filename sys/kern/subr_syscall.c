@@ -48,6 +48,7 @@
 #include <sys/ktrace.h>
 #endif
 #include <security/audit/audit.h>
+#include <security/mac/mac_framework.h>
 
 static inline void
 syscallenter(struct thread *td)
@@ -128,8 +129,15 @@ syscallenter(struct thread *td)
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_SYSCALL, NULL);
 		if (IN_CAPABILITY_MODE(td)) {
-			td->td_errno = error = ECAPMODE;
-			goto retval;
+			error = ECAPMODE;
+#ifdef MAC
+			if (mac_cap_grant_syscall(sa) == 0)
+				error = 0;
+#endif
+			if (error != 0) {
+				td->td_errno = error;
+				goto retval;
+			}
 		}
 	}
 #endif
