@@ -451,6 +451,8 @@
         ..
         mac_bsdextended
         ..
+        mac_capsicum
+        ..
         mac_grantbylabel
         ..
         mac_lomac

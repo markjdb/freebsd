@@ -231,6 +231,7 @@ SUBDIR=	\
 	lpt \
 	${_mac_biba} \
 	${_mac_bsdextended} \
+	${_mac_capsicum} \
 	${_mac_ddb} \
 	${_mac_do} \
 	${_mac_ifoff} \
@@ -614,6 +615,7 @@ _ossl=		ossl
 .if ${KERN_OPTS:MMAC} || defined(ALL_MODULES)
 _mac_biba=	mac_biba
 _mac_bsdextended= mac_bsdextended
+_mac_capsicum=	mac_capsicum
 .if ${KERN_OPTS:MDDB} || defined(ALL_MODULES)
 _mac_ddb=	mac_ddb
 .endif

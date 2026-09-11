@@ -72,6 +72,7 @@ struct mbuf;
 struct mount;
 struct msg;
 struct msqid_kernel;
+struct nameidata;
 struct pipepair;
 struct prison;
 struct proc;
@@ -80,6 +81,7 @@ struct shmfd;
 struct shmid_kernel;
 struct sockaddr;
 struct socket;
+struct syscall_args;
 struct sysctl_oid;
 struct sysctl_req;
 struct thread;
@@ -112,6 +114,11 @@ void	mac_bpfdesc_create(struct ucred *cred, struct bpf_d *d);
 void	mac_bpfdesc_create_mbuf(struct bpf_d *d, struct mbuf *m);
 void	mac_bpfdesc_destroy(struct bpf_d *);
 void	mac_bpfdesc_init(struct bpf_d *);
+
+int	mac_cap_grant_lookup(struct nameidata *ndp);
+int	mac_cap_grant_syscall(struct syscall_args *sa);
+int	mac_cap_grant_sysctl(struct sysctl_oid *oidp, void *arg1, intmax_t arg2,
+	    struct sysctl_req *req);
 
 void	mac_cred_associate_nfsd(struct ucred *cred);
 int	mac_cred_check_setaudit(struct ucred *cred, struct auditinfo *ai);

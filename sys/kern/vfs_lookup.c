@@ -369,8 +369,15 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 		if (IN_CAPABILITY_MODE(td)) {
 			ndp->ni_lcf |= NI_LCF_STRICTREL;
 			ndp->ni_resflags |= NIRES_STRICTREL;
-			if (ndp->ni_dirfd == AT_FDCWD)
-				return (ECAPMODE);
+			if (ndp->ni_dirfd == AT_FDCWD) {
+				error = ECAPMODE;
+#ifdef MAC
+				if (mac_cap_grant_lookup(ndp) == 0)
+					error = 0;
+#endif
+				if (error != 0)
+					return (error);
+			}
 		}
 	}
 #endif
