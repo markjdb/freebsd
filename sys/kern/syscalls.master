@@ -567,7 +567,7 @@
 81	AUE_GETPGRP	STD|CAPENABLED {
 		int getpgrp(void);
 	}
-82	AUE_SETPGRP	STD {
+82	AUE_SETPGRP	STD|CAPENABLED {
 		int setpgid(
 		    int pid,
 		    int pgid
@@ -1439,7 +1439,7 @@
 		);
 	}
 245-246	AUE_NULL	RESERVED
-247	AUE_NULL	STD {
+247	AUE_NULL	STD|CAPENABLED {
 		int clock_getcpuclockid2(
 		    id_t id,
 		    int which,

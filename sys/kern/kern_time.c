@@ -201,6 +201,10 @@ kern_clock_getcpuclockid2(struct thread *td, id_t id, int which,
 	switch (which) {
 	case CPUCLOCK_WHICH_PID:
 		if (id != 0) {
+#ifdef CAPABILITY_MODE
+			if (IN_CAPABILITY_MODE(td))
+				return (ECAPMODE);
+#endif
 			error = pget(id, PGET_CANSEE | PGET_NOTID, &p);
 			if (error != 0)
 				return (error);

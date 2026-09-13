@@ -46,6 +46,7 @@
  * System calls related to processes and protection
  */
 
+#include "opt_capsicum.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -460,6 +461,12 @@ again:
 
 	sx_xlock(&proctree_lock);
 	if (uap->pid != 0 && uap->pid != curp->p_pid) {
+#ifdef CAPABILITY_MODE
+		if (IN_CAPABILITY_MODE(td)) {
+			error = ECAPMODE;
+			goto done;
+		}
+#endif
 		if ((targp = pfind(uap->pid)) == NULL) {
 			error = ESRCH;
 			goto done;

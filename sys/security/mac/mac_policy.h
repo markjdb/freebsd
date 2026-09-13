@@ -86,6 +86,7 @@ struct mac_policy_conf;
 struct mbuf;
 struct mount;
 struct msg;
+struct msghdr;
 struct msqid_kernel;
 struct nameidata;
 struct pipepair;
@@ -141,7 +142,10 @@ typedef void	(*mpo_bpfdesc_create_mbuf_t)(struct bpf_d *d,
 typedef void	(*mpo_bpfdesc_destroy_label_t)(struct label *label);
 typedef void	(*mpo_bpfdesc_init_label_t)(struct label *label);
 
+typedef int	(*mpo_cap_check_bind_t)(struct sockaddr *sa);
+typedef int	(*mpo_cap_check_connect_t)(struct sockaddr *sa);
 typedef int	(*mpo_cap_check_lookup_t)(struct nameidata *ndp);
+typedef int	(*mpo_cap_check_sendmsg_t)(struct msghdr *msg);
 typedef int	(*mpo_cap_check_syscall_t)(struct syscall_args *sa);
 typedef int	(*mpo_cap_check_sysctl_t)(struct sysctl_oid *oidp, void *arg1,
 		    intmax_t arg2, struct sysctl_req *req);
@@ -770,7 +774,10 @@ struct mac_policy_ops {
 	mpo_bpfdesc_destroy_label_t		mpo_bpfdesc_destroy_label;
 	mpo_bpfdesc_init_label_t		mpo_bpfdesc_init_label;
 
+	mpo_cap_check_bind_t			mpo_cap_check_bind;
+	mpo_cap_check_connect_t			mpo_cap_check_connect;
 	mpo_cap_check_lookup_t			mpo_cap_check_lookup;
+	mpo_cap_check_sendmsg_t			mpo_cap_check_sendmsg;
 	mpo_cap_check_syscall_t			mpo_cap_check_syscall;
 	mpo_cap_check_sysctl_t			mpo_cap_check_sysctl;
 

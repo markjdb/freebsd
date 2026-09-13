@@ -207,8 +207,15 @@ kern_bindat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 	if (dirfd == AT_FDCWD) {
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_NAMEI, "AT_FDCWD");
-		if (IN_CAPABILITY_MODE(td))
-			return (ECAPMODE);
+		if (IN_CAPABILITY_MODE(td)) {
+			error = ECAPMODE;
+#ifdef MAC
+			if (mac_cap_grant_bind(sa))
+				error = 0;
+#endif
+			if (error != 0)
+				return (error);
+		}
 	}
 #endif
 
@@ -481,8 +488,16 @@ kern_connectat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 	if (dirfd == AT_FDCWD) {
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_NAMEI, "AT_FDCWD");
-		if (IN_CAPABILITY_MODE(td))
-			return (ECAPMODE);
+		if (IN_CAPABILITY_MODE(td)) {
+			error = ECAPMODE;
+#ifdef MAC
+			if (mac_cap_grant_connect(sa) == 0)
+				error = 0;
+#endif
+			if (error != 0)
+				return (error);
+
+		}
 	}
 #endif
 
@@ -675,8 +690,15 @@ sendit(struct thread *td, int s, struct msghdr *mp, int flags)
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_SOCKADDR, mp->msg_name);
 		if (IN_CAPABILITY_MODE(td)) {
+			int error;
+
 			error = ECAPMODE;
-			goto bad;
+#ifdef MAC
+			if (mac_cap_grant_sendmsg(mp) == 0)
+				error = 0;
+#endif
+			if (error != 0)
+				goto bad;
 		}
 #endif
 	} else {

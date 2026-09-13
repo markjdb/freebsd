@@ -1,8 +1,7 @@
 /*
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Mark Johnston <markj@FreeBSD.org>
  *
- * This software was developed by Mark Johnston under sponsorship from the
- * FreeBSD Foundation.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <sys/capsicum.h>
@@ -41,8 +40,16 @@ add_path(const char *path, int macfd)
 	assert(path[0] == '/');
 
 	fd = open(path, O_PATH);
-	if (fd < 0)
-		err(1, "open(%s)", path);
+	if (fd < 0) {
+		if (errno != ENOENT)
+			err(1, "open(%s)", path);
+
+		/*
+		 * Some paths might legitimately not exist, such as
+		 * /etc/malloc.conf.
+		 */
+		return;
+	}
 	if (fstat(fd, &sb) < 0)
 		err(1, "fstat(%s)", path);
 
@@ -72,6 +79,107 @@ add_path(const char *path, int macfd)
 	(void)close(fd);
 }
 
+static void
+add_paths(lua_State *L, int macfd)
+{
+	size_t n;
+
+	lua_getglobal(L, "paths");
+	if (lua_isnil(L, -1))
+		return;
+	if (!lua_istable(L, -1))
+		errx(1, "'paths' must be a table");
+	n = lua_rawlen(L, -1);
+	for (size_t i = 1; i <= n; i++) {
+		const char *path;
+
+		lua_rawgeti(L, -1, i);
+		if (!lua_isstring(L, -1))
+			errx(1, "paths[%zu] is not a string", i);
+
+		path = lua_tostring(L, -1);
+		if (path[0] != '/')
+			errx(1, "path '%s' is not absolute", path);
+		add_path(path, macfd);
+
+		lua_pop(L, 1);
+	}
+}
+
+static void
+add_sysctl(const char *sysctl, int flags, int macfd)
+{
+	struct mac_capsicum_sysctl_ioc ioc;
+
+	memset(&ioc, 0, sizeof(ioc));
+	strlcpy(ioc.name, sysctl, sizeof(ioc.name));
+	ioc.flags = flags;
+	if (ioctl(macfd, MAC_CAPSICUM_IOC_SYSCTL, &ioc) != 0)
+		err(1, "ioctl(MAC_CAPSICUM_IOC_SYSCTL)");
+}
+
+static void
+add_sysctls(lua_State *L, int macfd)
+{
+	size_t n;
+
+	lua_getglobal(L, "sysctls");
+	if (lua_isnil(L, -1))
+		return;
+	if (!lua_istable(L, -1))
+		errx(1, "'sysctls' must be a table");
+	n = lua_rawlen(L, -1);
+	for (size_t i = 1; i <= n; i++) {
+		const char *sysctl;
+		int flags;
+
+		lua_rawgeti(L, -1, i);
+		if (lua_istable(L, -1)) {
+			const char *flagstr;
+			int j;
+
+			if (lua_rawlen(L, -1) != 2)
+				errx(1, "sysctl tuple must have length 2");
+
+			lua_rawgeti(L, -1, 1);
+			if (!lua_isstring(L, -1))
+				errx(1, "sysctl tuple[1] must be a string");
+			sysctl = lua_tostring(L, -1);
+			lua_pop(L, 1);
+
+			lua_rawgeti(L, -1, 2);
+			if (!lua_isstring(L, -1))
+				errx(1, "sysctl tuple[2] must be a string");
+			flagstr = lua_tostring(L, -1);
+			lua_pop(L, 1);
+
+			flags = j = 0;
+			if (flagstr[j] == 'r') {
+				flags |= MAC_CAPSICUM_F_SYSCTL_RD;
+				j++;
+			}
+			if (flagstr[j] == 'w') {
+				flags |= MAC_CAPSICUM_F_SYSCTL_WR;
+				j++;
+			}
+			if (flagstr[j] != '\0')
+				errx(1,
+				    "invalid sysctl flag string '%s'", flagstr);
+		} else if (lua_isstring(L, -1)) {
+			sysctl = lua_tostring(L, -1);
+			flags = MAC_CAPSICUM_F_SYSCTL_RD |
+			    MAC_CAPSICUM_F_SYSCTL_WR;
+		} else {
+			errx(1,
+			    "sysctls must be strings or <string,flag> tuples");
+		}
+
+		add_sysctl(sysctl, flags, macfd);
+
+		lua_pop(L, 1);
+	}
+}
+
 static int
 l_cwd(lua_State *L)
 {
@@ -88,7 +196,6 @@ static void
 load_policy(const char *policy, int macfd)
 {
 	lua_State *L;
-	size_t n;
 
 	L = luaL_newstate();
 
@@ -98,25 +205,8 @@ load_policy(const char *policy, int macfd)
 	if (luaL_dofile(L, policy) != LUA_OK)
 		errx(1, "luaL_dofile(%s): %s", policy, lua_tostring(L, -1));
 
-	lua_getglobal(L, "paths");
-	if (!lua_istable(L, -1))
-		errx(1, "paths is not a table");
-
-	n = lua_rawlen(L, -1);
-	for (size_t i = 1; i <= n; i++) {
-		const char *path;
-
-		lua_rawgeti(L, -1, i);
-		if (!lua_isstring(L, -1))
-			errx(1, "paths[%zu] is not a string", i);
-
-		path = lua_tostring(L, -1);
-		if (path[0] != '/')
-			errx(1, "path '%s' is not absolute", path);
-		add_path(path, macfd);
-
-		lua_pop(L, 1);
-	}
+	add_paths(L, macfd);
+	add_sysctls(L, macfd);
 
 	lua_close(L);
 }

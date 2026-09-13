@@ -1,8 +1,7 @@
 /*
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Mark Johnston <markj@FreeBSD.org>
  *
- * This software was developed by Mark Johnston under sponsorship from the
- * FreeBSD Foundation.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #ifndef _MAC_CAPSICUM_H_
@@ -16,9 +15,16 @@ struct mac_capsicum_vnode_ioc {
 	char	name[NAME_MAX + 1];
 };
 
-#define	MAC_CAPSICUM_IOC_VNODE	_IOWR('M', 1, struct mac_capsicum_vnode_ioc)
+struct mac_capsicum_sysctl_ioc {
+	char	name[PATH_MAX];
+	unsigned int flags;
+#define	MAC_CAPSICUM_F_SYSCTL_RD	0x01
+#define	MAC_CAPSICUM_F_SYSCTL_WR	0x02
+};
 
-#define	MAC_CAPSICUM_IOC_COMMIT	_IO('M', 2)
+#define	MAC_CAPSICUM_IOC_VNODE	_IOWR('M', 1, struct mac_capsicum_vnode_ioc)
+#define	MAC_CAPSICUM_IOC_SYSCTL	_IOWR('M', 2, struct mac_capsicum_sysctl_ioc)
+#define	MAC_CAPSICUM_IOC_COMMIT	_IO('M', 3)
 
 #define	_PATH_MAC_CAPSICUM	"/dev/mac_capsicum"
 

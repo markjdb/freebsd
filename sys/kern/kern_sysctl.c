@@ -35,7 +35,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 #include "opt_ddb.h"
 #include "opt_ktrace.h"
@@ -965,6 +964,20 @@ sysctl_move_oid(struct sysctl_oid *oid, struct sysctl_oid_list *parent)
 	sysctl_register_oid(oid);
 	SYSCTL_WUNLOCK();
 	return (0);
+}
+
+int
+sysctl_name2oid(struct thread *td, char *name, size_t namelen,
+    int oidp[static CTL_MAXNAME], size_t *lenp)
+{
+	size_t oidlen;
+	int oid[2];
+
+	oid[0] = CTL_SYSCTL;
+	oid[1] = CTL_SYSCTL_NAME2OID;
+	oidlen = CTL_MAXNAME * sizeof(int);
+	return (kernel_sysctl(td, oid, 2, oidp, &oidlen, (void *)name, namelen,
+	    lenp, 0));
 }
 
 /*
@@ -2176,17 +2189,11 @@ int
 kernel_sysctlbyname(struct thread *td, char *name, void *old, size_t *oldlenp,
     void *new, size_t newlen, size_t *retval, int flags)
 {
-        int oid[CTL_MAXNAME];
-        size_t oidlen, plen;
-	int error;
+	int error, oid[CTL_MAXNAME];
+	size_t plen;
 
-	oid[0] = CTL_SYSCTL;
-	oid[1] = CTL_SYSCTL_NAME2OID;
-	oidlen = sizeof(oid);
-
-	error = kernel_sysctl(td, oid, 2, oid, &oidlen,
-	    (void *)name, strlen(name), &plen, flags);
-	if (error)
+	error = sysctl_name2oid(td, name, strlen(name), oid, &plen);
+	if (error != 0)
 		return (error);
 
 	error = kernel_sysctl(td, oid, plen / sizeof(int), old, oldlenp,
@@ -2370,7 +2377,7 @@ sysctl_root(SYSCTL_HANDLER_ARGS)
 	if (IN_CAPABILITY_MODE(req->td)) {
 		if ((req->oldptr && !(oid->oid_kind & CTLFLAG_CAPRD)) ||
 		    (req->newptr && !(oid->oid_kind & CTLFLAG_CAPWR))) {
-			error = EPERM;
+			error = ECAPMODE;
 #ifdef MAC
 			if (mac_cap_grant_sysctl(oid, arg1, arg2, req) == 0)
 				error = 0;
@@ -2492,14 +2499,11 @@ kern___sysctlbyname(struct thread *td, const char *oname, size_t namelen,
 	if (error != 0)
 		goto out;
 
-	oid[0] = CTL_SYSCTL;
-	oid[1] = CTL_SYSCTL_NAME2OID;
-	oidlen = sizeof(oid);
-	error = kernel_sysctl(td, oid, 2, oid, &oidlen, (void *)name, namelen,
-	    retval, flags);
+	error = sysctl_name2oid(td, name, namelen, oid, &oidlen);
 	if (error != 0)
 		goto out;
-	error = userland_sysctl(td, oid, *retval / sizeof(int), old, oldlenp,
+
+	error = userland_sysctl(td, oid, oidlen / sizeof(int), old, oldlenp,
 	    inkernel, new, newlen, retval, flags);
 
 out:

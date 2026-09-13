@@ -1,8 +1,7 @@
 /*
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Mark Johnston <markj@FreeBSD.org>
  *
- * This software was developed by Mark Johnston under sponsorship from the
- * FreeBSD Foundation.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "opt_mac.h"
@@ -15,11 +14,38 @@
 #include <security/mac/mac_policy.h>
 
 int
+mac_cap_grant_bind(struct sockaddr *sa)
+{
+	int error = 0;
+
+	MAC_POLICY_GRANT_NOSLEEP(cap_check_bind, sa);
+	return (error);
+}
+
+int
+mac_cap_grant_connect(struct sockaddr *sa)
+{
+	int error = 0;
+
+	MAC_POLICY_GRANT_NOSLEEP(cap_check_connect, sa);
+	return (error);
+}
+
+int
 mac_cap_grant_lookup(struct nameidata *ndp)
 {
 	int error = 0;
 
 	MAC_POLICY_GRANT_NOSLEEP(cap_check_lookup, ndp);
+	return (error);
+}
+
+int
+mac_cap_grant_sendmsg(struct msghdr *msg)
+{
+	int error = 0;
+
+	MAC_POLICY_GRANT_NOSLEEP(cap_check_sendmsg, msg);
 	return (error);
 }
 

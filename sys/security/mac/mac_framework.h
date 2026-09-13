@@ -71,6 +71,7 @@ struct mac;
 struct mbuf;
 struct mount;
 struct msg;
+struct msghdr;
 struct msqid_kernel;
 struct nameidata;
 struct pipepair;
@@ -115,7 +116,10 @@ void	mac_bpfdesc_create_mbuf(struct bpf_d *d, struct mbuf *m);
 void	mac_bpfdesc_destroy(struct bpf_d *);
 void	mac_bpfdesc_init(struct bpf_d *);
 
+int	mac_cap_grant_bind(struct sockaddr *sa);
+int	mac_cap_grant_connect(struct sockaddr *sa);
 int	mac_cap_grant_lookup(struct nameidata *ndp);
+int	mac_cap_grant_sendmsg(struct msghdr *msg);
 int	mac_cap_grant_syscall(struct syscall_args *sa);
 int	mac_cap_grant_sysctl(struct sysctl_oid *oidp, void *arg1, intmax_t arg2,
 	    struct sysctl_req *req);

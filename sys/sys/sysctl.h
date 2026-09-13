@@ -1193,6 +1193,8 @@ int	sysctl_remove_name(struct sysctl_oid *parent, const char *name, int del,
 void	sysctl_rename_oid(struct sysctl_oid *oidp, const char *name);
 int	sysctl_move_oid(struct sysctl_oid *oidp,
 	    struct sysctl_oid_list *parent);
+int	sysctl_name2oid(struct thread *td, char *name, size_t namelen,
+	    int oidp[static CTL_MAXNAME], size_t *lenp);
 int	sysctl_remove_oid(struct sysctl_oid *oidp, int del, int recurse);
 int	sysctl_ctx_init(struct sysctl_ctx_list *clist);
 int	sysctl_ctx_free(struct sysctl_ctx_list *clist);

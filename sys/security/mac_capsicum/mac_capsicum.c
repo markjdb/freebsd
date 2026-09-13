@@ -1,8 +1,7 @@
 /*
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Mark Johnston <markj@FreeBSD.org>
  *
- * This software was developed by Mark Johnston under sponsorship from the
- * FreeBSD Foundation.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <sys/param.h>
@@ -25,6 +24,8 @@
 #include <security/mac/mac_policy.h>
 #include <security/mac_capsicum/mac_capsicum.h>
 
+/* XXX-MJ want limits on number of policy objects */
+
 static MALLOC_DEFINE(M_MAC_CAPSICUM, "mac_capsicum", "MAC/capsicum");
 
 static bool mac_capsicum_debug;
@@ -38,10 +39,6 @@ SYSCTL_BOOL(_security_mac_capsicum, OID_AUTO, debug, CTLFLAG_RWTUN,
 static int mac_capsicum_label_slot;
 static unsigned int mac_capsicum_osd_thread_slot;
 
-struct mac_capsicum_policy {
-	bool committed;
-};
-
 struct mac_capsicum_vnode_policy_head {
 	SLIST_HEAD(, mac_capsicum_vnode_policy) head;
 };
@@ -51,6 +48,19 @@ struct mac_capsicum_vnode_policy {
 	struct filecaps fcaps;
 	char name[NAME_MAX + 1];
 	SLIST_ENTRY(mac_capsicum_vnode_policy) link;
+};
+
+struct mac_capsicum_sysctl_policy {
+	int oid[CTL_MAXNAME];
+	int oidlen;
+	int flags;
+	SLIST_ENTRY(mac_capsicum_sysctl_policy) link;
+};
+
+struct mac_capsicum_policy {
+	/* XXX-MJ should be rbtree */
+	SLIST_HEAD(, mac_capsicum_sysctl_policy) sysctls;
+	bool committed;
 };
 
 static void
@@ -87,6 +97,18 @@ struct mac_capsicum_thread_data {
 };
 
 static int
+mac_capsicum_cap_check_bind(struct sockaddr *sa)
+{
+	return (ECAPMODE);
+}
+
+static int
+mac_capsicum_cap_check_connect(struct sockaddr *sa)
+{
+	return (ECAPMODE);
+}
+
+static int
 mac_capsicum_cap_check_lookup(struct nameidata *ndp)
 {
 	struct mac_capsicum_thread_data *data;
@@ -117,22 +139,66 @@ mac_capsicum_cap_check_lookup(struct nameidata *ndp)
 }
 
 static int
+mac_capsicum_cap_check_sendmsg(struct msghdr *msg)
+{
+	return (ECAPMODE);
+}
+
+static int
 mac_capsicum_cap_check_syscall(struct syscall_args *sa)
 {
-	if (SV_CURPROC_ABI() == SV_ABI_FREEBSD) {
+	struct thread *td;
+
+	td = curthread;
+	if (mac_label_get(td->td_proc->p_label, mac_capsicum_label_slot) == 0)
+		return (ECAPMODE);
+	if (SV_PROC_ABI(td->td_proc) == SV_ABI_FREEBSD) {
 		switch (sa->code) {
+		case SYS_bind:
+		case SYS_connect:
 		case SYS_open:
 		case SYS_fchdir:
+			/* Let AT_FDCWD checks handle it. */
 			return (0);
 		}
 	}
 	return (ECAPMODE);
 }
 
+/* Note, this is executed under the global sysctl read lock. */
 static int
 mac_capsicum_cap_check_sysctl(struct sysctl_oid *oidp, void *arg1,
     intmax_t arg2, struct sysctl_req *req)
 {
+	struct mac_capsicum_policy *policy;
+	struct mac_capsicum_sysctl_policy *sysctlpol;
+	struct proc *p;
+
+	p = curproc;
+	policy = (void *)mac_label_get(p->p_label, mac_capsicum_label_slot);
+	if (policy == NULL)
+		return (0);
+
+	/* XXX-MJ this is too heavy, abuse sysctl rlock? */
+	PROC_LOCK(p);
+	SLIST_FOREACH(sysctlpol, &policy->sysctls, link) {
+		if ((size_t)arg2 < sysctlpol->oidlen)
+			continue;
+		if (memcmp(arg1, sysctlpol->oid,
+		    sysctlpol->oidlen * sizeof(int)) == 0)
+			break;
+
+		if (req->oldptr != NULL &&
+		    (sysctlpol->flags & MAC_CAPSICUM_F_SYSCTL_RD) == 0)
+			continue;
+		if (req->newptr != NULL &&
+		    (sysctlpol->flags & MAC_CAPSICUM_F_SYSCTL_WR) == 0)
+			continue;
+	}
+	PROC_UNLOCK(p);
+	if (sysctlpol != NULL)
+		return (0);
+
 	return (ECAPMODE);
 }
 
@@ -157,6 +223,8 @@ mac_capsicum_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 
 	data = osd_thread_get(curthread, mac_capsicum_osd_thread_slot);
 
+	/* XXX-MJ we need to handle dotdot */
+
 	head = (void *)mac_label_get(dvplabel, mac_capsicum_label_slot);
 	if (head != NULL) {
 		SLIST_FOREACH(vnpol, &head->head, link) {
@@ -177,7 +245,6 @@ mac_capsicum_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 	if ((cnp->cn_flags & ISLASTCN) == 0)
 		return (0);
 
-	/* XXX-MJ what if last cn is dotdot? */
 	if (data->last == NULL)
 		return (ECAPMODE);
 
@@ -191,7 +258,10 @@ static const struct mac_policy_ops mac_capsicum_ops = {
 	.mpo_proc_init_label = mac_capsicum_proc_init_label,
 	.mpo_proc_destroy_label = mac_capsicum_proc_destroy_label,
 
+	.mpo_cap_check_bind = mac_capsicum_cap_check_bind,
+	.mpo_cap_check_connect = mac_capsicum_cap_check_connect,
 	.mpo_cap_check_lookup = mac_capsicum_cap_check_lookup,
+	.mpo_cap_check_sendmsg = mac_capsicum_cap_check_sendmsg,
 	.mpo_cap_check_syscall = mac_capsicum_cap_check_syscall,
 	.mpo_cap_check_sysctl = mac_capsicum_cap_check_sysctl,
 
@@ -229,8 +299,16 @@ mac_capsicum_devioctl_vnode(struct thread *td,
 	struct filecaps fcaps;
 	struct mac_capsicum_vnode_policy_head *head;
 	struct mac_capsicum_vnode_policy *vnpol;
+	struct mac_capsicum_policy *policy;
 	struct vnode *vp;
 	int error;
+
+	policy = (void *)mac_label_get(td->td_proc->p_label,
+	    mac_capsicum_label_slot);
+	if (policy == NULL)
+		return (ENOENT);
+	if (policy->committed)
+		return (ENOTCAPABLE);
 
 	if (strnlen(ioc->name, sizeof(ioc->name)) >= sizeof(ioc->name))
 		return (EINVAL);
@@ -255,8 +333,7 @@ mac_capsicum_devioctl_vnode(struct thread *td,
 	vnpol = malloc(sizeof(*vnpol), M_MAC_CAPSICUM, M_WAITOK);
 	vnpol->fcaps = fcaps;
 	strlcpy(vnpol->name, ioc->name, sizeof(vnpol->name));
-	vnpol->policy = (void *)mac_label_get(td->td_proc->p_label,
-	    mac_capsicum_label_slot);
+	vnpol->policy = policy;
 
 	(void)vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	SLIST_INSERT_HEAD(&head->head, vnpol, link);
@@ -266,19 +343,62 @@ mac_capsicum_devioctl_vnode(struct thread *td,
 }
 
 static int
-mac_capsicum_devioctl_commit(struct thread *td)
+mac_capsicum_devioctl_sysctl(struct thread *td,
+    struct mac_capsicum_sysctl_ioc *ioc)
 {
 	struct mac_capsicum_policy *policy;
+	struct mac_capsicum_sysctl_policy *sysctlpol;
+	size_t oidlen;
+	int error, oid[CTL_MAXNAME];
+
+	if (strnlen(ioc->name, sizeof(ioc->name)) >= sizeof(ioc->name))
+		return (EINVAL);
+	if ((ioc->flags &
+	    ~(MAC_CAPSICUM_F_SYSCTL_RD | MAC_CAPSICUM_F_SYSCTL_WR)) != 0)
+		return (EINVAL);
+
+	error = sysctl_name2oid(td, ioc->name, strlen(ioc->name), oid, &oidlen);
+	if (error != 0)
+		return (error);
 
 	policy = (void *)mac_label_get(td->td_proc->p_label,
 	    mac_capsicum_label_slot);
 	if (policy == NULL)
-		return (EINVAL);
+		return (ENOENT);
 	if (policy->committed)
-		return (EINVAL);
+		return (ENOTCAPABLE);
 
-	policy->committed = true;
+	sysctlpol = malloc(sizeof(*sysctlpol), M_MAC_CAPSICUM,
+	    M_WAITOK | M_ZERO);
+	memcpy(sysctlpol->oid, oid, oidlen);
+	sysctlpol->oidlen = oidlen / sizeof(int);
+	sysctlpol->flags = ioc->flags;
+
+	/* XXX-MJ per-policy lock */
+	PROC_LOCK(td->td_proc);
+	SLIST_INSERT_HEAD(&policy->sysctls, sysctlpol, link);
+	PROC_UNLOCK(td->td_proc);
+
 	return (0);
+}
+
+static int
+mac_capsicum_devioctl_commit(struct thread *td)
+{
+	struct mac_capsicum_policy *policy;
+	struct proc *p;
+	int error;
+
+	error = 0;
+	p = td->td_proc;
+	PROC_LOCK(p);
+	policy = (void *)mac_label_get(p->p_label, mac_capsicum_label_slot);
+	if (policy == NULL || policy->committed)
+		error = EINVAL;
+	else
+		policy->committed = true;
+	PROC_UNLOCK(p);
+	return (error);
 }
 
 static int
@@ -289,6 +409,9 @@ mac_capsicum_devioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	case MAC_CAPSICUM_IOC_VNODE:
 		return (mac_capsicum_devioctl_vnode(td,
 		    (struct mac_capsicum_vnode_ioc *)data));
+	case MAC_CAPSICUM_IOC_SYSCTL:
+		return (mac_capsicum_devioctl_sysctl(td,
+		    (struct mac_capsicum_sysctl_ioc *)data));
 	case MAC_CAPSICUM_IOC_COMMIT:
 		return (mac_capsicum_devioctl_commit(td));
 	default:
