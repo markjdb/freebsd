@@ -30,6 +30,25 @@ usage(void)
 	    "usage: capexec [-f policy] command [args ...]\n");
 }
 
+static const struct {
+	const char *name;
+	uint64_t right;
+} rightstab[] = {
+	{ "read", CAP_READ },
+	{ "write", CAP_WRITE },
+	{ "seek_tell", CAP_SEEK_TELL },
+	{ "seek", CAP_SEEK },
+	{ "pread", CAP_PREAD },
+	{ "pwrite", CAP_PWRITE },
+	{ "mmap", CAP_MMAP },
+	{ "mmap_r", CAP_MMAP_R },
+	{ "mmap_w", CAP_MMAP_W },
+	{ "mmap_x", CAP_MMAP_X },
+	{ "mmap_rw", CAP_MMAP_RW },
+	{ "mmap_rx", CAP_MMAP_RX },
+	{ "mmap_wx", CAP_MMAP_WX },
+};
+
 static void
 add_path(const char *path, int macfd)
 {
@@ -92,17 +111,20 @@ add_paths(lua_State *L, int macfd)
 	n = lua_rawlen(L, -1);
 	for (size_t i = 1; i <= n; i++) {
 		const char *path;
+		cap_rights_t rights;
 
 		lua_rawgeti(L, -1, i);
-		if (!lua_isstring(L, -1))
-			errx(1, "paths[%zu] is not a string", i);
-
-		path = lua_tostring(L, -1);
-		if (path[0] != '/')
-			errx(1, "path '%s' is not absolute", path);
-		add_path(path, macfd);
-
-		lua_pop(L, 1);
+		if (lua_isstring(L, -1)) {
+			path = lua_tostring(L, -1);
+			if (path[0] != '/')
+				errx(1, "path '%s' is not absolute", path);
+			add_path(path, macfd);
+			lua_pop(L, 1);
+		} else if (lua_istable(L, -1)) {
+		} else {
+			errx(1,
+	    "paths[%zu] must be a string or a <path, rights...> tuple", i);
+		}
 	}
 }
 
@@ -171,7 +193,7 @@ add_sysctls(lua_State *L, int macfd)
 			    MAC_CAPSICUM_F_SYSCTL_WR;
 		} else {
 			errx(1,
-			    "sysctls must be strings or <string,flag> tuples");
+		    "sysctls[%zu] must be strings or <string,flag> tuples", i);
 		}
 
 		add_sysctl(sysctl, flags, macfd);
