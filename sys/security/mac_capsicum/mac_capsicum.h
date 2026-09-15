@@ -13,13 +13,8 @@
 
 struct mac_capsicum_vnode_ioc {
 	int	fd;
-	cap_rights_t rights;
 	char	name[NAME_MAX + 1];
 };
-#ifdef _KERNEL
-_Static_assert(CAP_RIGHTS_VERSION == CAP_RIGHTS_VERSION_00,
-    "cap_rights_t version has changed");
-#endif
 
 struct mac_capsicum_sysctl_ioc {
 	char	name[PATH_MAX];

@@ -268,7 +268,7 @@ static const struct mac_policy_ops mac_capsicum_ops = {
 	.mpo_vnode_check_lookup = mac_capsicum_vnode_check_lookup,
 };
 MAC_POLICY_SET(&mac_capsicum_ops, mac_capsicum, "MAC/capsicum",
-    MPC_LOADTIME_FLAG_NOTLATE, &mac_capsicum_label_slot);
+    0, &mac_capsicum_label_slot);
 
 static int
 mac_capsicum_devopen(struct cdev *cdev, int flags, int fmt, struct thread *td)
@@ -436,8 +436,8 @@ mac_capsicum_dealloc_thread_osd(void *osd)
 static void
 mac_capsicum_sysinit(void *arg __unused)
 {
-	mac_capsicum_cdev = make_dev(&mac_capsicum_cdevsw, 0, UID_ROOT, GID_WHEEL,
-	    0600, "mac_capsicum");
+	mac_capsicum_cdev = make_dev(&mac_capsicum_cdevsw, 0,
+	    UID_ROOT, GID_WHEEL, 0600, "mac_capsicum");
 	mac_capsicum_osd_thread_slot =
 	    osd_thread_register(mac_capsicum_dealloc_thread_osd);
 }
