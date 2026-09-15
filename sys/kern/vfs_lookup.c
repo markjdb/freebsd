@@ -1295,6 +1295,12 @@ dirloop:
 			}
 			if (isroot || ((dp->v_vflag & VV_ROOT) != 0 &&
 			    (cnp->cn_flags & NOCROSSMOUNT) != 0)) {
+#ifdef MAC
+				error = mac_vnode_check_lookup(cnp->cn_cred, dp,
+				    cnp);
+				if (__predict_false(error))
+					goto bad;
+#endif
 				ndp->ni_dvp = dp;
 				ndp->ni_vp = dp;
 				vref(dp);
