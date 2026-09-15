@@ -52,16 +52,12 @@
  */
 static uma_zone_t	zone_label;
 
-static int	mac_labelzone_ctor(void *mem, int size, void *arg, int flags);
-static void	mac_labelzone_dtor(void *mem, int size, void *arg);
-
 void
 mac_labelzone_init(void)
 {
 
 	zone_label = uma_zcreate("MAC labels", sizeof(struct label),
-	    mac_labelzone_ctor, mac_labelzone_dtor, NULL, NULL,
-	    UMA_ALIGN_PTR, 0);
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 }
 
 /*
@@ -91,39 +87,23 @@ mac_destroy_label(struct label *label)
 #endif
 }
 
-static int
-mac_labelzone_ctor(void *mem, int size, void *arg, int flags)
-{
-	struct label *label;
-
-	KASSERT(size == sizeof(*label), ("mac_labelzone_ctor: wrong size\n"));
-	label = mem;
-	mac_init_label(label);
-	return (0);
-}
-
-static void
-mac_labelzone_dtor(void *mem, int size, void *arg)
-{
-	struct label *label;
-
-	KASSERT(size == sizeof(*label), ("mac_labelzone_dtor: wrong size\n"));
-	label = mem;
-	mac_destroy_label(label);
-}
-
 struct label *
 mac_labelzone_alloc(int flags)
 {
+	struct label *label;
 
-	return (uma_zalloc(zone_label, flags));
+	label = uma_zalloc(zone_label, flags);
+	mac_init_label(label);
+	return (label);
 }
 
 void
 mac_labelzone_free(struct label *label)
 {
-
-	uma_zfree(zone_label, label);
+	if (label != NULL) {
+		mac_destroy_label(label);
+		uma_zfree(zone_label, label);
+	}
 }
 
 /*
