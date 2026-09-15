@@ -885,12 +885,17 @@ vfs_lookup_degenerate(struct nameidata *ndp, struct vnode *dp, int wantparent)
 		error = EISDIR;
 		goto bad;
 	}
+	cnp->cn_namelen = 0;
+#ifdef MAC
+	error = mac_vnode_check_lookup(cnp->cn_cred, dp, cnp);
+	if (__predict_false(error != 0))
+		goto bad;
+#endif
 	if (wantparent) {
 		ndp->ni_dvp = dp;
 		vref(dp);
 	}
 	ndp->ni_vp = dp;
-	cnp->cn_namelen = 0;
 
 	if (cnp->cn_flags & AUDITVNODE1)
 		AUDIT_ARG_VNODE1(dp);
