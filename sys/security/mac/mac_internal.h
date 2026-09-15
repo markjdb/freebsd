@@ -143,6 +143,16 @@ MALLOC_DECLARE(M_MACTEMP);
 #endif
 
 /*
+ * Forward declarations.
+ */
+struct mbuf;
+struct prison;
+struct rm_priotracker;
+struct socket;
+struct ucred;
+struct vnode;
+
+/*
  * MAC labels -- in-kernel storage format.
  *
  * In general, struct label pointers are embedded in kernel data structures
