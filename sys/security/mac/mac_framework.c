@@ -425,7 +425,7 @@ struct mac_policy_fastpath_elem {
 	size_t	offset;
 };
 
-struct mac_policy_fastpath_elem mac_policy_fastpath_array[] = {
+static struct mac_policy_fastpath_elem mac_policy_fastpath_array[] = {
 	{ .offset = FPO(priv_check), .flag = &mac_priv_check_fp_flag },
 	{ .offset = FPO(priv_grant), .flag = &mac_priv_grant_fp_flag },
 	{ .offset = FPO(vnode_check_lookup),
