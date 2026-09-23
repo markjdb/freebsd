@@ -313,7 +313,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(clock_nanosleep_args), .sy_call = (sy_call_t *)sys_clock_nanosleep, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 244 = clock_nanosleep */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 245 = reserved for local use */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 246 = reserved for local use */
-	{ .sy_narg = AS(clock_getcpuclockid2_args), .sy_call = (sy_call_t *)sys_clock_getcpuclockid2, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 247 = clock_getcpuclockid2 */
+	{ .sy_narg = AS(clock_getcpuclockid2_args), .sy_call = (sy_call_t *)sys_clock_getcpuclockid2, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 247 = clock_getcpuclockid2 */
 	{ .sy_narg = AS(ntp_gettime_args), .sy_call = (sy_call_t *)sys_ntp_gettime, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 248 = ntp_gettime */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 249 = reserved for local use */
 	{ .sy_narg = AS(minherit_args), .sy_call = (sy_call_t *)sys_minherit, .sy_auevent = AUE_MINHERIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 250 = minherit */
