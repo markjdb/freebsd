@@ -567,7 +567,7 @@
 81	AUE_GETPGRP	STD|CAPENABLED {
 		int getpgrp(void);
 	}
-82	AUE_SETPGRP	STD {
+82	AUE_SETPGRP	STD|CAPENABLED {
 		int setpgid(
 		    int pid,
 		    int pgid
