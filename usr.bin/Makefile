@@ -128,6 +128,7 @@ SUBDIR=	apply \
 	rusers \
 	rwall \
 	rwho \
+	sbexec \
 	script \
 	sdiff \
 	sed \
