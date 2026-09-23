@@ -233,6 +233,7 @@ SUBDIR=	\
 	lpt \
 	${_mac_biba} \
 	${_mac_bsdextended} \
+	${_mac_sandbox} \
 	${_mac_ddb} \
 	${_mac_do} \
 	${_mac_ifoff} \
@@ -630,6 +631,7 @@ _mac_partition=	mac_partition
 _mac_pimd=	mac_pimd
 _mac_portacl=	mac_portacl
 _mac_priority=	mac_priority
+_mac_sandbox=	mac_sandbox
 _mac_seeotheruids= mac_seeotheruids
 _mac_stub=	mac_stub
 _mac_test=	mac_test

@@ -72,6 +72,7 @@ LSUBDIRS=	dev/acpica dev/agp dev/ciss dev/filemon dev/firewire \
 	security/mac_grantbylabel \
 	security/mac_lomac \
 	security/mac_mls security/mac_partition \
+	security/mac_sandbox \
 	security/mac_veriexec \
 	sys/disk \
 	ufs/ffs ufs/ufs

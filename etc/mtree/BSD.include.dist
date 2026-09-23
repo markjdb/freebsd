@@ -461,6 +461,8 @@
         ..
         mac_partition
         ..
+        mac_sandbox
+        ..
         mac_veriexec
         ..
     ..
