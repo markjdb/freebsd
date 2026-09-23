@@ -628,6 +628,25 @@ mac_vnode_check_lookup_impl(struct ucred *cred, struct vnode *dvp,
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE4(vnode_check_lookup_final, "struct ucred *",
+    "struct vnode *", "struct vnode *", "struct componentname *");
+
+int
+mac_vnode_check_lookup_final_impl(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+	int error;
+
+	if ((cnp->cn_flags & NOMACCHECK) != 0)
+		return (0);
+	MAC_POLICY_CHECK(vnode_check_lookup_final, cred,
+	    dvp, dvp != NULL ? dvp->v_label : NULL,
+	    vp, vp != NULL ? vp->v_label : NULL, cnp);
+	MAC_CHECK_PROBE4(vnode_check_lookup_final, error, cred, dvp, vp, cnp);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE4(vnode_check_mmap, "struct ucred *", "struct vnode *",
     "int", "int");
 

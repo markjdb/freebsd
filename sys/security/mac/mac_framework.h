@@ -567,6 +567,9 @@ int	mac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
 
 int	mac_vnode_check_lookup_impl(struct ucred *cred, struct vnode *dvp,
  	    struct componentname *cnp);
+int	mac_vnode_check_lookup_final_impl(struct ucred *cred, struct vnode *dvp,
+ 	    struct vnode *vp, struct componentname *cnp);
+
 #ifdef MAC
 extern bool mac_vnode_check_lookup_fp_flag;
 #else
@@ -581,6 +584,16 @@ mac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 	mac_vnode_assert_locked(dvp, "mac_vnode_check_lookup");
 	if (mac_vnode_check_lookup_enabled())
                 return (mac_vnode_check_lookup_impl(cred, dvp, cnp));
+	return (0);
+}
+
+static inline int
+mac_vnode_check_lookup_final(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	if (mac_vnode_check_lookup_enabled())
+                return (mac_vnode_check_lookup_final_impl(cred, dvp, vp, cnp));
 	return (0);
 }
 

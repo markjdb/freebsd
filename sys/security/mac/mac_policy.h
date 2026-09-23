@@ -662,6 +662,10 @@ typedef int	(*mpo_vnode_check_listextattr_t)(struct ucred *cred,
 typedef int	(*mpo_vnode_check_lookup_t)(struct ucred *cred,
 		    struct vnode *dvp, struct label *dvplabel,
 		    struct componentname *cnp);
+typedef int	(*mpo_vnode_check_lookup_final_t)(struct ucred *cred,
+		    struct vnode *dvp, struct label *dvplabel,
+		    struct vnode *vp, struct label *vplabel,
+		    struct componentname *cnp);
 typedef int	(*mpo_vnode_check_mmap_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *label, int prot,
 		    int flags);
@@ -1044,6 +1048,7 @@ struct mac_policy_ops {
 	mpo_vnode_check_link_t			mpo_vnode_check_link;
 	mpo_vnode_check_listextattr_t		mpo_vnode_check_listextattr;
 	mpo_vnode_check_lookup_t		mpo_vnode_check_lookup;
+	mpo_vnode_check_lookup_final_t		mpo_vnode_check_lookup_final;
 	mpo_vnode_check_mmap_t			mpo_vnode_check_mmap;
 	mpo_vnode_check_mmap_downgrade_t	mpo_vnode_check_mmap_downgrade;
 	mpo_vnode_check_mprotect_t		mpo_vnode_check_mprotect;

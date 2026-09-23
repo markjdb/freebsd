@@ -778,6 +778,14 @@ restart:
 		 * If not a symbolic link, we're done.
 		 */
 		if ((cnp->cn_flags & ISSYMLINK) == 0) {
+#ifdef MAC
+			error = mac_vnode_check_lookup_final(cnp->cn_cred,
+			    ndp->ni_dvp, ndp->ni_vp, cnp);
+			if (error != 0) {
+				vput(ndp->ni_vp);
+				goto out;
+			}
+#endif
 			SDT_PROBE4(vfs, namei, lookup, return, error,
 			    ndp->ni_vp, false, ndp);
 			nameicap_cleanup(ndp, 0);

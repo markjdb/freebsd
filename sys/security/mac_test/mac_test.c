@@ -2859,6 +2859,21 @@ test_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 	return (0);
 }
 
+COUNTER_DECL(vnode_check_lookup_final);
+static int
+test_vnode_check_lookup_final(struct ucred *cred, struct vnode *dvp,
+    struct label *dvplabel, struct vnode *vp, struct label *vplabel,
+    struct componentname *cnp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(dvplabel, MAGIC_VNODE);
+	LABEL_CHECK(vplabel, MAGIC_VNODE);
+	COUNTER_INC(vnode_check_lookup_final);
+
+	return (0);
+}
+
 COUNTER_DECL(vnode_check_mmap);
 static int
 test_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
