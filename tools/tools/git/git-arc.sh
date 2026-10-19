@@ -960,7 +960,7 @@ gitarc__update()
 {
     local OPTIND=1 OPTARG
     # NB: msg / have_msg not initialized; inheritance allowed.
-    local commit commits diff doprompt have_msg list o msg
+    local commit commits diff doprompt have_msg list o msg summary title
 
     list=
     if get_bool_config arc.list false; then
@@ -1020,6 +1020,22 @@ gitarc__update()
             arc diff --allow-untracked --never-apply-patches --update "$diff" \
                 --head "$commit" "${commit}~"
         fi
+
+        # Update the revision title and summary to match the commit log.
+        title=$(git show -s --format=%s "$commit")
+        summary=$(git show -s --format=%b "$commit")
+        jq -n \
+            --arg diff "$diff" \
+            --arg title "$title" \
+            --arg summary "$summary" \
+            '{
+                "objectIdentifier": $diff,
+                "transactions": [
+                    {"type": "title", "value": $title},
+                    {"type": "summary", "value": $summary}
+                ]
+            }' |
+            arc_call_conduit -- differential.revision.edit >&3
     done
 }
 
