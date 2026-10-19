@@ -550,7 +550,7 @@ gitarc__create()
 gitarc__diff()
 {
     local OPTIND=1 OPTARG o
-    local commit commits diff rawdiff rtree
+    local commit commits diff plevel rawdiff rtree
 
     while getopts h o; do
         case "$o" in
@@ -575,11 +575,12 @@ gitarc__diff()
         fetch -q -o "$rawdiff" "https://reviews.freebsd.org/$diff.diff" ||
             err "could not fetch ${diff}.diff"
 
+        plevel=$(patch_strip_count "$rawdiff")
         rtree=$(
             export GIT_INDEX_FILE="$(xmktemp)"
             git read-tree --quiet "$commit~" &&
                 git -C "$(git rev-parse --show-toplevel)" apply \
-                    --cached "$rawdiff" &&
+                    --cached "-p${plevel}" "$rawdiff" &&
                 git write-tree
         ) || err "cannot apply $diff to $commit~ (rebased since last update?)"
 
@@ -798,9 +799,22 @@ patch_commit()
     git commit --author "${author}" --file "$tmp"
 }
 
+#
+# Determine the appropriate -p (strip) count for a patch file.  This may vary
+# depending on how the patch was generated before being uploaded to Phabricator.
+#
+patch_strip_count()
+{
+    if grep -q '^diff --git ' "$1"; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
 apply_rev()
 {
-    local commit parent parents raw rev stack
+    local commit parent parents plevel raw rawdiff rev stack
 
     rev=$1
     commit=$2
@@ -818,8 +832,12 @@ apply_rev()
     # If a patch fails to apply, the corresponding command below will exit
     # with a non-zero status and terminate the script.
     if $raw; then
-        fetch -o /dev/stdout "https://reviews.freebsd.org/${rev}.diff" | \
-            git -C "$(git rev-parse --show-toplevel)" apply --index --reject
+        rawdiff=$(xmktemp)
+        fetch -q -o "$rawdiff" "https://reviews.freebsd.org/${rev}.diff" ||
+            err "could not fetch ${rev}.diff"
+        plevel=$(patch_strip_count "$rawdiff")
+        git -C "$(git rev-parse --show-toplevel)" apply --index --reject \
+            "-p${plevel}" "$rawdiff"
     else
         arc patch --skip-dependencies --nobranch --nocommit --force $rev
     fi
