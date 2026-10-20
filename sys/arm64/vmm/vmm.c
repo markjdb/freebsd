@@ -257,10 +257,8 @@ vmm_modcleanup(void)
 }
 
 static void
-vm_init(struct vm *vm, bool create)
+vm_init(struct vm *vm)
 {
-	int i;
-
 	vm->cookie = vmmops_init(vm, vmspace_pmap(vm_vmspace(vm)));
 	MPASS(vm->cookie != NULL);
 
@@ -272,13 +270,6 @@ vm_init(struct vm *vm, bool create)
 
 	memset(vm->mmio_region, 0, sizeof(vm->mmio_region));
 	memset(vm->special_reg, 0, sizeof(vm->special_reg));
-
-	if (!create) {
-		for (i = 0; i < vm->maxcpus; i++) {
-			if (vm->vcpu[i] != NULL)
-				vcpu_init(vm->vcpu[i]);
-		}
-	}
 }
 
 struct vcpu *
@@ -341,7 +332,7 @@ vm_create(const char *name, struct vm **retvm)
 	vm->vcpu = malloc(sizeof(*vm->vcpu) * vm->maxcpus, M_VMM,
 	    M_WAITOK | M_ZERO);
 
-	vm_init(vm, true);
+	vm_init(vm);
 
 	*retvm = vm;
 	return (0);
@@ -395,7 +386,11 @@ void
 vm_reset(struct vm *vm)
 {
 	vm_cleanup(vm, false);
-	vm_init(vm, false);
+	vm_init(vm);
+	for (int i = 0; i < vm->maxcpus; i++) {
+		if (vm->vcpu[i] != NULL)
+			vcpu_init(vm->vcpu[i]);
+	}
 }
 
 int

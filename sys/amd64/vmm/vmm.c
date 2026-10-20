@@ -309,7 +309,7 @@ vmm_modcleanup(void)
 }
 
 static void
-vm_init(struct vm *vm, bool create)
+vm_init(struct vm *vm)
 {
 	vm->cookie = vmmops_init(vm, vmspace_pmap(vm_vmspace(vm)));
 	vm->iommu = NULL;
@@ -318,8 +318,6 @@ vm_init(struct vm *vm, bool create)
 	vm->vatpic = vatpic_init(vm);
 	vm->vatpit = vatpit_init(vm);
 	vm->vpmtmr = vpmtmr_init(vm);
-	if (create)
-		vm->vrtc = vrtc_init(vm);
 
 	CPU_ZERO(&vm->active_cpus);
 	CPU_ZERO(&vm->debug_cpus);
@@ -327,13 +325,6 @@ vm_init(struct vm *vm, bool create)
 
 	vm->suspend = 0;
 	CPU_ZERO(&vm->suspended_cpus);
-
-	if (!create) {
-		for (int i = 0; i < vm->maxcpus; i++) {
-			if (vm->vcpu[i] != NULL)
-				vcpu_init(vm->vcpu[i]);
-		}
-	}
 }
 
 struct vcpu *
@@ -389,7 +380,8 @@ vm_create(const char *name, struct vm **retvm)
 	vm->threads = 1;	/* XXX backwards compatibility */
 	vm->maxcpus = vm_maxcpu;
 
-	vm_init(vm, true);
+	vm->vrtc = vrtc_init(vm);
+	vm_init(vm);
 
 	*retvm = vm;
 	return (0);
@@ -447,7 +439,11 @@ void
 vm_reset(struct vm *vm)
 {
 	vm_cleanup(vm, false);
-	vm_init(vm, false);
+	vm_init(vm);
+	for (int i = 0; i < vm->maxcpus; i++) {
+		if (vm->vcpu[i] != NULL)
+			vcpu_init(vm->vcpu[i]);
+	}
 }
 
 int
