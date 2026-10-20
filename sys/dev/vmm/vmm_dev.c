@@ -21,6 +21,7 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/resourcevar.h>
+#include <sys/rmlock.h>
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
@@ -475,6 +476,11 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	else if ((ioctl->flags & VMMDEV_IOCTL_SLOCK_MEMSEGS) != 0)
 		vm_slock_memsegs(sc->vm);
 
+	if ((ioctl->flags & VMMDEV_IOCTL_REINIT) != 0)
+		rms_wlock(&sc->vm->vm_reinit_lock);
+	else
+		rms_rlock(&sc->vm->vm_reinit_lock);
+
 	vcpu = NULL;
 	vcpuid = -1;
 	if ((ioctl->flags & (VMMDEV_IOCTL_LOCK_ONE_VCPU |
@@ -777,6 +783,11 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	else if ((ioctl->flags & VMMDEV_IOCTL_LOCK_ONE_VCPU) != 0)
 		vcpu_unlock_one(vcpu);
 
+	if ((ioctl->flags & VMMDEV_IOCTL_REINIT) != 0)
+		rms_wunlock(&sc->vm->vm_reinit_lock);
+	else
+		rms_runlock(&sc->vm->vm_reinit_lock);
+
 	/*
 	 * Make sure that no handler returns a kernel-internal
 	 * error value to userspace.
@@ -786,6 +797,10 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	return (error);
 
 lockfail:
+	if ((ioctl->flags & VMMDEV_IOCTL_REINIT) != 0)
+		rms_wunlock(&sc->vm->vm_reinit_lock);
+	else
+		rms_runlock(&sc->vm->vm_reinit_lock);
 	if ((ioctl->flags &
 	    (VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_SLOCK_MEMSEGS)) != 0)
 		vm_unlock_memsegs(sc->vm);

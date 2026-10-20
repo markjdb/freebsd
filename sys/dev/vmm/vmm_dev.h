@@ -39,6 +39,7 @@ int	vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd,
  *   and lock the vCPU for the duration of the ioctl
  * - MAYBE_ALLOC_VCPU: if the vcpuid is -1, do nothing, otherwise
  *   create the vCPU if it does not already exist
+ * - REINIT: acquire the per-VM reinit lock, which blocks all other ioctls
  */
 struct vmmdev_ioctl {
 	unsigned long	cmd;
@@ -49,6 +50,7 @@ struct vmmdev_ioctl {
 #define	VMMDEV_IOCTL_ALLOC_VCPU		0x10
 #define	VMMDEV_IOCTL_MAYBE_ALLOC_VCPU	0x20
 #define	VMMDEV_IOCTL_PPT		0x40
+#define	VMMDEV_IOCTL_REINIT		0x80
 	int		flags;
 };
 

@@ -37,6 +37,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/rmlock.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
@@ -372,6 +373,7 @@ vm_create(const char *name, struct vm **retvm)
 	strcpy(vm->name, name);
 	mtx_init(&vm->rendezvous_mtx, "vm rendezvous lock", 0, MTX_DEF);
 	sx_init(&vm->vcpus_init_lock, "vm vcpus");
+	rms_init(&vm->vm_reinit_lock, "vm reinit");
 	vm->vcpu = malloc(sizeof(*vm->vcpu) * vm_maxcpu, M_VM, M_WAITOK |
 	    M_ZERO);
 

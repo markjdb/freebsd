@@ -10,6 +10,9 @@
 
 #ifdef _KERNEL
 #include <sys/_cpuset.h>
+#include <sys/_mutex.h>
+#include <sys/_rmlock.h>
+#include <sys/_sx.h>
 
 #include <machine/vmm.h>
 
@@ -132,6 +135,7 @@ struct vm {
 
 	char		name[VM_MAX_NAMELEN + 1]; /* (o) virtual machine name */
 	struct sx	vcpus_init_lock;	/* (o) */
+	struct rmslock	vm_reinit_lock;		/* (o) */
 
 	bool		dying;			/* (o) is dying */
 	int		suspend;		/* (i) stop VM execution */
