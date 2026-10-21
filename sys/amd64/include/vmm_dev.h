@@ -309,8 +309,8 @@ enum {
 	IOCNUM_RESET_PPTDEV = 47,
 
 	/* statistics */
-	IOCNUM_VM_STATS = 50,
-	IOCNUM_VM_STAT_DESC = 51,
+	IOCNUM_STATS = 50,
+	IOCNUM_STAT_DESC = 51,
 
 	/* kernel device state */
 	IOCNUM_SET_X2APIC_STATE = 60,
@@ -329,7 +329,7 @@ enum {
 
 	/* vm_cpuset */
 	IOCNUM_ACTIVATE_CPU = 90,
-	IOCNUM_GET_CPUSET = 91,
+	IOCNUM_GET_CPUS = 91,
 	IOCNUM_SUSPEND_CPU = 92,
 	IOCNUM_RESUME_CPU = 93,
 
@@ -426,9 +426,9 @@ enum {
 #define VM_INJECT_NMI \
 	_IOW('v', IOCNUM_INJECT_NMI, struct vm_nmi)
 #define	VM_STATS \
-	_IOWR('v', IOCNUM_VM_STATS, struct vm_stats)
+	_IOWR('v', IOCNUM_STATS, struct vm_stats)
 #define	VM_STAT_DESC \
-	_IOWR('v', IOCNUM_VM_STAT_DESC, struct vm_stat_desc)
+	_IOWR('v', IOCNUM_STAT_DESC, struct vm_stat_desc)
 #define	VM_SET_X2APIC_STATE \
 	_IOW('v', IOCNUM_SET_X2APIC_STATE, struct vm_x2apic)
 #define	VM_GET_X2APIC_STATE \
@@ -448,7 +448,7 @@ enum {
 #define	VM_ACTIVATE_CPU	\
 	_IOW('v', IOCNUM_ACTIVATE_CPU, struct vm_activate_cpu)
 #define	VM_GET_CPUS	\
-	_IOW('v', IOCNUM_GET_CPUSET, struct vm_cpuset)
+	_IOW('v', IOCNUM_GET_CPUS, struct vm_cpuset)
 #define	VM_SUSPEND_CPU \
 	_IOW('v', IOCNUM_SUSPEND_CPU, struct vm_activate_cpu)
 #define	VM_RESUME_CPU \

@@ -42,19 +42,20 @@ int	vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd,
  * - REINIT: acquire the per-VM reinit lock, which blocks all other ioctls
  */
 struct vmmdev_ioctl {
-	unsigned long	cmd;
-#define	VMMDEV_IOCTL_SLOCK_MEMSEGS	0x01
-#define	VMMDEV_IOCTL_XLOCK_MEMSEGS	0x02
-#define	VMMDEV_IOCTL_LOCK_ONE_VCPU	0x04
-#define	VMMDEV_IOCTL_LOCK_ALL_VCPUS	0x08
-#define	VMMDEV_IOCTL_ALLOC_VCPU		0x10
-#define	VMMDEV_IOCTL_MAYBE_ALLOC_VCPU	0x20
-#define	VMMDEV_IOCTL_PPT		0x40
-#define	VMMDEV_IOCTL_REINIT		0x80
-	int		flags;
+#define	VMMDEV_IOCTL_SLOCK_MEMSEGS	0x0001
+#define	VMMDEV_IOCTL_XLOCK_MEMSEGS	0x0002
+#define	VMMDEV_IOCTL_LOCK_ONE_VCPU	0x0004
+#define	VMMDEV_IOCTL_LOCK_ALL_VCPUS	0x0008
+#define	VMMDEV_IOCTL_ALLOC_VCPU		0x0010
+#define	VMMDEV_IOCTL_MAYBE_ALLOC_VCPU	0x0020
+#define	VMMDEV_IOCTL_PPT		0x0040
+#define	VMMDEV_IOCTL_REINIT		0x0080
+#define	VMMDEV_IOCTL_VALID		0x0100
+	unsigned short flags;
 };
 
-#define	VMMDEV_IOCTL(_cmd, _flags)	{ .cmd = (_cmd), .flags = (_flags) }
+#define	VMMDEV_IOCTL(prefix, f)		\
+	[IOCNUM_##prefix] = { .flags = (f) | VMMDEV_IOCTL_VALID }
 
 extern const struct vmmdev_ioctl vmmdev_machdep_ioctls[];
 extern const size_t vmmdev_machdep_ioctl_count;

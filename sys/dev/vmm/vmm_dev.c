@@ -379,90 +379,67 @@ vmmdev_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 	return (0);
 }
 
-static const struct vmmdev_ioctl vmmdev_ioctls[] = {
-	VMMDEV_IOCTL(VM_GET_REGISTER, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_SET_REGISTER, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_GET_REGISTER_SET, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_SET_REGISTER_SET, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_GET_CAPABILITY, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_SET_CAPABILITY, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_ACTIVATE_CPU, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_INJECT_EXCEPTION, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_STATS, VMMDEV_IOCTL_LOCK_ONE_VCPU),
-	VMMDEV_IOCTL(VM_STAT_DESC, 0),
+static const struct vmmdev_ioctl __read_frequently vmmdev_ioctls[] = {
+	VMMDEV_IOCTL(GET_REGISTER, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(SET_REGISTER, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(GET_REGISTER_SET, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(SET_REGISTER_SET, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(GET_CAPABILITY, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(SET_CAPABILITY, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(ACTIVATE_CPU, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(STATS, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(STAT_DESC, 0),
 
-#ifdef __amd64__
-#ifdef COMPAT_FREEBSD12
-	VMMDEV_IOCTL(VM_ALLOC_MEMSEG_12,
+	VMMDEV_IOCTL(ALLOC_MEMSEG,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
-#endif
-#ifdef COMPAT_FREEBSD14
-	VMMDEV_IOCTL(VM_ALLOC_MEMSEG_14,
+	VMMDEV_IOCTL(MMAP_MEMSEG,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
-#endif
-#endif /* __amd64__ */
-	VMMDEV_IOCTL(VM_ALLOC_MEMSEG,
+	VMMDEV_IOCTL(MUNMAP_MEMSEG,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
-	VMMDEV_IOCTL(VM_MMAP_MEMSEG,
-	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
-	VMMDEV_IOCTL(VM_MUNMAP_MEMSEG,
-	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
-	VMMDEV_IOCTL(VM_REINIT,
+	VMMDEV_IOCTL(REINIT,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 
-#ifdef __amd64__
-#if defined(COMPAT_FREEBSD12)
-	VMMDEV_IOCTL(VM_GET_MEMSEG_12, VMMDEV_IOCTL_SLOCK_MEMSEGS),
-#endif
-#ifdef COMPAT_FREEBSD14
-	VMMDEV_IOCTL(VM_GET_MEMSEG_14, VMMDEV_IOCTL_SLOCK_MEMSEGS),
-#endif
-#endif /* __amd64__ */
-	VMMDEV_IOCTL(VM_GET_MEMSEG, VMMDEV_IOCTL_SLOCK_MEMSEGS),
-	VMMDEV_IOCTL(VM_MMAP_GETNEXT, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(GET_MEMSEG, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(MMAP_GETNEXT, VMMDEV_IOCTL_SLOCK_MEMSEGS),
 
-	VMMDEV_IOCTL(VM_SUSPEND_CPU, VMMDEV_IOCTL_MAYBE_ALLOC_VCPU),
-	VMMDEV_IOCTL(VM_RESUME_CPU, VMMDEV_IOCTL_MAYBE_ALLOC_VCPU),
+	VMMDEV_IOCTL(SUSPEND_CPU, VMMDEV_IOCTL_MAYBE_ALLOC_VCPU),
+	VMMDEV_IOCTL(RESUME_CPU, VMMDEV_IOCTL_MAYBE_ALLOC_VCPU),
 
-	VMMDEV_IOCTL(VM_SUSPEND, 0),
-	VMMDEV_IOCTL(VM_GET_CPUS, 0),
-	VMMDEV_IOCTL(VM_GET_TOPOLOGY, 0),
-	VMMDEV_IOCTL(VM_SET_TOPOLOGY, 0),
+	VMMDEV_IOCTL(SUSPEND, 0),
+	VMMDEV_IOCTL(GET_CPUS, 0),
+	VMMDEV_IOCTL(GET_TOPOLOGY, 0),
+	VMMDEV_IOCTL(SET_TOPOLOGY, 0),
 };
 
 static int
 vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
     struct thread *td)
 {
+	const struct vmmdev_ioctl *ioctl;
 	struct vmmdev_softc *sc;
 	struct vcpu *vcpu;
-	const struct vmmdev_ioctl *ioctl;
 	struct vm_memseg *mseg;
-	int error, vcpuid;
+	unsigned int inum;
+	int error, iflags, vcpuid;
 
 	sc = vmmdev_lookup2(cdev);
 	if (sc == NULL)
 		return (ENXIO);
 
 	ioctl = NULL;
-	for (size_t i = 0; i < nitems(vmmdev_ioctls); i++) {
-		if (vmmdev_ioctls[i].cmd == cmd) {
-			ioctl = &vmmdev_ioctls[i];
-			break;
-		}
+	inum = IOCNUM(cmd);
+	if (inum < nitems(vmmdev_ioctls))
+		ioctl = &vmmdev_ioctls[inum];
+	if (ioctl == NULL || (ioctl->flags & VMMDEV_IOCTL_VALID) == 0) {
+		if (inum >= vmmdev_machdep_ioctl_count)
+			return (ENOTTY);
+		ioctl = &vmmdev_machdep_ioctls[inum];
+		if ((ioctl->flags & VMMDEV_IOCTL_VALID) == 0)
+			return (ENOTTY);
 	}
-	if (ioctl == NULL) {
-		for (size_t i = 0; i < vmmdev_machdep_ioctl_count; i++) {
-			if (vmmdev_machdep_ioctls[i].cmd == cmd) {
-				ioctl = &vmmdev_machdep_ioctls[i];
-				break;
-			}
-		}
-	}
-	if (ioctl == NULL)
-		return (ENOTTY);
+	iflags = ioctl->flags;
 
-	if ((ioctl->flags & VMMDEV_IOCTL_PPT) != 0) {
+	if ((iflags & VMMDEV_IOCTL_PPT) != 0) {
 		if (jailed(td->td_ucred) && (td->td_ucred->cr_prison->pr_allow &
 		    pr_allow_vmm_ppt_flag) == 0)
 			return (EPERM);
@@ -471,24 +448,23 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 			return (error);
 	}
 
-	if ((ioctl->flags & VMMDEV_IOCTL_XLOCK_MEMSEGS) != 0)
+	if ((iflags & VMMDEV_IOCTL_XLOCK_MEMSEGS) != 0)
 		vm_xlock_memsegs(sc->vm);
-	else if ((ioctl->flags & VMMDEV_IOCTL_SLOCK_MEMSEGS) != 0)
+	else if ((iflags & VMMDEV_IOCTL_SLOCK_MEMSEGS) != 0)
 		vm_slock_memsegs(sc->vm);
 
-	if ((ioctl->flags & VMMDEV_IOCTL_REINIT) != 0)
+	if ((iflags & VMMDEV_IOCTL_REINIT) != 0)
 		rms_wlock(&sc->vm->vm_reinit_lock);
 	else
 		rms_rlock(&sc->vm->vm_reinit_lock);
 
 	vcpu = NULL;
 	vcpuid = -1;
-	if ((ioctl->flags & (VMMDEV_IOCTL_LOCK_ONE_VCPU |
+	if ((iflags & (VMMDEV_IOCTL_LOCK_ONE_VCPU |
 	    VMMDEV_IOCTL_ALLOC_VCPU | VMMDEV_IOCTL_MAYBE_ALLOC_VCPU)) != 0) {
 		vcpuid = *(int *)data;
 		if (vcpuid == -1) {
-			if ((ioctl->flags &
-			    VMMDEV_IOCTL_MAYBE_ALLOC_VCPU) == 0) {
+			if ((iflags & VMMDEV_IOCTL_MAYBE_ALLOC_VCPU) == 0) {
 				error = EINVAL;
 				goto lockfail;
 			}
@@ -498,14 +474,14 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 				error = EINVAL;
 				goto lockfail;
 			}
-			if ((ioctl->flags & VMMDEV_IOCTL_LOCK_ONE_VCPU) != 0) {
+			if ((iflags & VMMDEV_IOCTL_LOCK_ONE_VCPU) != 0) {
 				error = vcpu_lock_one(vcpu);
 				if (error)
 					goto lockfail;
 			}
 		}
 	}
-	if ((ioctl->flags & VMMDEV_IOCTL_LOCK_ALL_VCPUS) != 0) {
+	if ((iflags & VMMDEV_IOCTL_LOCK_ALL_VCPUS) != 0) {
 		error = vcpu_lock_all(sc);
 		if (error)
 			goto lockfail;
@@ -775,15 +751,15 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		break;
 	}
 
-	if ((ioctl->flags &
+	if ((iflags &
 	    (VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_SLOCK_MEMSEGS)) != 0)
 		vm_unlock_memsegs(sc->vm);
-	if ((ioctl->flags & VMMDEV_IOCTL_LOCK_ALL_VCPUS) != 0)
+	if ((iflags & VMMDEV_IOCTL_LOCK_ALL_VCPUS) != 0)
 		vcpu_unlock_all(sc);
-	else if ((ioctl->flags & VMMDEV_IOCTL_LOCK_ONE_VCPU) != 0)
+	else if ((iflags & VMMDEV_IOCTL_LOCK_ONE_VCPU) != 0)
 		vcpu_unlock_one(vcpu);
 
-	if ((ioctl->flags & VMMDEV_IOCTL_REINIT) != 0)
+	if ((iflags & VMMDEV_IOCTL_REINIT) != 0)
 		rms_wunlock(&sc->vm->vm_reinit_lock);
 	else
 		rms_runlock(&sc->vm->vm_reinit_lock);
@@ -797,11 +773,11 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	return (error);
 
 lockfail:
-	if ((ioctl->flags & VMMDEV_IOCTL_REINIT) != 0)
+	if ((iflags & VMMDEV_IOCTL_REINIT) != 0)
 		rms_wunlock(&sc->vm->vm_reinit_lock);
 	else
 		rms_runlock(&sc->vm->vm_reinit_lock);
-	if ((ioctl->flags &
+	if ((iflags &
 	    (VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_SLOCK_MEMSEGS)) != 0)
 		vm_unlock_memsegs(sc->vm);
 	return (error);

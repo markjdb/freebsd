@@ -185,8 +185,8 @@ enum {
 	IOCNUM_GET_REGISTER_SET = 25,
 
 	/* statistics */
-	IOCNUM_VM_STATS = 50,
-	IOCNUM_VM_STAT_DESC = 51,
+	IOCNUM_STATS = 50,
+	IOCNUM_STAT_DESC = 51,
 
 	/* CPU Topology */
 	IOCNUM_SET_TOPOLOGY = 63,
@@ -200,7 +200,7 @@ enum {
 
 	/* vm_cpuset */
 	IOCNUM_ACTIVATE_CPU = 90,
-	IOCNUM_GET_CPUSET = 91,
+	IOCNUM_GET_CPUS = 91,
 	IOCNUM_SUSPEND_CPU = 92,
 	IOCNUM_RESUME_CPU = 93,
 
@@ -237,9 +237,9 @@ enum {
 #define	VM_GET_CAPABILITY \
 	_IOWR('v', IOCNUM_GET_CAPABILITY, struct vm_capability)
 #define	VM_STATS \
-	_IOWR('v', IOCNUM_VM_STATS, struct vm_stats)
+	_IOWR('v', IOCNUM_STATS, struct vm_stats)
 #define	VM_STAT_DESC \
-	_IOWR('v', IOCNUM_VM_STAT_DESC, struct vm_stat_desc)
+	_IOWR('v', IOCNUM_STAT_DESC, struct vm_stat_desc)
 #define VM_ASSERT_IRQ \
 	_IOW('v', IOCNUM_ASSERT_IRQ, struct vm_irq)
 #define VM_DEASSERT_IRQ \
@@ -257,7 +257,7 @@ enum {
 #define	VM_ACTIVATE_CPU	\
 	_IOW('v', IOCNUM_ACTIVATE_CPU, struct vm_activate_cpu)
 #define	VM_GET_CPUS	\
-	_IOW('v', IOCNUM_GET_CPUSET, struct vm_cpuset)
+	_IOW('v', IOCNUM_GET_CPUS, struct vm_cpuset)
 #define	VM_SUSPEND_CPU \
 	_IOW('v', IOCNUM_SUSPEND_CPU, struct vm_activate_cpu)
 #define	VM_RESUME_CPU \
